@@ -1,0 +1,75 @@
+import { createInterface } from 'node:readline/promises';
+import type { Logger } from 'pino';
+import type { ApiKeyRecord, ApiKeyRepository } from '../db/repos/api-keys.ts';
+
+export interface CliDeps {
+  repo: ApiKeyRepository;
+  stdin: NodeJS.ReadableStream;
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
+  logger: Logger;
+}
+
+export type SubcommandRun = (args: string[], deps: CliDeps) => Promise<number>;
+
+// Exit codes per docs/OPERATIONS.md:
+// 0 success / 1 not found / 2 validation error / 3 config or connection error
+export const EXIT_OK = 0;
+export const EXIT_NOT_FOUND = 1;
+export const EXIT_VALIDATION = 2;
+export const EXIT_CONFIG = 3;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+export async function findKey(
+  repo: ApiKeyRepository,
+  idOrPrefix: string,
+): Promise<ApiKeyRecord | null> {
+  if (isUuid(idOrPrefix)) return repo.findById(idOrPrefix);
+  return repo.findByPrefix(idOrPrefix);
+}
+
+export async function confirm(deps: CliDeps, prompt: string): Promise<boolean> {
+  const rl = createInterface({ input: deps.stdin, output: deps.stdout, terminal: false });
+  try {
+    const answer = await rl.question(prompt);
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+export function writeLine(stream: NodeJS.WritableStream, line = ''): void {
+  stream.write(`${line}\n`);
+}
+
+export interface AuditContext {
+  keyId?: string;
+  keyPrefix?: string;
+  [field: string]: unknown;
+}
+
+export function audit(
+  logger: Logger,
+  event: string,
+  message: string,
+  context: AuditContext = {},
+): void {
+  logger.info({ audit: true, event, ...context }, message);
+}
+
+// Wraps a parseArgs call: writes the error and usage string to stderr on failure, returns null.
+// Subcommands use this to avoid declaring a `let parsed` of ambiguous type.
+export function safeParse<T>(call: () => T, deps: CliDeps, usage: string): T | null {
+  try {
+    return call();
+  } catch (err) {
+    writeLine(deps.stderr, `error: ${(err as Error).message}`);
+    writeLine(deps.stderr, usage);
+    return null;
+  }
+}
