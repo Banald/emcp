@@ -3,11 +3,14 @@
   "include": ["src/**/*.ts"],
   "exclude": [
     "**/*.test.ts",
-    "src/index.ts"
+    "src/index.ts",
+    "src/workers/index.ts",
+    "src/db/migrate.ts",
+    "src/**/types.ts"
   ],
   "reporter": ["text", "lcov", "html"],
   "report-dir": "coverage",
-  "lines": 0,
-  "functions": 0,
-  "branches": 0
+  "lines": 95,
+  "functions": 95,
+  "branches": 90
 }
