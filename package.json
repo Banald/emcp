@@ -1,0 +1,25 @@
+{
+  "name": "mcp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25.0.0"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env --watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "node --test 'src/**/*.test.ts'",
+    "test:coverage": "c8 --config .c8rc.json node --test 'src/**/*.test.ts' 'tests/**/*.test.ts'",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@types/node": "^25.6.0",
+    "c8": "^11.0.0",
+    "typescript": "^6.0.2"
+  }
+}
