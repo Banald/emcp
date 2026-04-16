@@ -97,7 +97,7 @@ Pino is ~5× faster than Winston, has built-in field redaction (critical for our
 
 ### Metrics: prom-client
 
-De facto standard for Prometheus metrics in Node.js. Zero production dependencies. Exposes `/metrics` for scraping. We collect: request rate per tool, request duration histogram, API key request count, error rate, queue depth, worker job duration.
+De facto standard for Prometheus metrics in Node.js. Zero production dependencies. Exposes `/metrics` for scraping. We collect: request rate per tool, request duration histogram, API key request count, auth-failure and rate-limit counters, worker run lifecycle (success / failure / timeout / skipped overlap), and worker run duration.
 
 ### Testing: node:test + c8
 

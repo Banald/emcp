@@ -154,7 +154,7 @@ Also assert the identity fields — `name`, a parseable `schedule` (instantiate 
 
 ### Auth middleware
 
-Build fake `IncomingMessage` and `ServerResponse` objects (or use the small helpers in `tests/_helpers/http.ts`). Cover:
+Build fake `IncomingMessage` and `ServerResponse` objects. Cover:
 
 - Valid key → request proceeds, ctx populated.
 - Missing header → 401.

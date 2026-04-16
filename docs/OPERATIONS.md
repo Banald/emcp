@@ -135,7 +135,7 @@ If a handler ignores the signal and blocks past the grace window, the scheduler 
 
 ### Implementation pattern
 
-A shared `src/lib/shutdown.ts` exposes `registerShutdown(handler)`. The handler returns a promise; shutdown runs all registered handlers in reverse registration order (LIFO — last registered, first shut down). This naturally aligns dependencies: queues registered after the DB are closed before the DB.
+A shared `src/lib/shutdown.ts` exposes `registerShutdown(handler)`. The handler returns a promise; shutdown runs all registered handlers in reverse registration order (LIFO — last registered, first shut down). This naturally aligns dependencies: consumers of a resource register after it and therefore close before it (e.g. the worker scheduler registers after the DB pool, so the scheduler stops and drains before the pool closes).
 
 ```typescript
 import { registerShutdown } from './lib/shutdown.ts';
