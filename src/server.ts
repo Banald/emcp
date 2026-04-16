@@ -12,7 +12,7 @@ import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { config } from './config.ts';
-import { authenticate } from './core/auth.ts';
+import { type AuthenticatedKey, authenticate } from './core/auth.ts';
 import { buildToolContext } from './core/context.ts';
 import { validateHeaders } from './core/headers.ts';
 import { metrics, register } from './core/metrics.ts';
@@ -24,6 +24,16 @@ import type { ToolRegistry } from './tools/loader.ts';
 import type { Queue } from './tools/types.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
+const SESSION_IDLE_MS = 30 * 60 * 1000; // 30 minutes
+const CLEANUP_INTERVAL_MS = 60_000; // check every minute
+const TOOL_CALL_TIMEOUT_MS = 30_000; // per tool-call abort timeout
+
+interface Session {
+  transport: StreamableHTTPServerTransport;
+  mcpServer: McpServer;
+  apiKeyId: string;
+  lastActivityMs: number;
+}
 
 interface ServerDeps {
   pool: Pool;
@@ -39,10 +49,45 @@ export async function createServer(
 ): Promise<{ httpServer: Server; close: () => Promise<void> }> {
   const { pool, redis, repo, registry, queues, logger: log } = deps;
   const rateLimiter = createRateLimiter(redis);
+  const sessions = new Map<string, Session>();
+
+  /** Idempotent session removal — safe to call multiple times for the same id. */
+  const removeSession = async (id: string) => {
+    const session = sessions.get(id);
+    if (!session) return;
+    sessions.delete(id);
+    metrics.activeSessions.dec();
+    try {
+      await session.mcpServer.close();
+    } catch {
+      /* already closed */
+    }
+  };
+
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now - session.lastActivityMs > SESSION_IDLE_MS) {
+        log.info({ sessionId: id }, 'evicting idle session');
+        void removeSession(id);
+      }
+    }
+  }, CLEANUP_INTERVAL_MS);
+  cleanupInterval.unref();
 
   const httpServer = createHttpServer(async (req, res) => {
     try {
-      await handleRequest(req, res, { pool, redis, repo, registry, queues, log, rateLimiter });
+      await handleRequest(req, res, {
+        pool,
+        redis,
+        repo,
+        registry,
+        queues,
+        log,
+        rateLimiter,
+        sessions,
+        removeSession,
+      });
     } catch (err) {
       log.error({ err }, 'unhandled request error');
       if (!res.headersSent) {
@@ -59,6 +104,12 @@ export async function createServer(
   });
 
   const close = async () => {
+    clearInterval(cleanupInterval);
+    const promises: Promise<void>[] = [];
+    for (const [id] of sessions) {
+      promises.push(removeSession(id));
+    }
+    await Promise.all(promises);
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   };
 
@@ -75,6 +126,8 @@ interface HandlerDeps {
   queues: Readonly<Record<string, Queue>>;
   log: Logger;
   rateLimiter: RateLimiter;
+  sessions: Map<string, Session>;
+  removeSession: (id: string) => Promise<void>;
 }
 
 async function handleRequest(
@@ -195,7 +248,7 @@ async function handleMcp(
   res: ServerResponse,
   deps: HandlerDeps,
 ): Promise<void> {
-  const { pool, redis, repo, registry, queues, log, rateLimiter } = deps;
+  const { pool, redis, repo, registry, queues, log, rateLimiter, sessions, removeSession } = deps;
   const method = req.method ?? 'GET';
 
   // Step 1: Validate headers (Origin/Host) — initial check without per-key origin requirement.
@@ -277,9 +330,46 @@ async function handleMcp(
     return;
   }
 
-  // Step 5: Read body for POST requests.
-  let body: Buffer | undefined;
-  if (method === 'POST') {
+  // Step 5: Session routing.
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+  if (sessionId) {
+    // --- Existing session ---
+    const session = sessions.get(sessionId);
+    if (!session) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Session not found' },
+          id: null,
+        }),
+      );
+      return;
+    }
+
+    if (session.apiKeyId !== apiKey.id) {
+      log.warn({ sessionId, expected: session.apiKeyId, got: apiKey.id }, 'session key mismatch');
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden' }));
+      return;
+    }
+
+    session.lastActivityMs = Date.now();
+
+    if (method === 'DELETE') {
+      await session.transport.handleRequest(req, res);
+      await removeSession(sessionId);
+      return;
+    }
+
+    if (method === 'GET') {
+      await session.transport.handleRequest(req, res);
+      return;
+    }
+
+    // POST with existing session.
+    let body: Buffer;
     try {
       body = await readBody(req, MAX_BODY_BYTES);
     } catch {
@@ -287,27 +377,89 @@ async function handleMcp(
       res.end(JSON.stringify({ error: 'Payload too large' }));
       return;
     }
+
+    await session.transport.handleRequest(req, res, JSON.parse(body.toString('utf-8')));
+    return;
   }
 
-  // Step 6: Generate request ID and abort controller.
-  const requestId = randomUUID();
-  const abortController = new AbortController();
-  req.on('close', () => abortController.abort());
+  // --- New session (must be POST) ---
+  if (method !== 'POST') {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32600, message: 'Session ID required for non-POST requests' },
+        id: null,
+      }),
+    );
+    return;
+  }
 
-  // Step 7: Create per-request MCP transport and server.
-  // TODO(phase-7): consider stateful sessions for server-initiated notifications
+  let body: Buffer;
+  try {
+    body = await readBody(req, MAX_BODY_BYTES);
+  } catch {
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Payload too large' }));
+    return;
+  }
+
+  let newSessionId: string | undefined;
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // Stateless mode for Phase 3
-    enableDnsRebindingProtection: false, // We handle this ourselves
+    sessionIdGenerator: () => {
+      newSessionId = randomUUID();
+      return newSessionId;
+    },
+    enableDnsRebindingProtection: false,
   });
 
   const mcpServer = new McpServer(
-    { name: 'echo', version: '0.0.0' },
+    { name: 'echo', version: process.env.npm_package_version ?? '0.0.0' },
     { capabilities: { tools: {} } },
   );
 
-  // Step 8: Register tools with metrics and per-tool rate limiting.
-  const requestBytes = body?.byteLength ?? 0;
+  registerSessionTools(mcpServer, apiKey, {
+    pool,
+    redis,
+    queues,
+    log,
+    rateLimiter,
+    registry,
+    repo,
+  });
+
+  await mcpServer.connect(transport);
+  await transport.handleRequest(req, res, JSON.parse(body.toString('utf-8')));
+
+  if (newSessionId) {
+    sessions.set(newSessionId, {
+      transport,
+      mcpServer,
+      apiKeyId: apiKey.id,
+      lastActivityMs: Date.now(),
+    });
+    metrics.activeSessions.inc();
+    log.info({ sessionId: newSessionId, api_key_prefix: apiKey.prefix }, 'session created');
+  } else {
+    // Initialize failed or non-initialize request — clean up.
+    await mcpServer.close();
+  }
+}
+
+function registerSessionTools(
+  mcpServer: McpServer,
+  apiKey: AuthenticatedKey,
+  deps: {
+    pool: Pool;
+    redis: Redis;
+    queues: Readonly<Record<string, Queue>>;
+    log: Logger;
+    rateLimiter: RateLimiter;
+    registry: ToolRegistry;
+    repo: ApiKeyRepository;
+  },
+): void {
+  const { pool, redis, queues, log, rateLimiter, registry, repo } = deps;
 
   for (const tool of registry.list()) {
     mcpServer.registerTool(
@@ -318,9 +470,6 @@ async function handleMcp(
       },
       async (args: Record<string, unknown>): Promise<SdkCallToolResult> => {
         // Per-tool rate limiting: enforced at the tool layer, not HTTP layer.
-        // A denied per-tool limit throws RateLimitError (JSON-RPC -32029) but does NOT
-        // set HTTP 429 because the HTTP request itself succeeded — the per-tool limit
-        // is a tool-level concern, distinct from the per-key HTTP-level limit.
         if (tool.rateLimit) {
           const toolRlResult = await rateLimiter.check({
             scope: `rl:tool:${apiKey.id}:${tool.name}`,
@@ -337,6 +486,8 @@ async function handleMcp(
           }
         }
 
+        const requestId = randomUUID();
+        const requestBytes = JSON.stringify(args).length;
         const startMs = Date.now();
         const timer = metrics.requestDuration.startTimer({ tool: tool.name });
 
@@ -349,7 +500,7 @@ async function handleMcp(
           },
           toolName: tool.name,
           requestId,
-          signal: abortController.signal,
+          signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS),
           pool,
           redis,
           queues,
@@ -392,15 +543,6 @@ async function handleMcp(
       },
     );
   }
-
-  // Step 9: Connect and handle.
-  await mcpServer.connect(transport);
-
-  const parsedBody = body !== undefined ? JSON.parse(body.toString('utf-8')) : undefined;
-  await transport.handleRequest(req, res, parsedBody);
-
-  // Clean up after the request.
-  await mcpServer.close();
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {

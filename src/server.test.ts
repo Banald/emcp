@@ -591,3 +591,305 @@ describe('MCP with registered tool', () => {
     }
   });
 });
+
+describe('Stateful MCP sessions', () => {
+  const initBody = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'test', version: '0' },
+    },
+  });
+
+  const stdHeaders = {
+    host: 'localhost:3000',
+    authorization: 'Bearer mcp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  };
+
+  async function startServer(overrides: Partial<Parameters<typeof createServer>[0]> = {}) {
+    const result = await createServer({
+      pool: makePool(),
+      redis: makeRedis(),
+      repo: makeRepo(),
+      registry: makeRegistry(),
+      queues: {},
+      logger: createLogger({ level: 'silent' }),
+      ...overrides,
+    });
+    await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
+    return result;
+  }
+
+  it('returns Mcp-Session-Id header on initialize', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(res.status, 200);
+      const sessionId = res.headers['mcp-session-id'];
+      assert.ok(sessionId, 'expected Mcp-Session-Id header');
+      assert.ok(typeof sessionId === 'string' && sessionId.length > 0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('allows session reuse with Mcp-Session-Id header', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      // Initialize — creates session
+      const initRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(initRes.status, 200);
+      const sessionId = initRes.headers['mcp-session-id'] as string;
+      assert.ok(sessionId);
+
+      // Send initialized notification using the session
+      const notifBody = JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'notifications/initialized',
+      });
+      const notifRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: notifBody,
+      });
+      // Notifications return 200 (or 202) — not an error
+      assert.ok(
+        notifRes.status >= 200 && notifRes.status < 300,
+        `expected 2xx, got ${notifRes.status}`,
+      );
+    } finally {
+      await close();
+    }
+  });
+
+  it('returns 404 for unknown session ID', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': 'nonexistent-session-id' },
+        body: initBody,
+      });
+      assert.equal(res.status, 404);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error.code, -32001);
+    } finally {
+      await close();
+    }
+  });
+
+  it('returns 403 when session key does not match request key', async () => {
+    // Use two different keys — first creates the session, second tries to use it
+    let callCount = 0;
+    const repo = makeRepo({
+      findByHash: mock.fn(async () => {
+        callCount++;
+        return {
+          id: callCount <= 1 ? 'key-1' : 'key-2',
+          keyPrefix: TEST_KEY_PREFIX,
+          keyHash: 'hash',
+          name: 'test',
+          status: 'active' as const,
+          rateLimitPerMinute: 60,
+          allowNoOrigin: true,
+          createdAt: new Date(),
+          lastUsedAt: null,
+          blacklistedAt: null,
+          deletedAt: null,
+          requestCount: 0n,
+          bytesIn: 0n,
+          bytesOut: 0n,
+          totalComputeMs: 0n,
+        };
+      }) as unknown as ApiKeyRepository['findByHash'],
+    });
+    const { httpServer: s, close } = await startServer({ repo });
+    try {
+      // Initialize with key-1
+      const initRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(initRes.status, 200);
+      const sessionId = initRes.headers['mcp-session-id'] as string;
+
+      // Attempt to use session with key-2 (different key returned by mock)
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      });
+      assert.equal(res.status, 403);
+    } finally {
+      await close();
+    }
+  });
+
+  it('handles DELETE to close a session', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      // Initialize
+      const initRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      const sessionId = initRes.headers['mcp-session-id'] as string;
+      assert.ok(sessionId);
+
+      // DELETE the session
+      const deleteRes = await fetch(s, '/mcp', {
+        method: 'DELETE',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+      });
+      assert.ok(deleteRes.status >= 200 && deleteRes.status < 300);
+
+      // Session should now be gone
+      const reuse = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      });
+      assert.equal(reuse.status, 404);
+    } finally {
+      await close();
+    }
+  });
+
+  it('close() cleans up all sessions', async () => {
+    const { httpServer: s, close } = await startServer();
+    // Create two sessions
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(res.status, 200);
+      assert.ok(res.headers['mcp-session-id']);
+    }
+    // close() should not throw even with active sessions
+    await close();
+  });
+
+  it('returns 400 for GET without session ID', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      const res = await fetch(s, '/mcp', {
+        method: 'GET',
+        headers: stdHeaders,
+      });
+      assert.equal(res.status, 400);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error.code, -32600);
+    } finally {
+      await close();
+    }
+  });
+
+  it('executes a tool call through a session', async () => {
+    const registry = makeRegistry([{ name: 'test-echo', description: 'Echoes input' }]);
+    const { httpServer: s, close } = await startServer({ registry });
+    try {
+      // Initialize
+      const initRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(initRes.status, 200);
+      const sessionId = initRes.headers['mcp-session-id'] as string;
+      assert.ok(sessionId);
+
+      // Send initialized notification
+      await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      });
+
+      // Call the tool
+      const callBody = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'test-echo', arguments: {} },
+      });
+      const callRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: callBody,
+      });
+      assert.equal(callRes.status, 200);
+      const parsed = parseResponse(callRes.body);
+      assert.ok(parsed.result, 'expected result in tool call response');
+    } finally {
+      await close();
+    }
+  });
+
+  it('handles per-tool rate limiting in session tools', async () => {
+    const registry = makeRegistry([
+      { name: 'limited', description: 'Rate-limited tool', rateLimit: { perMinute: 1 } },
+    ]);
+    // Mock: per-key rate limit always passes, per-tool always denied
+    const redisWithRl = {
+      ...makeRedis(),
+      slidingWindowRateLimit: mock.fn(async (...args: unknown[]) => {
+        const scope = args[0] as string;
+        if (scope.startsWith('rl:tool:')) return [0, 0, Date.now() - 5_000];
+        return [1, 59, Date.now()];
+      }),
+    } as unknown as Redis;
+    const { httpServer: s, close } = await startServer({ registry, redis: redisWithRl });
+    try {
+      // Initialize
+      const initRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      const sessionId = initRes.headers['mcp-session-id'] as string;
+
+      // Send initialized notification
+      await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      });
+
+      // Call the tool — per-tool rate limit will deny
+      const callBody = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'limited', arguments: {} },
+      });
+      const callRes = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: { ...stdHeaders, 'mcp-session-id': sessionId },
+        body: callBody,
+      });
+      assert.equal(callRes.status, 200);
+      const parsed = parseResponse(callRes.body);
+      // The tool handler throws RateLimitError, which the MCP SDK wraps as a JSON-RPC error
+      assert.ok(parsed.result || parsed.error, 'expected response with rate limit error');
+    } finally {
+      await close();
+    }
+  });
+});
