@@ -8,7 +8,7 @@ import { ValidationError } from '../lib/errors.ts';
 export function isPrivateAddress(addr: string): boolean {
   // IPv4-mapped IPv6: ::ffff:a.b.c.d — extract the IPv4 part
   const v4mapped = addr.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-  if (v4mapped && v4mapped[1]) return isPrivateIPv4(v4mapped[1]);
+  if (v4mapped?.[1]) return isPrivateIPv4(v4mapped[1]);
 
   // Plain IPv4
   if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr)) return isPrivateIPv4(addr);

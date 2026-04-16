@@ -197,7 +197,7 @@ registerShutdown(async () => {
 | `bullmq_jobs_total` | counter | `queue`, `status` | Job lifecycle counters |
 | `bullmq_job_duration_seconds` | histogram | `queue` | Job processing duration |
 | `bullmq_queue_depth` | gauge | `queue`, `state` | Current jobs by state (waiting, active, delayed, failed) |
-| `db_pool_*` | gauge | — | Connection pool utilization |
+
 
 ### Rules
 

@@ -243,7 +243,7 @@ All errors thrown by application code descend from `AppError` in `src/lib/errors
 | `NotFoundError` | 404 | -32011 | no | Resource lookup returned nothing |
 | `ConflictError` | 409 | -32012 | no | Unique constraint, version mismatch, etc. |
 | `TransientError` | 503 | -32013 | yes | Upstream timeout, DB connection blip — client may retry |
-| `ConfigError` | n/a | n/a | no | Thrown only at startup; halts the process |
+| `ConfigError` | 500 | -32603 | no | Thrown only at startup; halts the process (never reaches HTTP layer) |
 
 Generic `Error` and uncaught throws map to HTTP 500 / JSON-RPC -32603 with a generic message. The actual error is logged with full stack trace; the client sees no internals.
 
@@ -257,7 +257,7 @@ Generic `Error` and uncaught throws map to HTTP 500 / JSON-RPC -32603 with a gen
 | `/health` | GET | Liveness + readiness probe | none (binds loopback only) |
 | `/metrics` | GET | Prometheus metrics scrape endpoint | none (binds loopback only) |
 
-`/health` returns JSON: `{ "status": "ok", "checks": { "db": "ok", "redis": "ok" }, "uptime_s": 123 }`. Returns HTTP 503 if any dependency check fails. `/metrics` returns Prometheus text format.
+`/health` returns JSON: `{ "status": "ok", "version": "0.1.0", "uptime_s": 123, "checks": { "db": { "status": "ok", "latency_ms": 2 }, "redis": { "status": "ok", "latency_ms": 1 } } }`. Returns HTTP 503 if any dependency check fails. `/metrics` returns Prometheus text format.
 
 Both `/health` and `/metrics` are unauthenticated because the process binds to `127.0.0.1` only — they're inaccessible externally. The reverse proxy must NOT forward these paths to the internet.
 

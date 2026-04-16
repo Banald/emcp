@@ -34,7 +34,10 @@ describe('fetch-url tool', () => {
   });
 
   it('enqueues a job for a valid https URL', async () => {
-    const ctx = makeCtx();
+    const addMock = mock.fn(async (_name: string, _data: Record<string, unknown>) => ({
+      id: 'job-123',
+    }));
+    const ctx = makeCtx({ queues: { fetch: { add: addMock } } });
     const result = await tool.handler({ url: 'https://example.com/page' }, ctx);
 
     assert.equal(result.isError, undefined);
@@ -44,9 +47,8 @@ describe('fetch-url tool', () => {
     assert.equal(payload.status, 'queued');
 
     // Verify queue.add was called correctly
-    const addFn = (ctx as unknown as Record<string, any>).queues.fetch.add;
-    assert.equal(addFn.mock.callCount(), 1);
-    const [jobName, jobData] = addFn.mock.calls[0].arguments;
+    assert.equal(addMock.mock.callCount(), 1);
+    const [jobName, jobData] = addMock.mock.calls[0].arguments;
     assert.equal(jobName, 'fetch');
     assert.deepEqual(jobData, {
       url: 'https://example.com/page',

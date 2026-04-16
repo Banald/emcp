@@ -35,10 +35,17 @@ export async function authenticate(
   authorizationHeader: string | undefined,
   repo: ApiKeyRepository,
 ): Promise<AuthResult> {
-  if (authorizationHeader === undefined || !authorizationHeader.startsWith(BEARER_PREFIX)) {
+  if (authorizationHeader === undefined) {
     return {
       ok: false,
-      error: new AuthRequiredError('missing or malformed Authorization header', MISSING_PUBLIC),
+      error: new AuthRequiredError('missing Authorization header', MISSING_PUBLIC),
+    };
+  }
+
+  if (!authorizationHeader.startsWith(BEARER_PREFIX)) {
+    return {
+      ok: false,
+      error: new AuthMalformedTokenError('non-Bearer Authorization header', MISSING_PUBLIC),
     };
   }
 

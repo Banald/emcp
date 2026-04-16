@@ -34,22 +34,19 @@ Unit tests **must** be runnable without Docker, network, or any external service
 
 ```bash
 # All unit tests, no coverage
-node --test 'src/**/*.test.ts'
+node --test --import ./tests/setup.ts 'src/**/*.test.ts'
 
 # All tests with coverage and threshold enforcement
-npx c8 --reporter=text --reporter=lcov \
-  --lines 95 --functions 95 --branches 90 \
-  --all --include 'src/**/*.ts' --exclude '**/*.test.ts' --exclude 'src/workers/index.ts' \
-  node --test 'src/**/*.test.ts' 'tests/**/*.test.ts'
+c8 --config .c8rc.json node --test --import ./tests/setup.ts 'src/**/*.test.ts'
 
 # Watch mode
-node --test --watch 'src/**/*.test.ts'
+node --test --import ./tests/setup.ts --watch 'src/**/*.test.ts'
 
 # Single file
-node --test src/tools/fetch-news.test.ts
+node --test --import ./tests/setup.ts src/tools/whoami.test.ts
 
 # Filter by name
-node --test --test-name-pattern='fetches articles' 'src/**/*.test.ts'
+node --test --import ./tests/setup.ts --test-name-pattern='returns key info' 'src/**/*.test.ts'
 ```
 
 ## Unit test patterns
@@ -263,6 +260,7 @@ Some files are inherently untestable in unit tests and excluded from coverage:
     "src/**/types.ts"
   ],
   "reporter": ["text", "lcov", "html"],
+  "report-dir": "coverage",
   "lines": 95,
   "functions": 95,
   "branches": 90

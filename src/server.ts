@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -23,6 +24,9 @@ import { registerShutdown } from './lib/shutdown.ts';
 import type { ToolRegistry } from './tools/loader.ts';
 import type { Queue } from './tools/types.ts';
 
+const PKG_VERSION: string = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const SESSION_IDLE_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 60_000; // check every minute
@@ -206,7 +210,7 @@ async function handleHealth(
   const allOk = Object.values(checks).every((c) => c.status === 'ok');
   const body = {
     status: allOk ? 'ok' : 'fail',
-    version: process.env.npm_package_version ?? '0.0.0',
+    version: PKG_VERSION,
     uptime_s: Math.floor(process.uptime()),
     checks,
   };
@@ -414,7 +418,7 @@ async function handleMcp(
   });
 
   const mcpServer = new McpServer(
-    { name: 'echo', version: process.env.npm_package_version ?? '0.0.0' },
+    { name: 'echo', version: PKG_VERSION },
     { capabilities: { tools: {} } },
   );
 

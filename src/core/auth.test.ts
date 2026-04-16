@@ -61,12 +61,13 @@ describe('authenticate — malformed / missing input', () => {
     assert.equal(findByHash.mock.callCount(), 0);
   });
 
-  it('rejects a header without the Bearer prefix with AuthRequiredError', async () => {
+  it('rejects a header without the Bearer prefix with AuthMalformedTokenError (-32002)', async () => {
     const { repo } = makeRepo(null);
     const result = await authenticate('Basic abc', repo);
     assert.equal(result.ok, false);
     if (result.ok === false) {
-      assert.ok(result.error instanceof AuthRequiredError);
+      assert.ok(result.error instanceof AuthMalformedTokenError);
+      assert.equal(result.error.jsonRpcCode, -32002);
     }
   });
 

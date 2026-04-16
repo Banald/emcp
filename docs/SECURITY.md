@@ -117,6 +117,7 @@ const logger = pino({
       '*.password',
       '*.secret',
       '*.token',
+      '*.hmacSecret',
     ],
     censor: '[REDACTED]',
   },
@@ -141,7 +142,7 @@ Every API key has a default rate limit applied at the auth middleware layer. Too
 - Implementation: Redis sliding window via Lua script (atomic, no race conditions).
 - Defaults: 60 requests/minute per key (configurable per key via `rate_limit_per_minute` column).
 - On exceed: HTTP 429 with `Retry-After` header. Do not consume a "request slot" for the rejected request itself.
-- Always return rate limit headers on **all** responses, not just rejections: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+- Always return rate limit headers on **all authenticated responses**, not just rejections: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`. Pre-auth failures (missing/malformed credentials) cannot report per-key limits and are excluded.
 
 ## Rule 8: Auth response codes
 

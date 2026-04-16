@@ -61,20 +61,28 @@ node --env-file=.env --watch src/workers/index.ts
 
 ### Run tests
 ```bash
-node --test --experimental-test-coverage 'src/**/*.test.ts' 'tests/**/*.test.ts'
-# Or with c8 for threshold enforcement:
-npx c8 --reporter=text --reporter=lcov --lines 95 --functions 95 --branches 90 \
-  node --test 'src/**/*.test.ts' 'tests/**/*.test.ts'
+npm test                    # unit tests only
+npm run test:coverage       # unit tests with coverage gate (95/95/90)
+npm run test:integration    # integration tests (requires Docker)
+npm run test:all            # coverage + integration
 ```
 
 ### Lint and format
 ```bash
-npx biome check --write .
+npx biome check .           # check only
+npx biome check --write .   # check and auto-fix
 ```
 
 ### Typecheck
 ```bash
-npx tsc --noEmit
+npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json
+```
+
+### Run in production
+```bash
+npm run build               # tsc → dist/
+npm start                   # node dist/index.js
+npm run start:worker        # node dist/workers/index.js
 ```
 
 ### Run migrations
@@ -105,7 +113,6 @@ npx tsc
 | Auth, hashing, headers, rate limiting, anything credential-adjacent | `docs/SECURITY.md` |
 | API key CLI, migrations, shutdown, health, metrics | `docs/OPERATIONS.md` |
 | Writing tests, coverage requirements, test patterns | `docs/TESTING.md` |
-| Initial build (only used during phased construction) | `build-plan/README.md` |
 
 ## When you're unsure
 

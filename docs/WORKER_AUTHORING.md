@@ -60,7 +60,7 @@ export interface NewsJobData {
 
 ## Writing a processor
 
-Processors are pure async functions. They take a `Job` and a `ctx` (same shape as tool ctx, minus `apiKey`) and do the work.
+Processors are pure async functions. They take a `Job` and a `ctx` (`WorkerContext` provides `logger`, `db`, and `redis` — the subset of `ToolContext` relevant to background processing) and do the work.
 
 ```typescript
 // src/workers/processors/fetch-news.ts
@@ -219,7 +219,6 @@ describe('fetchNewsProcessor', () => {
     logger: { info: mock.fn(), error: mock.fn() },
     db: { query: mock.fn(async () => ({ rows: [] })) },
     redis: {},
-    queues: {},
     ...overrides,
   });
 
