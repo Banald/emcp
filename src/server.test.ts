@@ -32,11 +32,14 @@ function makeRepo(overrides: Partial<ApiKeyRepository> = {}): ApiKeyRepository {
       totalComputeMs: 0n,
     })),
     touchLastUsed: mock.fn(async () => {}),
+    recordUsage: mock.fn(async () => {}),
     ...overrides,
   } as unknown as ApiKeyRepository;
 }
 
-function makeRegistry(tools: Array<{ name: string; description: string }> = []): ToolRegistry {
+function makeRegistry(
+  tools: Array<{ name: string; description: string; rateLimit?: { perMinute: number } }> = [],
+): ToolRegistry {
   const map = new Map(
     tools.map((t) => [
       t.name,
@@ -54,11 +57,18 @@ function makeRegistry(tools: Array<{ name: string; description: string }> = []):
 }
 
 function makePool(): Pool {
-  return { query: mock.fn(async () => ({ rows: [] })) } as unknown as Pool;
+  return { query: mock.fn(async () => ({ rows: [{ '?column?': 1 }] })) } as unknown as Pool;
 }
 
 function makeRedis(): Redis {
-  return { get: mock.fn(), set: mock.fn(), status: 'ready' } as unknown as Redis;
+  return {
+    get: mock.fn(),
+    set: mock.fn(),
+    status: 'ready',
+    ping: mock.fn(async () => 'PONG'),
+    defineCommand: mock.fn(),
+    slidingWindowRateLimit: mock.fn(async () => [1, 59, Date.now()]),
+  } as unknown as Redis;
 }
 
 function fetch(
@@ -126,18 +136,58 @@ describe('HTTP server', () => {
   });
 
   describe('/health', () => {
-    it('returns 200 with status ok on loopback', async () => {
+    it('returns 200 with full health check on loopback', async () => {
       const res = await fetch(server, '/health');
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.status, 'ok');
+      assert.ok(body.checks.db, 'expected db check');
+      assert.equal(body.checks.db.status, 'ok');
+      assert.ok(body.checks.redis, 'expected redis check');
+      assert.equal(body.checks.redis.status, 'ok');
+      assert.ok(typeof body.uptime_s === 'number', 'expected uptime_s');
+      assert.ok(typeof body.version === 'string', 'expected version');
+    });
+  });
+
+  describe('/health 503 when DB down', () => {
+    it('returns 503 when DB query fails', async () => {
+      const failPool = {
+        query: mock.fn(async () => {
+          throw new Error('connection refused');
+        }),
+      } as unknown as Pool;
+      const result = await createServer({
+        pool: failPool,
+        redis: makeRedis(),
+        repo: makeRepo(),
+        registry: makeRegistry(),
+        queues: {},
+        logger: createLogger({ level: 'silent' }),
+      });
+      await new Promise<void>((resolve) =>
+        result.httpServer.listen(0, '127.0.0.1', () => resolve()),
+      );
+      try {
+        const res = await fetch(result.httpServer, '/health');
+        assert.equal(res.status, 503);
+        const body = JSON.parse(res.body);
+        assert.equal(body.status, 'fail');
+        assert.equal(body.checks.db.status, 'fail');
+        assert.ok(body.checks.db.error);
+      } finally {
+        await result.close();
+      }
     });
   });
 
   describe('/metrics', () => {
-    it('returns 404 (not implemented yet)', async () => {
+    it('returns Prometheus text format on loopback', async () => {
       const res = await fetch(server, '/metrics');
-      assert.equal(res.status, 404);
+      assert.equal(res.status, 200);
+      assert.ok(res.body.includes('mcp_requests_total'), 'expected mcp_requests_total');
+      assert.ok(res.body.includes('# HELP'), 'expected HELP lines');
+      assert.ok(res.body.includes('# TYPE'), 'expected TYPE lines');
     });
   });
 
@@ -150,8 +200,6 @@ describe('HTTP server', () => {
 });
 
 describe('MCP endpoint auth and headers', () => {
-  // Each test in this block gets its own server with custom repo/registry
-
   async function startServer(repoOverrides: Partial<ApiKeyRepository> = {}) {
     const result = await createServer({
       pool: makePool(),
@@ -280,6 +328,74 @@ describe('MCP endpoint auth and headers', () => {
     }
   });
 
+  it('sets rate limit headers on successful MCP request', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      const initBody = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '0' },
+        },
+      });
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+          authorization: 'Bearer mcp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: initBody,
+      });
+      assert.equal(res.status, 200);
+      assert.ok(res.headers['x-ratelimit-limit'], 'expected X-RateLimit-Limit header');
+      assert.ok(res.headers['x-ratelimit-remaining'], 'expected X-RateLimit-Remaining header');
+      assert.ok(res.headers['x-ratelimit-reset'], 'expected X-RateLimit-Reset header');
+    } finally {
+      await close();
+    }
+  });
+
+  it('returns 429 with Retry-After when rate limit exceeded', async () => {
+    const rateLimitedRedis = {
+      ...makeRedis(),
+      slidingWindowRateLimit: mock.fn(async () => [0, 0, Date.now() - 5_000]),
+    } as unknown as Redis;
+
+    const result = await createServer({
+      pool: makePool(),
+      redis: rateLimitedRedis,
+      repo: makeRepo(),
+      registry: makeRegistry(),
+      queues: {},
+      logger: createLogger({ level: 'silent' }),
+    });
+    await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
+    try {
+      const res = await fetch(result.httpServer, '/mcp', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+          authorization: 'Bearer mcp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      assert.equal(res.status, 429);
+      assert.ok(res.headers['retry-after'], 'expected Retry-After header');
+      assert.ok(res.headers['x-ratelimit-limit'], 'expected X-RateLimit-Limit header');
+      assert.equal(res.headers['x-ratelimit-remaining'], '0');
+      const body = JSON.parse(res.body);
+      assert.equal(body.error.code, -32029);
+    } finally {
+      await result.close();
+    }
+  });
+
   it('returns MCP initialize response for valid auth with empty tool registry', async () => {
     const { httpServer: s, close } = await startServer();
     try {
@@ -304,7 +420,6 @@ describe('MCP endpoint auth and headers', () => {
         body: initBody,
       });
       assert.equal(res.status, 200);
-      // Stateless mode returns SSE or JSON. Parse the MCP response.
       const parsed = parseResponse(res.body);
       const result = parsed.result as Record<string, unknown>;
       assert.ok(result, 'expected a result in the initialize response');

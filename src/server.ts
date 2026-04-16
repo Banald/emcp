@@ -15,8 +15,10 @@ import { config } from './config.ts';
 import { authenticate } from './core/auth.ts';
 import { buildToolContext } from './core/context.ts';
 import { validateHeaders } from './core/headers.ts';
+import { metrics, register } from './core/metrics.ts';
+import { createRateLimiter, type RateLimiter, type RateLimitResult } from './core/rate-limiter.ts';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
-import { isAppError, TransientError } from './lib/errors.ts';
+import { isAppError, RateLimitError, TransientError } from './lib/errors.ts';
 import { registerShutdown } from './lib/shutdown.ts';
 import type { ToolRegistry } from './tools/loader.ts';
 import type { Queue } from './tools/types.ts';
@@ -36,10 +38,11 @@ export async function createServer(
   deps: ServerDeps,
 ): Promise<{ httpServer: Server; close: () => Promise<void> }> {
   const { pool, redis, repo, registry, queues, logger: log } = deps;
+  const rateLimiter = createRateLimiter(redis);
 
   const httpServer = createHttpServer(async (req, res) => {
     try {
-      await handleRequest(req, res, { pool, redis, repo, registry, queues, log });
+      await handleRequest(req, res, { pool, redis, repo, registry, queues, log, rateLimiter });
     } catch (err) {
       log.error({ err }, 'unhandled request error');
       if (!res.headersSent) {
@@ -71,6 +74,7 @@ interface HandlerDeps {
   registry: ToolRegistry;
   queues: Readonly<Record<string, Queue>>;
   log: Logger;
+  rateLimiter: RateLimiter;
 }
 
 async function handleRequest(
@@ -82,7 +86,7 @@ async function handleRequest(
   const method = req.method ?? 'GET';
 
   if (url === '/health' && method === 'GET') {
-    return handleHealth(req, res);
+    return handleHealth(req, res, deps);
   }
 
   if (url === '/metrics' && method === 'GET') {
@@ -103,25 +107,87 @@ function isLoopback(req: IncomingMessage): boolean {
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
-function handleHealth(req: IncomingMessage, res: ServerResponse): void {
-  if (!isLoopback(req)) {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Forbidden' }));
-    return;
-  }
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok' }));
+function applyRateLimitHeaders(res: ServerResponse, result: RateLimitResult): void {
+  res.setHeader('X-RateLimit-Limit', String(result.limit));
+  res.setHeader('X-RateLimit-Remaining', String(result.remaining));
+  res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAtMs / 1000)));
 }
 
-function handleMetrics(req: IncomingMessage, res: ServerResponse): void {
+async function handleHealth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: HandlerDeps,
+): Promise<void> {
   if (!isLoopback(req)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Forbidden' }));
     return;
   }
-  // TODO(phase-6): Prometheus metrics endpoint
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not implemented' }));
+
+  const checks: Record<string, { status: string; latency_ms?: number; error?: string }> = {};
+
+  // DB check with 1s timeout
+  try {
+    const t = Date.now();
+    await Promise.race([
+      deps.pool.query('SELECT 1'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1000)),
+    ]);
+    checks.db = { status: 'ok', latency_ms: Date.now() - t };
+  } catch (err) {
+    checks.db = { status: 'fail', error: (err as Error).message };
+  }
+
+  // Redis check with 1s timeout
+  try {
+    const t = Date.now();
+    await Promise.race([
+      deps.redis.ping(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1000)),
+    ]);
+    checks.redis = { status: 'ok', latency_ms: Date.now() - t };
+  } catch (err) {
+    checks.redis = { status: 'fail', error: (err as Error).message };
+  }
+
+  const allOk = Object.values(checks).every((c) => c.status === 'ok');
+  const body = {
+    status: allOk ? 'ok' : 'fail',
+    version: process.env.npm_package_version ?? '0.0.0',
+    uptime_s: Math.floor(process.uptime()),
+    checks,
+  };
+
+  res.writeHead(allOk ? 200 : 503, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+async function handleMetrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isLoopback(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Forbidden' }));
+    return;
+  }
+  res.setHeader('Content-Type', register.contentType);
+  res.end(await register.metrics());
+}
+
+// Map auth error reasons to bounded metric labels.
+function authReasonLabel(error: { jsonRpcCode: number }): string {
+  switch (error.jsonRpcCode) {
+    case -32001:
+      return 'missing';
+    case -32002:
+      return 'malformed';
+    case -32003:
+      return 'unknown';
+    case -32004:
+      return 'blacklisted';
+    case -32005:
+      return 'deleted';
+    default:
+      return 'unknown';
+  }
 }
 
 async function handleMcp(
@@ -129,12 +195,8 @@ async function handleMcp(
   res: ServerResponse,
   deps: HandlerDeps,
 ): Promise<void> {
-  const { pool, redis, repo, registry, queues, log } = deps;
+  const { pool, redis, repo, registry, queues, log, rateLimiter } = deps;
   const method = req.method ?? 'GET';
-
-  // For DELETE requests, we still validate headers and auth but don't read body.
-  // For GET (SSE), we validate headers and auth.
-  // For POST, we read and parse the body.
 
   // Step 1: Validate headers (Origin/Host) — initial check without per-key origin requirement.
   const headerResult = validateHeaders(
@@ -159,6 +221,7 @@ async function handleMcp(
 
   if (!authResult.ok) {
     const err = authResult.error;
+    metrics.authFailuresTotal.inc({ reason: authReasonLabel(err) });
     log.warn({ reason: err.message, code: err.jsonRpcCode }, 'auth failed');
     res.writeHead(err.httpStatus, { 'Content-Type': 'application/json' });
     res.end(
@@ -193,7 +256,28 @@ async function handleMcp(
     return;
   }
 
-  // Step 4: Read body for POST requests.
+  // Step 4: Per-key rate limiting.
+  const rlResult = await rateLimiter.check({
+    scope: `rl:key:${apiKey.id}`,
+    limit: apiKey.rateLimitPerMinute,
+    windowMs: 60_000,
+  });
+  applyRateLimitHeaders(res, rlResult);
+  if (!rlResult.allowed) {
+    metrics.rateLimitHitsTotal.inc({ scope: 'per_key' });
+    res.setHeader('Retry-After', String(rlResult.retryAfterSec));
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32029, message: 'rate limit exceeded' },
+        id: null,
+      }),
+    );
+    return;
+  }
+
+  // Step 5: Read body for POST requests.
   let body: Buffer | undefined;
   if (method === 'POST') {
     try {
@@ -205,12 +289,12 @@ async function handleMcp(
     }
   }
 
-  // Step 5: Generate request ID and abort controller.
+  // Step 6: Generate request ID and abort controller.
   const requestId = randomUUID();
   const abortController = new AbortController();
   req.on('close', () => abortController.abort());
 
-  // Step 6: Create per-request MCP transport and server.
+  // Step 7: Create per-request MCP transport and server.
   // TODO(phase-7): consider stateful sessions for server-initiated notifications
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // Stateless mode for Phase 3
@@ -222,8 +306,9 @@ async function handleMcp(
     { capabilities: { tools: {} } },
   );
 
-  // Step 7: Register tools.
-  // TODO(phase-6): record per-request metrics (bytes_in, bytes_out, compute_ms) here
+  // Step 8: Register tools with metrics and per-tool rate limiting.
+  const requestBytes = body?.byteLength ?? 0;
+
   for (const tool of registry.list()) {
     mcpServer.registerTool(
       tool.name,
@@ -232,7 +317,29 @@ async function handleMcp(
         inputSchema: tool.inputSchema,
       },
       async (args: Record<string, unknown>): Promise<SdkCallToolResult> => {
-        // TODO(phase-6): enforce per-tool rate limit (tool.rateLimit) via Redis sliding window
+        // Per-tool rate limiting: enforced at the tool layer, not HTTP layer.
+        // A denied per-tool limit throws RateLimitError (JSON-RPC -32029) but does NOT
+        // set HTTP 429 because the HTTP request itself succeeded — the per-tool limit
+        // is a tool-level concern, distinct from the per-key HTTP-level limit.
+        if (tool.rateLimit) {
+          const toolRlResult = await rateLimiter.check({
+            scope: `rl:tool:${apiKey.id}:${tool.name}`,
+            limit: tool.rateLimit.perMinute,
+            windowMs: 60_000,
+          });
+          if (!toolRlResult.allowed) {
+            metrics.rateLimitHitsTotal.inc({ scope: 'per_tool' });
+            metrics.requestsTotal.inc({ tool: tool.name, status: 'rate_limited' });
+            throw new RateLimitError(
+              `per-tool rate limit exceeded for ${tool.name}`,
+              `Rate limit exceeded for ${tool.name}. Retry in ${toolRlResult.retryAfterSec}s.`,
+            );
+          }
+        }
+
+        const startMs = Date.now();
+        const timer = metrics.requestDuration.startTimer({ tool: tool.name });
+
         const ctx = buildToolContext({
           apiKey: {
             id: apiKey.id,
@@ -248,10 +355,37 @@ async function handleMcp(
           queues,
           rootLogger: log,
         });
+
         try {
-          return (await tool.handler(args, ctx)) as SdkCallToolResult;
+          const result = (await tool.handler(args, ctx)) as SdkCallToolResult;
+          timer();
+          const responseBytes = JSON.stringify(result).length;
+          metrics.requestsTotal.inc({ tool: tool.name, status: 'success' });
+          metrics.requestBytesIn.observe({ tool: tool.name }, requestBytes);
+          metrics.requestBytesOut.observe({ tool: tool.name }, responseBytes);
+
+          // Fire-and-forget usage persistence to Postgres.
+          queueMicrotask(() => {
+            repo
+              .recordUsage({
+                keyId: apiKey.id,
+                toolName: tool.name,
+                bytesIn: requestBytes,
+                bytesOut: responseBytes,
+                computeMs: Date.now() - startMs,
+              })
+              .catch((err) => {
+                log.error({ err, key_id: apiKey.id, tool: tool.name }, 'recordUsage failed');
+              });
+          });
+
+          return result;
         } catch (err) {
+          timer();
           ctx.logger.error({ err }, 'tool handler error');
+          if (!(err instanceof RateLimitError)) {
+            metrics.requestsTotal.inc({ tool: tool.name, status: 'error' });
+          }
           if (isAppError(err)) throw err;
           throw new TransientError('tool execution failed', 'An error occurred.');
         }
@@ -259,7 +393,7 @@ async function handleMcp(
     );
   }
 
-  // Step 8: Connect and handle.
+  // Step 9: Connect and handle.
   await mcpServer.connect(transport);
 
   const parsedBody = body !== undefined ? JSON.parse(body.toString('utf-8')) : undefined;

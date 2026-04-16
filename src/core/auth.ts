@@ -73,7 +73,8 @@ export async function authenticate(
   }
 
   // Fire-and-forget last_used_at update. Do not await before returning success.
-  // TODO(phase-6): record usage metrics here (request_count, bytes_in, bytes_out, compute time).
+  // Per-request usage metrics (request_count, bytes_in, bytes_out, compute_ms) are recorded
+  // in the server's tool wrapper via repo.recordUsage — not here. Auth only authenticates.
   void repo.touchLastUsed(record.id).catch((err) => {
     logger.warn({ err, keyId: record.id }, 'failed to update last_used_at');
   });

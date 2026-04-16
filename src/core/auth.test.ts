@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it, mock } from 'node:test';
 import type { ApiKeyRecord, ApiKeyRepository } from '../db/repos/api-keys.ts';
 import {
@@ -199,13 +198,6 @@ describe('authenticate — success', () => {
     const { repo, touchLastUsed } = makeRepo(makeRecord({ id: 'id-42' }));
     await authenticate(`Bearer ${generateApiKey()}`, repo);
     assert.deepEqual(touchLastUsed.mock.calls[0]?.arguments, ['id-42']);
-  });
-});
-
-describe('authenticate — source code contract', () => {
-  it('contains the TODO(phase-6) marker for future metrics wiring', () => {
-    const source = readFileSync(new URL('./auth.ts', import.meta.url), 'utf8');
-    assert.match(source, /TODO\(phase-6\)/);
   });
 });
 
