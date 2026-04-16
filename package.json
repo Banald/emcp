@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "node --env-file=.env --watch src/index.ts",
+    "dev:worker": "node --env-file=.env --watch src/workers/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:worker": "node dist/workers/index.js",
     "test": "node --test --import ./tests/setup.ts 'src/**/*.test.ts'",
     "test:coverage": "c8 --config .c8rc.json node --test --import ./tests/setup.ts 'src/**/*.test.ts'",
     "test:integration": "node --test --test-timeout=120000 'tests/integration/**/*.test.ts'",
@@ -30,6 +32,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "~1.26.0",
+    "bullmq": "^5.74.1",
     "ioredis": "^5.10.1",
     "node-pg-migrate": "^8.0.4",
     "pg": "^8.20.0",
