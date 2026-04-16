@@ -43,7 +43,7 @@ c8 --config .c8rc.json node --test --import ./tests/setup.ts 'src/**/*.test.ts'
 node --test --import ./tests/setup.ts --watch 'src/**/*.test.ts'
 
 # Single file
-node --test --import ./tests/setup.ts src/tools/whoami.test.ts
+node --test --import ./tests/setup.ts src/tools/web-search.test.ts
 
 # Filter by name
 node --test --import ./tests/setup.ts --test-name-pattern='returns key info' 'src/**/*.test.ts'
