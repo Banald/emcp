@@ -30,8 +30,12 @@ describe('worker process', { timeout: 120_000 }, () => {
   });
 
   function buildEnv(): Record<string, string> {
+    // NODE_ENV=production (not 'test'): the logger forces level=silent in test
+    // mode, which hides the startup logs this test asserts on. Production mode
+    // writes JSON to stdout synchronously via pino with no transport — exactly
+    // what we need for log-based assertions.
     return {
-      NODE_ENV: 'test',
+      NODE_ENV: 'production',
       PORT: '3000',
       BIND_HOST: '127.0.0.1',
       PUBLIC_HOST: '127.0.0.1:3000',
