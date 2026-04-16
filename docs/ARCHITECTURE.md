@@ -121,6 +121,9 @@ This list is the source of truth. Adding to it requires explicit user approval p
 | `pino` | Structured logging | Fast, redaction-aware |
 | `prom-client` | Prometheus metrics | Zero deps, de facto standard |
 | `node-pg-migrate` | Database migrations | Minimal deps, raw SQL files |
+| `@mozilla/readability` | Main-content extraction for the `fetch-url` tool | Firefox's Reader Mode algorithm; battle-tested on the real web, no runtime deps |
+| `linkedom` | Lightweight DOM for Readability to operate on | Much smaller than `jsdom` (~6 transitive deps vs ~20+), sufficient for static HTML parsing |
+| `turndown` | HTML → Markdown conversion for LLM-readable output | Preserves headings/links/lists/code; LLMs handle Markdown structure better than flat text |
 
 ## Approved dev dependencies
 
@@ -134,6 +137,7 @@ This list is the source of truth. Adding to it requires explicit user approval p
 | `pino-pretty` | Human-readable dev logs |
 | `testcontainers` | Postgres/Redis for integration tests |
 | `@testcontainers/postgresql` | Postgres testcontainer helper |
+| `@types/turndown` | Type definitions for `turndown` (it ships no types in 7.x) |
 
 ## Explicitly rejected
 
@@ -149,6 +153,8 @@ This list is the source of truth. Adding to it requires explicit user approval p
 - **prisma, drizzle, knex, typeorm**: Raw SQL with `pg` is sufficient for this scope.
 - **zod-to-json-schema**: Deprecated; Zod 4 has native support.
 - **bcrypt, argon2 for API keys**: Wrong tool — see `docs/SECURITY.md`.
+- **jsdom** (for the `fetch-url` tool): Much heavier dep tree than `linkedom`; we don't need script execution or full browser emulation.
+- **cheerio** (for the `fetch-url` tool): Excellent selector library, but doesn't solve the "which part is the article?" problem. Rebuilding Readability's content-scoring on top of it is not worth the effort.
 
 ## Version pinning
 
