@@ -1,0 +1,19 @@
+# Owners are automatically requested for review on every PR.
+# Syntax reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-customization/customizing-your-repository/about-code-owners
+
+*                               @Banald
+
+# Security-sensitive paths — require owner review even if sub-paths ever get
+# additional owners. Matches the AGENTS.md "consult SECURITY.md before touching"
+# list plus CI configuration.
+/src/core/auth.ts               @Banald
+/src/lib/redis.ts               @Banald
+/src/db/                        @Banald
+/src/config.ts                  @Banald
+/migrations/                    @Banald
+/docs/SECURITY.md               @Banald
+/docs/ARCHITECTURE.md           @Banald
+/.github/                       @Banald
+/AGENTS.md                      @Banald
+/package.json                   @Banald
+/package-lock.json              @Banald
