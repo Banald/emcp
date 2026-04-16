@@ -55,6 +55,8 @@ jobs:
           node src/db/migrate.ts down
           node src/db/migrate.ts up
           node src/db/migrate.ts status
+      - name: Verify Redis noeviction documented
+        run: grep -q 'maxmemory-policy noeviction' docs/ARCHITECTURE.md docs/OPERATIONS.md
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         if: always()

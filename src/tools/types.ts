@@ -1,13 +1,10 @@
+import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { ZodObject, ZodRawShape, z } from 'zod';
 
-// Minimal Queue shape for typing. Replaced by `import type { Queue } from 'bullmq'` in Phase 5.
-export interface Queue {
-  readonly name: string;
-  add(name: string, data: unknown, opts?: unknown): Promise<unknown>;
-}
+export type { Queue };
 
 export interface AuthenticatedKey {
   readonly id: string;
