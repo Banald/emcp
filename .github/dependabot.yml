@@ -1,0 +1,48 @@
+version: 2
+updates:
+  # Keep SHA-pinned action refs fresh. Grouped so one PR bumps all actions
+  # together — reviewing one SHA diff per week is cheaper than eight.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Stockholm
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+      include: scope
+
+  # npm bumps only update existing packages in package.json — adding a new
+  # dependency still requires human approval per AGENTS.md. Grouped so types,
+  # runtime deps, and dev deps each produce one PR instead of N.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Stockholm
+    open-pull-requests-limit: 10
+    ignore:
+      # SDK minor bumps can ship behavioral changes — bump deliberately.
+      # Patch updates are allowed through (tilde range in package.json).
+      - dependency-name: '@modelcontextprotocol/sdk'
+        update-types: [version-update:semver-minor, version-update:semver-major]
+    groups:
+      types:
+        patterns: ['@types/*']
+      production:
+        dependency-type: production
+        exclude-patterns: ['@modelcontextprotocol/sdk']
+      development:
+        dependency-type: development
+        exclude-patterns: ['@types/*']
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
