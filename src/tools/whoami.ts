@@ -1,4 +1,4 @@
-import type { CallToolResult, ToolContext, ToolDefinition } from './types.ts';
+import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
 const inputSchema = {};
 

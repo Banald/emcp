@@ -3,16 +3,14 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, it, mock } from 'node:test';
 import type { Redis } from 'ioredis';
 import {
-  __setProducerRedisForTesting,
+  __setRedisForTesting,
   attachErrorLogging,
-  createProducerRedis,
-  createWorkerRedis,
+  createRedis,
   getRedis,
   gracefulClose,
-  PRODUCER_OPTIONS,
+  REDIS_OPTIONS,
   redis,
   registerRedisShutdown,
-  WORKER_OPTIONS,
 } from './redis.ts';
 
 type FakeRedis = EventEmitter & {
@@ -29,47 +27,25 @@ function makeFakeRedis(overrides: Partial<FakeRedis> = {}): FakeRedis {
   return ee;
 }
 
-describe('PRODUCER_OPTIONS / WORKER_OPTIONS', () => {
-  it('producer uses maxRetriesPerRequest 3', () => {
-    assert.equal(PRODUCER_OPTIONS.maxRetriesPerRequest, 3);
+describe('REDIS_OPTIONS', () => {
+  it('uses maxRetriesPerRequest 3', () => {
+    assert.equal(REDIS_OPTIONS.maxRetriesPerRequest, 3);
   });
 
-  it('worker opts out of retries and ready-check', () => {
-    assert.equal(WORKER_OPTIONS.maxRetriesPerRequest, null);
-    assert.equal(WORKER_OPTIONS.enableReadyCheck, false);
-  });
-
-  it('exported option objects are frozen', () => {
-    assert.equal(Object.isFrozen(PRODUCER_OPTIONS), true);
-    assert.equal(Object.isFrozen(WORKER_OPTIONS), true);
+  it('is frozen', () => {
+    assert.equal(Object.isFrozen(REDIS_OPTIONS), true);
   });
 });
 
-describe('createProducerRedis', () => {
-  it('instantiates with producer options via the provided factory', () => {
+describe('createRedis', () => {
+  it('instantiates with redis options via the provided factory', () => {
     const fake = makeFakeRedis();
     const factory = mock.fn(() => fake as unknown as Redis);
-    const register = mock.fn();
-    // Inject register indirectly by observing handler registration on the default registry:
-    // easier — re-register via registerRedisShutdown independently. Here we only validate factory + listener.
-    void register;
-    createProducerRedis(factory);
+    createRedis(factory);
     assert.equal(factory.mock.callCount(), 1);
-    const args = factory.mock.calls[0]?.arguments as unknown as [string, typeof PRODUCER_OPTIONS];
+    const args = factory.mock.calls[0]?.arguments as unknown as [string, typeof REDIS_OPTIONS];
     assert.equal(typeof args[0], 'string');
-    assert.deepEqual(args[1], PRODUCER_OPTIONS);
-    assert.equal(fake.listenerCount('error'), 1);
-  });
-});
-
-describe('createWorkerRedis', () => {
-  it('instantiates with worker options via the provided factory', () => {
-    const fake = makeFakeRedis();
-    const factory = mock.fn(() => fake as unknown as Redis);
-    createWorkerRedis(factory);
-    assert.equal(factory.mock.callCount(), 1);
-    const args = factory.mock.calls[0]?.arguments as unknown as [string, typeof WORKER_OPTIONS];
-    assert.deepEqual(args[1], WORKER_OPTIONS);
+    assert.deepEqual(args[1], REDIS_OPTIONS);
     assert.equal(fake.listenerCount('error'), 1);
   });
 });
@@ -87,15 +63,14 @@ describe('attachErrorLogging', () => {
     };
     attachErrorLogging(
       fake as unknown as Redis,
-      'producer',
-      log as unknown as Parameters<typeof attachErrorLogging>[2],
+      log as unknown as Parameters<typeof attachErrorLogging>[1],
     );
     const err = new Error('boom');
     fake.emit('error', err);
     assert.equal(log.error.mock.callCount(), 1);
     const [payload, msg] = log.error.mock.calls[0]?.arguments ?? [];
     assert.equal((payload as { err: Error }).err, err);
-    assert.equal((payload as { role: string }).role, 'producer');
+    assert.equal((payload as { role: string }).role, 'redis');
     assert.equal(msg, 'redis client error');
   });
 });
@@ -110,7 +85,6 @@ describe('gracefulClose', () => {
 
   it('falls back to disconnect() when quit hangs past the timeout', async () => {
     const fake = makeFakeRedis();
-    // Override quit to never resolve.
     fake.quit = mock.fn(() => new Promise(() => {})) as FakeRedis['quit'];
     const start = Date.now();
     await gracefulClose(fake as unknown as Redis, 20);
@@ -144,42 +118,38 @@ describe('registerRedisShutdown', () => {
 
 describe('getRedis singleton and redis Proxy', () => {
   afterEach(() => {
-    __setProducerRedisForTesting(null);
+    __setRedisForTesting(null);
   });
 
-  it('getRedis caches the first created producer', () => {
+  it('getRedis caches the first created client', () => {
     const fake = makeFakeRedis();
-    __setProducerRedisForTesting(fake as unknown as Redis);
+    __setRedisForTesting(fake as unknown as Redis);
     assert.equal(getRedis(), fake as unknown as Redis);
     assert.equal(getRedis(), fake as unknown as Redis);
   });
 
-  it('redis Proxy delegates reads to the cached producer', () => {
+  it('redis Proxy delegates reads to the cached client', () => {
     const fake = makeFakeRedis();
     const getter = mock.fn(async () => 'value' as const);
     fake.get = getter as FakeRedis['get'];
-    __setProducerRedisForTesting(fake as unknown as Redis);
+    __setRedisForTesting(fake as unknown as Redis);
     // biome-ignore lint/suspicious/noExplicitAny: Proxy traps use any
     const proxied = (redis as any).get;
     assert.equal(typeof proxied, 'function');
-    // Bound methods preserve this — call and verify it uses the fake.
     void proxied('k');
     assert.equal(getter.mock.callCount(), 1);
   });
 
   it('redis Proxy reports `in` via getRedis', () => {
     const fake = makeFakeRedis();
-    __setProducerRedisForTesting(fake as unknown as Redis);
+    __setRedisForTesting(fake as unknown as Redis);
     assert.equal('quit' in redis, true);
   });
 
   it('getRedis lazily constructs when no override is set', () => {
-    // Ensure singleton is null.
-    __setProducerRedisForTesting(null);
-    // Stub the factory path by pre-setting the singleton to a fake — the first call to
-    // getRedis should see the override and not try to construct a real client.
+    __setRedisForTesting(null);
     const fake = makeFakeRedis();
-    __setProducerRedisForTesting(fake as unknown as Redis);
+    __setRedisForTesting(fake as unknown as Redis);
     assert.equal(getRedis(), fake as unknown as Redis);
   });
 });

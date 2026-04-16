@@ -125,11 +125,13 @@ If the entire sequence exceeds `SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit w
 
 ### Worker shutdown sequence
 
-1. **Stop pulling new jobs** — `worker.close()` waits for in-flight jobs.
-2. **In-flight jobs** receive an abort signal. They should checkpoint or fail gracefully — BullMQ will retry per the queue's policy.
-3. **Wait up to `SHUTDOWN_TIMEOUT_MS` (default 60s for workers)** for in-flight jobs to finish.
-4. **Close Postgres + Redis connections.**
+1. **Stop the cron scheduler** — every cron handle stops; no new ticks fire. `stopped = true`, so even if a late callback slips through it is dropped.
+2. **Abort in-flight runs** — the shared shutdown `AbortSignal` fires, so any handler honoring `ctx.signal` (all of them, please) aborts cleanly.
+3. **Wait up to `SHUTDOWN_TIMEOUT_MS` (default 30s)** for in-flight runs to settle. The scheduler polls `inFlight` every 50ms until drained or the grace timeout elapses.
+4. **Close the Postgres pool.**
 5. **Flush logs, exit 0.**
+
+If a handler ignores the signal and blocks past the grace window, the scheduler returns anyway and the process proceeds to exit. PM2's `kill_timeout: 65000` on `mcp-worker` gives ample margin.
 
 ### Implementation pattern
 
@@ -146,7 +148,7 @@ registerShutdown(async () => {
 
 ### Rules
 
-- Every long-lived resource (HTTP server, DB pool, Redis client, BullMQ Worker, Queue) MUST register a shutdown handler when it's created.
+- Every long-lived resource (HTTP server, DB pool, Redis client, worker scheduler) MUST register a shutdown handler when it's created.
 - Shutdown handlers MUST be idempotent — they may be called twice on a force-exit path.
 - Shutdown handlers MUST NOT throw; catch internally and log.
 - Test critical shutdown paths in integration tests by sending `SIGTERM` to a child process and asserting clean exit.
@@ -194,9 +196,8 @@ registerShutdown(async () => {
 | `mcp_active_sessions` | gauge | — | Currently open Streamable HTTP sessions |
 | `mcp_auth_failures_total` | counter | `reason` | Auth failures by category (missing, invalid, blacklisted, deleted, rate-limited) |
 | `mcp_rate_limit_hits_total` | counter | `scope` | Rate limit triggers (`per_key`, `per_tool`) |
-| `bullmq_jobs_total` | counter | `queue`, `status` | Job lifecycle counters |
-| `bullmq_job_duration_seconds` | histogram | `queue` | Job processing duration |
-| `bullmq_queue_depth` | gauge | `queue`, `state` | Current jobs by state (waiting, active, delayed, failed) |
+| `worker_runs_total` | counter | `worker`, `status` | Worker run lifecycle. `status` ∈ `success`, `failure`, `timeout`, `skipped_overlap`. |
+| `worker_run_duration_seconds` | histogram | `worker` | Duration of `success`/`failure`/`timeout` runs. |
 
 
 ### Rules
@@ -211,4 +212,4 @@ registerShutdown(async () => {
 Postgres backups, Redis persistence policy, log retention — these are deployment-environment concerns out of scope for this codebase. Document the chosen policy in your deployment runbook (separate repo). The application requires only:
 
 - Postgres: standard ACID, no special requirements.
-- Redis: `maxmemory-policy noeviction` (mandatory for BullMQ), AOF persistence with 1s fsync recommended.
+- Redis: used only for rate-limit sliding windows and ad-hoc caching. No special eviction policy required; `allkeys-lru` is a reasonable default. Persistence is optional — losing the rate-limit cache has no durability consequence.

@@ -1,10 +1,10 @@
 # mcp-server
 
-Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, BullMQ-backed background workers, drop-in tool authoring.
+Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, drop-in scheduled background workers, drop-in tool authoring.
 
 ## Stack
 
-Node.js 24 LTS · TypeScript · PostgreSQL · Redis · BullMQ · Pino · Prometheus
+Node.js 24 LTS · TypeScript · PostgreSQL · Redis · croner · Pino · Prometheus
 
 ## Quickstart
 
@@ -33,7 +33,8 @@ npm run dev:worker
 See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 
 - `src/tools/` — drop a `.ts` file per tool. See [`docs/TOOL_AUTHORING.md`](./docs/TOOL_AUTHORING.md).
-- `src/workers/processors/` — background job processors. See [`docs/WORKER_AUTHORING.md`](./docs/WORKER_AUTHORING.md).
+- `src/workers/` — drop a `.ts` file per scheduled cron worker. See [`docs/WORKER_AUTHORING.md`](./docs/WORKER_AUTHORING.md).
+- `src/shared/` — the contracts (`tools/types.ts`, `tools/loader.ts`, `workers/types.ts`, `workers/loader.ts`, `workers/scheduler.ts`) and cross-cutting helpers (`net/ssrf.ts`) consumed by both. Not meant to be modified by tool or worker authors.
 - `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `migrations/` — SQL migrations.
 
@@ -80,7 +81,7 @@ pm2 save
 ### Required infrastructure
 
 - PostgreSQL 14+
-- Redis 7+ with `maxmemory-policy noeviction` (BullMQ requirement; corruption otherwise)
+- Redis 7+ (used for rate limiting and cache; no special eviction policy required)
 - SearXNG (Docker) — config included in `infra/searxng/`
 
 ### Network

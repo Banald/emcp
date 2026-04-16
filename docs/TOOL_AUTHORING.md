@@ -10,9 +10,6 @@ A tool is a single `.ts` file in `src/tools/` (or a subdirectory). It exports a 
 
 ```
 src/tools/
-├── types.ts              # ToolDefinition interface — do not modify
-├── loader.ts             # Discovery logic — do not modify
-├── _helpers.ts           # Shared helpers (underscore prefix excludes from discovery)
 ├── fetch-news.ts         # Top-level tool
 ├── fetch-news.test.ts    # Co-located test (excluded from discovery)
 └── github/               # Subdirectory grouping for related tools
@@ -22,7 +19,9 @@ src/tools/
     └── list-issues.test.ts
 ```
 
-**Files excluded from discovery**: `types.ts`, `loader.ts`, anything ending in `.test.ts`, anything starting with `_`. Use the underscore prefix for shared helpers that aren't tools themselves.
+`src/tools/` contains only real tool files plus their colocated tests. The tool contract (`ToolDefinition`, `ToolContext`, `CallToolResult`) lives in `src/shared/tools/types.ts`; the discovery logic in `src/shared/tools/loader.ts`. Tool authors should not modify either. Shared network helpers used by tools (e.g. SSRF guards) live in `src/shared/net/`.
+
+**Files excluded from discovery** (defensive — these should not appear under `src/tools/` at all, but the loader guards against mistakes): `types.ts`, `loader.ts`, anything ending in `.test.ts`, anything starting with `_`.
 
 ## Naming conventions
 
@@ -33,12 +32,11 @@ src/tools/
 
 ## The `ToolContext` interface
 
-Every handler receives a `ToolContext` as its second argument. This is the formal contract — defined in `src/tools/types.ts`:
+Every handler receives a `ToolContext` as its second argument. This is the formal contract — defined in `src/shared/tools/types.ts`:
 
 ```typescript
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
-import type { Queue } from 'bullmq';
 import type { Logger } from 'pino';
 
 export interface AuthenticatedKey {
@@ -51,8 +49,7 @@ export interface AuthenticatedKey {
 export interface ToolContext {
   readonly logger: Logger;                       // Pino child with request_id + tool_name pre-bound
   readonly db: Pool;                             // pg connection pool
-  readonly redis: Redis;                         // ioredis client (NOT the BullMQ worker connection)
-  readonly queues: Readonly<Record<string, Queue>>;  // by queue name, e.g. ctx.queues.news
+  readonly redis: Redis;                         // ioredis client (cache / rate limiting)
   readonly apiKey: AuthenticatedKey;             // the authenticated key (never the raw secret)
   readonly requestId: string;                    // UUID for log correlation
   readonly signal: AbortSignal;                  // aborts on client disconnect or shutdown
@@ -61,6 +58,8 @@ export interface ToolContext {
 
 Honor `ctx.signal` for any long operation — pass it to `fetch()`, check it in loops, and abort cleanly. The server uses it during graceful shutdown.
 
+Tools do **not** receive a queue handle. If a tool's job is to surface data produced by a background worker, the tool reads it from Postgres — tools never invoke or enqueue workers directly. See `docs/WORKER_AUTHORING.md` for the worker side of this boundary.
+
 ## The tool template
 
 Copy this when creating a new tool:
@@ -68,7 +67,7 @@ Copy this when creating a new tool:
 ```typescript
 // src/tools/example-tool.ts
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext, CallToolResult } from './types.ts';
+import type { ToolDefinition, ToolContext, CallToolResult } from '../shared/tools/types.ts';
 
 const inputSchema = {
   query: z.string().min(1).max(500).describe('The search query'),
@@ -109,7 +108,7 @@ export default tool;
 - Always call `.describe()` on every field — descriptions are surfaced to the LLM in the JSON Schema and dramatically improve tool selection accuracy.
 - Set explicit bounds: `.min()`, `.max()`, `.int()`, `.positive()`. Unbounded inputs are a security smell.
 - Prefer `.default()` over making fields optional when there's a sensible default.
-- For sensitive string inputs (URLs, file paths, identifiers), add `.refine()` validators or use the helpers in `src/tools/_helpers.ts`.
+- For URL / hostname fields that will be fetched, call `assertPublicHostname()` from `src/shared/net/ssrf.ts` before issuing any request.
 - **Never** accept arbitrary JSON blobs. If a field needs structure, define the structure with Zod.
 
 ### Marking sensitive fields
@@ -203,19 +202,19 @@ The `ToolContext` interface is defined formally above. Brief reminder of usage:
 
 - `ctx.logger` — already a child logger with `request_id` and `tool_name` bound. Just call it.
 - `ctx.db.query(sql, params)` — parameterized only (`$1`, `$2`).
-- `ctx.redis` — for cache; **not** the BullMQ worker connection (different config).
-- `ctx.queues.<name>.add(...)` — enqueue jobs. Queue names match `src/workers/queues.ts`.
+- `ctx.redis` — for cache and rate-limit-adjacent reads. Do not use it as a queue.
 - `ctx.apiKey` — only id, prefix, name, and rate limit. The raw key is never available.
 - `ctx.signal` — pass to `fetch(url, { signal: ctx.signal })`, check in long loops. Aborts on client disconnect or shutdown.
 
 ### What you must NOT do
 
-- ❌ Import the database pool, Redis client, or queues directly. Use `ctx`. (Makes tools untestable.)
+- ❌ Import the database pool or Redis client directly. Use `ctx`. (Makes tools untestable.)
 - ❌ Read environment variables directly. Use `ctx` or the shared `config` module.
+- ❌ Invoke, enqueue, or otherwise drive background workers from a tool. Workers are standalone cron jobs; tools read what workers persist. See `docs/WORKER_AUTHORING.md`.
 - ❌ Use `console.log`. Use `ctx.logger`.
 - ❌ Store state at module scope (`let cache = ...`). Tools must be stateless.
-- ❌ Block the event loop with synchronous I/O or CPU-heavy loops. Offload to a worker.
-- ❌ Make changes that take >5 seconds. Enqueue a job and return a job ID; the client can poll or subscribe.
+- ❌ Block the event loop with synchronous I/O or CPU-heavy loops. Surface that work in a scheduled worker and read its output.
+- ❌ Make changes that take longer than the tool-call timeout (30s). Either split the work or move it to a scheduled worker.
 - ❌ Ignore `ctx.signal`. Long-running work that won't abort holds shutdown hostage.
 
 ## Testing requirements
@@ -239,7 +238,6 @@ describe('example-tool', () => {
     logger: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     db: { query: mock.fn(async () => ({ rows: [] })) },
     redis: { get: mock.fn(), set: mock.fn() },
-    queues: {},
     apiKey: { id: 'test-id', prefix: 'mcp_test', name: 'test' },
     ...overrides,
   });
@@ -265,7 +263,7 @@ See `docs/TESTING.md` for deeper patterns.
 
 ## Tool discovery and load-failure semantics
 
-The loader scans `src/tools/` recursively at server startup. Every `.ts` file (excluding `types.ts`, `loader.ts`, `*.test.ts`, and `_*.ts`) is imported and validated.
+The loader (`src/shared/tools/loader.ts`) scans `src/tools/` recursively at server startup. Every `.ts` file (excluding `*.test.ts`, `_*.ts`, and the defensive filename set `types.ts` / `loader.ts`) is imported and validated.
 
 **Validation per file:**
 
@@ -295,4 +293,4 @@ When iterating in dev: the `--watch` flag restarts the process, the broken tool 
 
 ## When you need to break a rule
 
-If a tool genuinely needs to be stateful, do long work synchronously, or take a dependency on something not in `ctx`, **stop and ask the user**. There's almost always a better pattern (worker job, shared module, schema change) — but if there isn't, the user will approve and we'll document the exception.
+If a tool genuinely needs to be stateful, do long work synchronously, or take a dependency on something not in `ctx`, **stop and ask the user**. There's almost always a better pattern (scheduled worker, shared module, schema change) — but if there isn't, the user will approve and we'll document the exception.

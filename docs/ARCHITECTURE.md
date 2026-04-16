@@ -21,25 +21,26 @@ This document explains **why** the system is built the way it is. Read this befo
                                            │   - Metrics collection       │            │
                                            └──────┬───────────────┬───────┘            ▼
                                                   │               │          ┌──────────────────┐
-                                          enqueue │               │ query    │  SearXNG (Docker) │
-                                                  ▼               ▼          │  - web-search     │
-                                           ┌──────────┐    ┌──────────────┐  │    backend        │
-                                           │  Redis   │◀───│  PostgreSQL  │  │  - 127.0.0.1:8080 │
-                                           │ (BullMQ, │    │ (API keys,   │  └──────────────────┘
-                                           │  cache,  │    │  metrics,    │
-                                           │  rate    │    │  tool data)  │
-                                           │  limit)  │    └──────────────┘
-                                           └────┬─────┘
-                                                │ pop jobs
-                                                ▼
-                                           ┌──────────────────────────────┐
+                                          cache / │               │ query    │  SearXNG (Docker) │
+                                          rate    │               │          │  - web-search     │
+                                          limit   ▼               ▼          │    backend        │
+                                           ┌──────────┐    ┌──────────────┐  │  - 127.0.0.1:8080 │
+                                           │  Redis   │    │  PostgreSQL  │  └──────────────────┘
+                                           │ (cache,  │    │ (API keys,   │          ▲
+                                           │  rate    │    │  metrics,    │          │ reads
+                                           │  limit)  │    │  worker      │ ─────────┘
+                                           └──────────┘    │  tables)     │
+                                                           └──────┬───────┘
+                                                                  │ writes
+                                                                  │
+                                           ┌──────────────────────┴───────┐
                                            │   Worker Process (PM2)       │
-                                           │   - BullMQ Worker            │
-                                           │   - Background jobs          │
+                                           │   - croner scheduler         │
+                                           │   - Drop-in cron workers     │
                                            └──────────────────────────────┘
 ```
 
-The MCP server and worker are **separate processes** managed by PM2. They communicate exclusively through Redis (job queue) and Postgres (shared state). This isolation means a misbehaving worker cannot block the HTTP server's event loop, and either can be scaled or restarted independently.
+The MCP server and worker are **separate processes** managed by PM2. The only runtime linkage is Postgres — workers write data, tools read data. Workers never hold an HTTP reference to the server, and tools never enqueue or invoke workers. Redis is used by the server only (rate limiting, cache); the worker process does not open a Redis connection.
 
 ## Major decisions and rationale
 
@@ -51,7 +52,7 @@ The MCP spec deprecated the dual-endpoint HTTP+SSE transport in 2025-03-26. Stre
 
 ### Runtime: Node.js 24 LTS (not Bun, not Deno)
 
-Bun is faster but has imperfect compatibility with the MCP SDK and BullMQ's full feature set. Deno's npm interop is improving but introduces friction. Node.js 24 gives us:
+Bun is faster but has imperfect compatibility with the MCP SDK. Deno's npm interop is improving but introduces friction. Node.js 24 gives us:
 
 - **Native TypeScript execution** — no `tsx`/`ts-node` needed in dev. Run `node src/index.ts` directly.
 - **Native `--env-file`** — no `dotenv` package needed.
@@ -72,15 +73,19 @@ Path aliases (`@/lib/...`) **do not work** with native type stripping because No
 - **No ORM**: Prisma adds a massive dependency tree and code generation step. Drizzle is lighter but still adds friction. For a server with a small, well-defined schema, raw SQL with `pg` is simpler, faster, and has zero abstraction surprises.
 - **Migrations: `node-pg-migrate`** with raw SQL files. Only 2 transitive deps, uses `pg` as a peer.
 
-### Cache and queue: Redis via `ioredis` (not `node-redis`)
+### Cache and rate limiting: Redis via `ioredis` (not `node-redis`)
 
-`ioredis` is **required by BullMQ** — non-negotiable. It also provides better cluster/sentinel support and automatic reconnection than `node-redis`. We use the same Redis instance for BullMQ, rate limiting, and ad-hoc caching, but with **separate connections** for each (BullMQ workers need `maxRetriesPerRequest: null`; everything else uses sensible defaults).
+`ioredis` has better cluster/sentinel support and automatic reconnection than `node-redis`, and it is the long-established choice in this ecosystem. We use a single Redis instance for rate limiting and ad-hoc caching — one connection, one set of options. No Redis eviction policy constraints (any reasonable policy is fine; `allkeys-lru` is a good default for the rate-limit cache).
 
-### Background jobs: BullMQ
+### Background jobs: croner (in-process cron)
 
-Mature, actively developed (weekly releases), TypeScript-native. Supports repeatable (cron) jobs, retries with backoff, dead letter queues, job priorities, and rate limiting. Workers run in a **separate process** (managed by PM2) so they don't share an event loop with the HTTP server.
+The worker process (`src/workers/index.ts`) boots, loads every `WorkerDefinition` exported from `src/workers/**/*.ts` via `src/shared/workers/loader.ts`, and hands them to an in-process cron scheduler backed by [`croner`](https://github.com/hexagon/croner). Each definition declares its own schedule, optional timezone, optional per-run timeout, and optional `runOnStartup`. The scheduler guarantees at-most-one concurrent run per worker, records Prometheus metrics, and honors `AbortSignal` for cooperative shutdown.
 
-**Critical Redis configuration**: `maxmemory-policy noeviction`. Any other policy silently corrupts BullMQ data. This is the #1 production incident with BullMQ.
+`croner` is zero-dependency, TypeScript-native, handles DST correctly, and keeps a cron state machine entirely in memory. No Redis, no queue, no broker.
+
+**Trade-off**: cron state is process-local. If the worker is down when a tick would have fired, the tick is missed — workers are for recurring background refresh, not at-least-once delivery. If delivery guarantees are needed, introduce that machinery deliberately (outbox table + retry worker, external scheduler, etc.) rather than reaching for a queue library by default.
+
+**Known limitation**: to scale the worker horizontally, a Redis advisory lock (`SET key NX EX ttl`) must wrap every fire to prevent multi-instance double-firing. Out of scope for the initial migration; `ecosystem.config.cjs` pins `instances: 1` for `mcp-worker`.
 
 ### Validation: Zod 4
 
@@ -111,8 +116,8 @@ This list is the source of truth. Adding to it requires explicit user approval p
 | `@modelcontextprotocol/sdk` | MCP protocol implementation | Official, only viable choice |
 | `zod` | Input validation, JSON Schema generation | Required by SDK; v4 has native JSON Schema |
 | `pg` | PostgreSQL client | Universal standard, minimal deps |
-| `ioredis` | Redis client | Required by BullMQ |
-| `bullmq` | Background job queue | Mature, TypeScript-native |
+| `ioredis` | Redis client (cache + rate limiting) | Mature, cluster/sentinel-aware, well-understood in this codebase |
+| `croner` | Cron scheduler for background workers | Zero deps, TypeScript-native, accurate DST handling, no broker required |
 | `pino` | Structured logging | Fast, redaction-aware |
 | `prom-client` | Prometheus metrics | Zero deps, de facto standard |
 | `node-pg-migrate` | Database migrations | Minimal deps, raw SQL files |
@@ -138,7 +143,9 @@ This list is the source of truth. Adding to it requires explicit user approval p
 - **jest, vitest, mocha, chai, sinon**: Replaced by `node:test`.
 - **eslint, prettier, typescript-eslint**: Replaced by Biome.
 - **winston, bunyan**: Pino is faster and safer.
-- **node-redis**: Incompatible with BullMQ.
+- **bullmq**: Removed in favor of `croner`. The repo never needed delivery guarantees, retries, or a broker for its background work — just scheduled jobs that read/write Postgres. BullMQ brought Redis-eviction constraints, producer/worker connection-split pitfalls, and a queue abstraction that encouraged tools to drive workers (a boundary violation we explicitly rejected). If a future job genuinely needs at-least-once semantics, reintroduce a queue then — don't keep one around just in case.
+- **node-cron**: Evaluated; `croner` has cleaner timezone/DST handling and a smaller API surface.
+- **node-redis**: Historical choice; we already run `ioredis` and it remains the more capable client for our needs.
 - **prisma, drizzle, knex, typeorm**: Raw SQL with `pg` is sufficient for this scope.
 - **zod-to-json-schema**: Deprecated; Zod 4 has native support.
 - **bcrypt, argon2 for API keys**: Wrong tool — see `docs/SECURITY.md`.
@@ -223,8 +230,7 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `API_KEY_HMAC_SECRET` | yes | (32+ random bytes, base64) | HMAC pepper for API key hashing. **Rotating this invalidates ALL keys.** |
 | `LOG_LEVEL` | no | `info` | Pino level. Default `info` in prod, `debug` in dev. |
 | `RATE_LIMIT_DEFAULT_PER_MINUTE` | no | `60` | Fallback when key has no override. Default 60. |
-| `WORKER_CONCURRENCY` | no | `3` | Default per-queue concurrency. Default 3. |
-| `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Server graceful shutdown deadline. Default 30s (server) / 60s (worker). |
+| `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Graceful shutdown deadline for both processes. Default 30s. |
 | `SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
@@ -267,9 +273,11 @@ Both `/health` and `/metrics` are unauthenticated because the process binds to `
 | Process | Count | Purpose |
 |--|--|--|
 | `mcp-server` | 1 | HTTP server, MCP transport, auth, tool dispatch |
-| `mcp-worker` | 2+ | BullMQ workers, scaled independently |
+| `mcp-worker` | 1 | croner scheduler, drop-in cron workers |
 
-Managed by PM2 in production. Both processes share the same codebase and the same Postgres/Redis. Graceful shutdown drains in-flight requests/jobs with a 30s/60s timeout respectively.
+Managed by PM2 in production. Both processes share the same codebase and the same Postgres. Only `mcp-server` talks to Redis. Graceful shutdown drains in-flight requests / worker runs with the `SHUTDOWN_TIMEOUT_MS` budget.
+
+**Worker scaling (known limitation)**: `mcp-worker` runs as a single instance because croner schedules are in-memory. Running multiple instances would fire every cron tick per instance. Horizontal scaling requires a Redis advisory lock around every fire — out of scope for the initial migration, documented as a follow-up in `docs/WORKER_AUTHORING.md`.
 
 ## Data flow: a tool call
 
@@ -279,16 +287,17 @@ Managed by PM2 in production. Both processes share the same codebase and the sam
 4. If blacklisted/deleted/missing: return JSON-RPC error with appropriate code.
 5. Rate limiter checks Redis sliding window for this key. If exceeded: return 429.
 6. MCP transport dispatches to the named tool handler.
-7. Tool handler executes, optionally enqueues BullMQ jobs, optionally queries Postgres/Redis.
+7. Tool handler executes and queries Postgres (or external APIs) as needed. Tools never invoke or enqueue workers.
 8. Response sent back; metrics (request count, bytes, compute time) updated in Postgres asynchronously to avoid blocking the response.
 
-## Data flow: a background job
+## Data flow: a scheduled worker run
 
-1. Tool handler (or scheduled trigger) calls `queue.add('job-name', payload, opts)`.
-2. BullMQ pushes job to Redis.
-3. Worker process pops the job (blocking pop via ioredis), executes the processor function.
-4. Processor reads/writes Postgres, calls external APIs, etc.
-5. On failure: BullMQ retries with exponential backoff (configured per queue). After max retries: job moves to failed state for inspection.
-6. On success: job moves to completed state, result optionally available for inspection.
+1. croner fires the worker's cron on schedule.
+2. Scheduler checks the per-worker `inFlight` flag; if the previous run is still executing, the tick is logged as `worker_fire_skipped` and dropped. Otherwise `inFlight = true`.
+3. Scheduler creates a per-run `run_id`, a child logger, and an `AbortSignal` combining the shutdown signal with a per-run timeout (default 5 minutes).
+4. Handler runs: reads / writes Postgres, calls external APIs. Honors `ctx.signal`.
+5. On success: `worker_runs_total{status="success"}` and `worker_run_duration_seconds` are recorded.
+6. On throw: `worker_runs_total{status="failure"}` is recorded. The next cron tick still fires — there is no retry plumbing beyond the cron cadence.
+7. On timeout: the signal aborts, the scheduler marks `worker_runs_total{status="timeout"}`, releases `inFlight`, and moves on.
 
-Repeatable jobs (cron-like) are configured at queue setup with `repeat: { cron: '...' }`.
+A tool that wants to surface worker output queries the Postgres tables the worker writes. The tool and the worker share no runtime objects.

@@ -7,13 +7,8 @@ import { registerShutdown } from './shutdown.ts';
 
 export type { Redis };
 
-export const PRODUCER_OPTIONS: RedisOptions = Object.freeze({
+export const REDIS_OPTIONS: RedisOptions = Object.freeze({
   maxRetriesPerRequest: 3,
-});
-
-export const WORKER_OPTIONS: RedisOptions = Object.freeze({
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
 });
 
 export const QUIT_FALLBACK_MS = 2_000;
@@ -22,13 +17,9 @@ export type RedisFactory = (url: string, options: RedisOptions) => Redis;
 
 const defaultFactory: RedisFactory = (url, options) => new Redis(url, options);
 
-export function attachErrorLogging(
-  client: Redis,
-  role: 'producer' | 'worker',
-  log: Logger = logger,
-): void {
+export function attachErrorLogging(client: Redis, log: Logger = logger): void {
   client.on('error', (err: Error) => {
-    log.error({ err, role }, 'redis client error');
+    log.error({ err, role: 'redis' }, 'redis client error');
   });
 }
 
@@ -70,32 +61,25 @@ export function registerRedisShutdown(
   register(name, () => gracefulClose(client, fallbackMs));
 }
 
-export function createProducerRedis(factory: RedisFactory = defaultFactory): Redis {
-  const client = factory(config.redisUrl, PRODUCER_OPTIONS);
-  attachErrorLogging(client, 'producer');
-  registerRedisShutdown('redis-producer', client);
+export function createRedis(factory: RedisFactory = defaultFactory): Redis {
+  const client = factory(config.redisUrl, REDIS_OPTIONS);
+  attachErrorLogging(client);
+  registerRedisShutdown('redis', client);
   return client;
 }
 
-export function createWorkerRedis(factory: RedisFactory = defaultFactory): Redis {
-  const client = factory(config.redisUrl, WORKER_OPTIONS);
-  attachErrorLogging(client, 'worker');
-  registerRedisShutdown('redis-worker', client);
-  return client;
-}
-
-let producerSingleton: Redis | null = null;
+let redisSingleton: Redis | null = null;
 
 export function getRedis(): Redis {
-  if (producerSingleton === null) {
-    producerSingleton = createProducerRedis();
+  if (redisSingleton === null) {
+    redisSingleton = createRedis();
   }
-  return producerSingleton;
+  return redisSingleton;
 }
 
-/** Test-only hook: replace or clear the cached producer singleton. */
-export function __setProducerRedisForTesting(client: Redis | null): void {
-  producerSingleton = client;
+/** Test-only hook: replace or clear the cached singleton. */
+export function __setRedisForTesting(client: Redis | null): void {
+  redisSingleton = client;
 }
 
 export const redis: Redis = new Proxy({} as Redis, {

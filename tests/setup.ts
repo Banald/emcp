@@ -13,7 +13,6 @@ const defaults: Record<string, string> = {
   REDIS_URL: 'redis://localhost:6379',
   API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
   RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
-  WORKER_CONCURRENCY: '3',
   SHUTDOWN_TIMEOUT_MS: '5000',
   SEARXNG_URL: 'http://localhost:8080',
 };

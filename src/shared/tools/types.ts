@@ -1,10 +1,7 @@
-import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { ZodObject, ZodRawShape, z } from 'zod';
-
-export type { Queue };
 
 export interface AuthenticatedKey {
   readonly id: string;
@@ -17,7 +14,6 @@ export interface ToolContext {
   readonly logger: Logger;
   readonly db: Pool;
   readonly redis: Redis;
-  readonly queues: Readonly<Record<string, Queue>>;
   readonly apiKey: AuthenticatedKey;
   readonly requestId: string;
   readonly signal: AbortSignal;

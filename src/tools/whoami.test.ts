@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import type { ToolContext } from './types.ts';
+import type { ToolContext } from '../shared/tools/types.ts';
 import tool from './whoami.ts';
 
 const makeCtx = (overrides: Partial<ToolContext> = {}): ToolContext =>
@@ -8,7 +8,6 @@ const makeCtx = (overrides: Partial<ToolContext> = {}): ToolContext =>
     logger: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     db: { query: mock.fn(async () => ({ rows: [] })) },
     redis: { get: mock.fn(), set: mock.fn() },
-    queues: {},
     apiKey: {
       id: '550e8400-e29b-41d4-a716-446655440000',
       prefix: 'mcp_test_abc',

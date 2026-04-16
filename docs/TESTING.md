@@ -127,7 +127,6 @@ const makeCtx = (overrides = {}) => ({
   logger: { info: mock.fn(), warn: mock.fn(), error: mock.fn(), child: () => makeCtx().logger },
   db: { query: mock.fn(async () => ({ rows: [] })) },
   redis: { get: mock.fn(async () => null), set: mock.fn(async () => 'OK') },
-  queues: {},
   apiKey: { id: 'test', prefix: 'mcp_test', name: 'test' },
   ...overrides,
 });
@@ -135,9 +134,23 @@ const makeCtx = (overrides = {}) => ({
 
 Cover: happy path, each error branch, schema-rejected inputs (rare — Zod handles most, but verify integration).
 
-### Worker processors
+### Scheduled workers
 
-Same pattern as tools — processors are pure functions taking `(job, ctx)`. Mock both. See `docs/WORKER_AUTHORING.md` for examples.
+A worker is a default-exported `WorkerDefinition`. Unit-test the `handler` directly with a fake `WorkerContext`:
+
+```typescript
+import type { WorkerContext } from '../shared/workers/types.ts';
+
+const ctx = {
+  logger: createLogger({ level: 'silent' }).child({}),
+  db: { query: mock.fn(async () => ({ rows: [] })) } as unknown as WorkerContext['db'],
+  signal: new AbortController().signal,
+} satisfies WorkerContext;
+
+await worker.handler(ctx);
+```
+
+Also assert the identity fields — `name`, a parseable `schedule` (instantiate `new Cron(worker.schedule, { paused: true })` once as a sanity check). The scheduler itself is covered by `src/shared/workers/scheduler.test.ts`; worker authors do not need to re-prove overlap/timeout behavior.
 
 ### Auth middleware
 
@@ -220,7 +233,6 @@ before(async () => {
   pgContainer = await new PostgreSqlContainer('postgres:16-alpine').start();
   redisContainer = await new GenericContainer('redis:7-alpine')
     .withExposedPorts(6379)
-    .withCommand(['redis-server', '--maxmemory-policy', 'noeviction'])
     .start();
 
   process.env.DATABASE_URL = pgContainer.getConnectionUri();
@@ -235,14 +247,14 @@ after(async () => {
 });
 ```
 
-Note: Redis container must use `noeviction` policy to match production (BullMQ requirement).
+Redis has no special configuration requirements — it's only used for the rate-limit sliding window and ad-hoc caching. The worker process does not touch Redis at all.
 
 ## Coverage exclusions
 
 Some files are inherently untestable in unit tests and excluded from coverage:
 
 - `src/index.ts` — bootstrap entry point (covered by integration tests).
-- `src/workers/index.ts` — Worker wiring (logic lives in processors, which are tested).
+- `src/workers/index.ts` — worker process bootstrap (logic lives in `src/shared/workers/` and is unit-tested there).
 - `src/db/migrate.ts` — migration runner (covered by integration setup).
 - Anything in `migrations/` (raw SQL).
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { z } from 'zod';
 import { TransientError } from '../lib/errors.ts';
-import type { ToolContext } from './types.ts';
+import type { ToolContext } from '../shared/tools/types.ts';
 import tool from './web-search.ts';
 
 const makeCtx = (overrides: Record<string, unknown> = {}): ToolContext =>
@@ -10,7 +10,6 @@ const makeCtx = (overrides: Record<string, unknown> = {}): ToolContext =>
     logger: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     db: { query: mock.fn(async () => ({ rows: [] })) },
     redis: { get: mock.fn(), set: mock.fn() },
-    queues: {},
     apiKey: {
       id: '550e8400-e29b-41d4-a716-446655440000',
       prefix: 'mcp_test_abc',

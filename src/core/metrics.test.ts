@@ -15,9 +15,8 @@ describe('metrics registry', () => {
       'mcp_active_sessions',
       'mcp_auth_failures_total',
       'mcp_rate_limit_hits_total',
-      'bullmq_jobs_total',
-      'bullmq_job_duration_seconds',
-      'bullmq_queue_depth',
+      'worker_runs_total',
+      'worker_run_duration_seconds',
     ];
 
     for (const name of expected) {
@@ -59,19 +58,14 @@ describe('metrics registry', () => {
     assert.equal(metric.constructor.name, 'Counter');
   });
 
-  it('bullmq_jobs_total is a counter', () => {
-    const metric = metrics.bullmqJobsTotal;
+  it('worker_runs_total is a counter', () => {
+    const metric = metrics.workerRunsTotal;
     assert.equal(metric.constructor.name, 'Counter');
   });
 
-  it('bullmq_job_duration_seconds is a histogram', () => {
-    const metric = metrics.bullmqJobDuration;
+  it('worker_run_duration_seconds is a histogram', () => {
+    const metric = metrics.workerRunDuration;
     assert.equal(metric.constructor.name, 'Histogram');
-  });
-
-  it('bullmq_queue_depth is a gauge', () => {
-    const metric = metrics.bullmqQueueDepth;
-    assert.equal(metric.constructor.name, 'Gauge');
   });
 
   it('produces valid Prometheus text output', async () => {

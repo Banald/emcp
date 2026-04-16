@@ -129,7 +129,8 @@ const logger = pino({
 Zod validation is the first line of defense, not the last.
 
 - **Length limits**: every string input has a `.max()`. Default to 1000 unless there's a reason to allow more.
-- **Control characters**: strip or reject `\x00` (null bytes) in path-like inputs. Use the `safeString` helper in `src/tools/_helpers.ts`.
+- **Control characters**: strip or reject `\x00` (null bytes) in path-like inputs.
+- **SSRF on URL fetches**: resolve the URL and call `assertPublicHostname()` from `src/shared/net/ssrf.ts` before issuing any request. Re-check at fetch time if the URL crosses a trust boundary (TOCTOU).
 - **Path traversal**: never construct a filesystem path from user input without `path.resolve()` and a check that the result is within the expected directory. Better: don't accept paths at all — accept identifiers and resolve them yourself.
 - **SQL**: parameterized queries only. `pg` placeholders (`$1`, `$2`). Never string-concatenate SQL, even for "trusted" inputs.
 - **Shell**: never `exec()` user input. Use `execFile()` with an argument array, and prefer not invoking shells at all.

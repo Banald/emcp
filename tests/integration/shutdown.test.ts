@@ -15,15 +15,11 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
   let redisContainer: StartedTestContainer;
   let databaseUrl: string;
   let redisUrl: string;
-  let slowServer: ReturnType<typeof createHttpServer>;
 
   before(async () => {
     // Start containers
     pgContainer = await new PostgreSqlContainer('postgres:16-alpine').start();
-    redisContainer = await new GenericContainer('redis:7-alpine')
-      .withExposedPorts(6379)
-      .withCommand(['redis-server', '--maxmemory-policy', 'noeviction'])
-      .start();
+    redisContainer = await new GenericContainer('redis:7-alpine').withExposedPorts(6379).start();
 
     databaseUrl = pgContainer.getConnectionUri();
     redisUrl = `redis://localhost:${redisContainer.getMappedPort(6379)}`;
@@ -65,22 +61,11 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
     );
     await pool.end();
 
-    // A deliberately slow HTTP server for fetch-url to hit during shutdown
-    slowServer = createHttpServer((_req, res) => {
-      // Respond after 5 seconds — gives time to send SIGTERM
-      setTimeout(() => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('slow response');
-      }, 5_000);
-    });
-    await new Promise<void>((r) => slowServer.listen(0, '127.0.0.1', () => r()));
-
     // Store the raw key in the environment for the child processes
     process.env._SHUTDOWN_TEST_API_KEY = rawKey;
   });
 
   after(async () => {
-    await new Promise<void>((r) => slowServer.close(() => r()));
     await pgContainer.stop();
     await redisContainer.stop();
   });
@@ -98,7 +83,6 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
       API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
       LOG_LEVEL: 'silent',
       RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
-      WORKER_CONCURRENCY: '1',
       SHUTDOWN_TIMEOUT_MS: '10000',
       PATH: process.env.PATH ?? '',
       HOME: process.env.HOME ?? '',

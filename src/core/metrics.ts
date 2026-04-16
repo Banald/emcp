@@ -52,24 +52,18 @@ export const metrics = {
     registers: [register],
   }),
 
-  // BullMQ worker metrics
-  bullmqJobsTotal: new Counter({
-    name: 'bullmq_jobs_total',
-    help: 'BullMQ job lifecycle counters',
-    labelNames: ['queue', 'status'] as const,
+  // Background worker metrics
+  workerRunsTotal: new Counter({
+    name: 'worker_runs_total',
+    help: 'Worker run lifecycle counters',
+    labelNames: ['worker', 'status'] as const,
     registers: [register],
   }),
-  bullmqJobDuration: new Histogram({
-    name: 'bullmq_job_duration_seconds',
-    help: 'BullMQ job processing duration',
-    labelNames: ['queue'] as const,
-    buckets: [0.01, 0.1, 0.5, 1, 5, 30, 60, 300],
-    registers: [register],
-  }),
-  bullmqQueueDepth: new Gauge({
-    name: 'bullmq_queue_depth',
-    help: 'Jobs in queue by state',
-    labelNames: ['queue', 'state'] as const,
+  workerRunDuration: new Histogram({
+    name: 'worker_run_duration_seconds',
+    help: 'Worker run duration in seconds',
+    labelNames: ['worker'] as const,
+    buckets: [0.01, 0.1, 0.5, 1, 5, 30, 60, 300, 900, 3600],
     registers: [register],
   }),
 };

@@ -41,7 +41,6 @@ const envSchema = z.object({
   API_KEY_HMAC_SECRET: base64Secret,
   LOG_LEVEL: logLevelSchema.optional(),
   RATE_LIMIT_DEFAULT_PER_MINUTE: integer(1).default(60),
-  WORKER_CONCURRENCY: integer(1).default(3),
   SHUTDOWN_TIMEOUT_MS: integer(1000).default(30000),
   SEARXNG_URL: z
     .string()
@@ -65,7 +64,6 @@ export interface Config {
   readonly apiKeyHmacSecret: string;
   readonly logLevel: LogLevel;
   readonly rateLimitDefaultPerMinute: number;
-  readonly workerConcurrency: number;
   readonly shutdownTimeoutMs: number;
   readonly searxngUrl: string;
 }
@@ -97,7 +95,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     apiKeyHmacSecret: raw.API_KEY_HMAC_SECRET,
     logLevel,
     rateLimitDefaultPerMinute: raw.RATE_LIMIT_DEFAULT_PER_MINUTE,
-    workerConcurrency: raw.WORKER_CONCURRENCY,
     shutdownTimeoutMs: raw.SHUTDOWN_TIMEOUT_MS,
     searxngUrl: raw.SEARXNG_URL,
   };

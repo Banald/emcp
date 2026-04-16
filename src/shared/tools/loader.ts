@@ -2,8 +2,8 @@ import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { ConfigError } from '../lib/errors.ts';
-import { logger } from '../lib/logger.ts';
+import { ConfigError } from '../../lib/errors.ts';
+import { logger } from '../../lib/logger.ts';
 import type { ToolDefinition } from './types.ts';
 
 const TOOL_NAME_REGEX = /^[a-z][a-z0-9-]*$/;

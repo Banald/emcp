@@ -10,10 +10,7 @@ describe('rate-limiter integration (real Redis)', { timeout: 120_000 }, () => {
   let limiter: RateLimiter;
 
   before(async () => {
-    container = await new GenericContainer('redis:7-alpine')
-      .withExposedPorts(6379)
-      .withCommand(['redis-server', '--maxmemory-policy', 'noeviction'])
-      .start();
+    container = await new GenericContainer('redis:7-alpine').withExposedPorts(6379).start();
 
     redis = new Redis({
       host: 'localhost',

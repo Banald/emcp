@@ -13,7 +13,7 @@ module.exports = {
     {
       name: 'mcp-worker',
       script: './dist/workers/index.js',
-      instances: 2,
+      instances: 1,
       exec_mode: 'fork',
       kill_timeout: 65000, // worker SHUTDOWN_TIMEOUT_MS (60s) + 5s margin
       max_memory_restart: '512M',

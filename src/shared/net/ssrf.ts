@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises';
-import { ValidationError } from '../lib/errors.ts';
+import { ValidationError } from '../../lib/errors.ts';
 
 /**
  * Returns true if the given IP address is private, loopback, link-local,

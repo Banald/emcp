@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { TransientError } from '../lib/errors.ts';
-import type { CallToolResult, ToolContext, ToolDefinition } from './types.ts';
+import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
 const SEARXNG_ENGINES = 'google,brave,bing,qwant,startpage';
 const FETCH_TIMEOUT_MS = 15_000;

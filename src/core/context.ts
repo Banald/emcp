@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
-import type { AuthenticatedKey, Queue, ToolContext } from '../tools/types.ts';
+import type { AuthenticatedKey, ToolContext } from '../shared/tools/types.ts';
 
 export function buildToolContext(input: {
   apiKey: AuthenticatedKey;
@@ -10,7 +10,6 @@ export function buildToolContext(input: {
   signal: AbortSignal;
   pool: Pool;
   redis: Redis;
-  queues: Readonly<Record<string, Queue>>;
   rootLogger: Logger;
 }): ToolContext {
   const childLogger = input.rootLogger.child({
@@ -24,7 +23,6 @@ export function buildToolContext(input: {
     logger: childLogger,
     db: input.pool,
     redis: input.redis,
-    queues: input.queues,
     apiKey: input.apiKey,
     requestId: input.requestId,
     signal: input.signal,

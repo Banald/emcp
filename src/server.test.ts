@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
 import { createLogger } from './lib/logger.ts';
 import { createServer } from './server.ts';
-import type { ToolRegistry } from './tools/loader.ts';
+import type { ToolRegistry } from './shared/tools/loader.ts';
 
 // Stable test key hash and authentication setup
 const TEST_KEY_PREFIX = 'mcp_live_k7Hj';
@@ -123,7 +123,6 @@ describe('HTTP server', () => {
       redis: makeRedis(),
       repo: makeRepo(),
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     server = result.httpServer;
@@ -162,7 +161,6 @@ describe('HTTP server', () => {
         redis: makeRedis(),
         repo: makeRepo(),
         registry: makeRegistry(),
-        queues: {},
         logger: createLogger({ level: 'silent' }),
       });
       await new Promise<void>((resolve) =>
@@ -206,7 +204,6 @@ describe('MCP endpoint auth and headers', () => {
       redis: makeRedis(),
       repo: makeRepo(repoOverrides),
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
@@ -371,7 +368,6 @@ describe('MCP endpoint auth and headers', () => {
       redis: rateLimitedRedis,
       repo: makeRepo(),
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
@@ -476,7 +472,6 @@ describe('Per-key origin requirement', () => {
       redis: makeRedis(),
       repo,
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
@@ -523,7 +518,6 @@ describe('Deleted key rejection', () => {
       redis: makeRedis(),
       repo,
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
@@ -554,7 +548,6 @@ describe('MCP with registered tool', () => {
       redis: makeRedis(),
       repo: makeRepo(),
       registry,
-      queues: {},
       logger: createLogger({ level: 'silent' }),
     });
     await new Promise<void>((resolve) => result.httpServer.listen(0, '127.0.0.1', () => resolve()));
@@ -617,7 +610,6 @@ describe('Stateful MCP sessions', () => {
       redis: makeRedis(),
       repo: makeRepo(),
       registry: makeRegistry(),
-      queues: {},
       logger: createLogger({ level: 'silent' }),
       ...overrides,
     });

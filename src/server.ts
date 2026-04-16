@@ -21,8 +21,7 @@ import { createRateLimiter, type RateLimiter, type RateLimitResult } from './cor
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
 import { isAppError, RateLimitError, TransientError } from './lib/errors.ts';
 import { registerShutdown } from './lib/shutdown.ts';
-import type { ToolRegistry } from './tools/loader.ts';
-import type { Queue } from './tools/types.ts';
+import type { ToolRegistry } from './shared/tools/loader.ts';
 
 const PKG_VERSION: string = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -44,14 +43,13 @@ interface ServerDeps {
   redis: Redis;
   repo: ApiKeyRepository;
   registry: ToolRegistry;
-  queues: Readonly<Record<string, Queue>>;
   logger: Logger;
 }
 
 export async function createServer(
   deps: ServerDeps,
 ): Promise<{ httpServer: Server; close: () => Promise<void> }> {
-  const { pool, redis, repo, registry, queues, logger: log } = deps;
+  const { pool, redis, repo, registry, logger: log } = deps;
   const rateLimiter = createRateLimiter(redis);
   const sessions = new Map<string, Session>();
 
@@ -86,7 +84,6 @@ export async function createServer(
         redis,
         repo,
         registry,
-        queues,
         log,
         rateLimiter,
         sessions,
@@ -127,7 +124,6 @@ interface HandlerDeps {
   redis: Redis;
   repo: ApiKeyRepository;
   registry: ToolRegistry;
-  queues: Readonly<Record<string, Queue>>;
   log: Logger;
   rateLimiter: RateLimiter;
   sessions: Map<string, Session>;
@@ -252,7 +248,7 @@ async function handleMcp(
   res: ServerResponse,
   deps: HandlerDeps,
 ): Promise<void> {
-  const { pool, redis, repo, registry, queues, log, rateLimiter, sessions, removeSession } = deps;
+  const { pool, redis, repo, registry, log, rateLimiter, sessions, removeSession } = deps;
   const method = req.method ?? 'GET';
 
   // Step 1: Validate headers (Origin/Host) — initial check without per-key origin requirement.
@@ -425,7 +421,6 @@ async function handleMcp(
   registerSessionTools(mcpServer, apiKey, {
     pool,
     redis,
-    queues,
     log,
     rateLimiter,
     registry,
@@ -456,14 +451,13 @@ function registerSessionTools(
   deps: {
     pool: Pool;
     redis: Redis;
-    queues: Readonly<Record<string, Queue>>;
     log: Logger;
     rateLimiter: RateLimiter;
     registry: ToolRegistry;
     repo: ApiKeyRepository;
   },
 ): void {
-  const { pool, redis, queues, log, rateLimiter, registry, repo } = deps;
+  const { pool, redis, log, rateLimiter, registry, repo } = deps;
 
   for (const tool of registry.list()) {
     mcpServer.registerTool(
@@ -507,7 +501,6 @@ function registerSessionTools(
           signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS),
           pool,
           redis,
-          queues,
           rootLogger: log,
         });
 

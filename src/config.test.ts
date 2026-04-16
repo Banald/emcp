@@ -15,7 +15,6 @@ const validEnv = (): NodeJS.ProcessEnv => ({
   API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
   LOG_LEVEL: 'info',
   RATE_LIMIT_DEFAULT_PER_MINUTE: '120',
-  WORKER_CONCURRENCY: '4',
   SHUTDOWN_TIMEOUT_MS: '20000',
 });
 
@@ -37,7 +36,6 @@ describe('loadConfig', () => {
       assert.equal(config.apiKeyHmacSecret, 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==');
       assert.equal(config.logLevel, 'info');
       assert.equal(config.rateLimitDefaultPerMinute, 120);
-      assert.equal(config.workerConcurrency, 4);
       assert.equal(config.shutdownTimeoutMs, 20000);
       assert.equal(Object.isFrozen(config), true);
       assert.equal(Object.isFrozen(config.allowedOrigins), true);
@@ -59,16 +57,14 @@ describe('loadConfig', () => {
       assert.equal(config.bindHost, '127.0.0.1');
     });
 
-    it('applies DATABASE_POOL_MAX / rate limit / worker / shutdown defaults', () => {
+    it('applies DATABASE_POOL_MAX / rate limit / shutdown defaults', () => {
       const env = validEnv();
       delete env.DATABASE_POOL_MAX;
       delete env.RATE_LIMIT_DEFAULT_PER_MINUTE;
-      delete env.WORKER_CONCURRENCY;
       delete env.SHUTDOWN_TIMEOUT_MS;
       const config = loadConfig(env);
       assert.equal(config.databasePoolMax, 10);
       assert.equal(config.rateLimitDefaultPerMinute, 60);
-      assert.equal(config.workerConcurrency, 3);
       assert.equal(config.shutdownTimeoutMs, 30000);
     });
 
