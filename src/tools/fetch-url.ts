@@ -1,8 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { Readability } from '@mozilla/readability';
-import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
 import { z } from 'zod';
+import { extractArticle } from '../shared/html/extract.ts';
 import { assertPublicHostname } from '../shared/net/ssrf.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
@@ -14,18 +12,6 @@ const DEFAULT_MAX_LENGTH = 50_000;
 const MAX_MAX_LENGTH = 100_000;
 
 const USER_AGENT = 'EchoMCP/0.2 (+fetch-url)';
-
-// Stateless across requests; constructing once avoids per-call rule-compilation cost.
-const turndown = new TurndownService({
-  headingStyle: 'atx',
-  codeBlockStyle: 'fenced',
-  bulletListMarker: '-',
-  emDelimiter: '_',
-  linkStyle: 'inlined',
-});
-turndown.remove(['script', 'style', 'noscript', 'iframe']);
-// svg is not in HTMLElementTagNameMap; strip it via a filter function instead.
-turndown.remove((node) => node.nodeName === 'SVG');
 
 const inputSchema = {
   url: z
@@ -235,7 +221,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
   let extractionNote: string | undefined;
 
   if (isHtmlMime(parsed.mime)) {
-    const extracted = extractHtml(decoded, finalUrl);
+    const extracted = extractArticle(decoded, finalUrl);
     title = extracted.title;
     byline = extracted.byline;
     siteName = extracted.siteName;
@@ -313,86 +299,4 @@ function decodeBody(body: Buffer, charset: string): string {
   } catch {
     return body.toString('utf8');
   }
-}
-
-interface HtmlExtraction {
-  title?: string;
-  byline?: string;
-  siteName?: string;
-  markdown: string;
-  fallback: boolean;
-}
-
-function extractHtml(html: string, baseUrl: string): HtmlExtraction {
-  const withBase = injectBaseHref(html, baseUrl);
-
-  try {
-    const { document } = parseHTML(withBase);
-    // linkedom's Document is structurally compatible with DOM's Document for the subset
-    // Readability uses, but the nominal types differ and this project does not enable the
-    // DOM lib. A cast here is load-bearing; Readability's real requirement is the shape,
-    // not the type identity.
-    const reader = new Readability(document as unknown as Document, { charThreshold: 200 });
-    const article = reader.parse();
-    if (article?.content) {
-      const md = htmlToMarkdown(article.content);
-      if (md.length > 0) {
-        return {
-          title: article.title?.trim() || undefined,
-          byline: article.byline?.trim() || undefined,
-          siteName: article.siteName?.trim() || undefined,
-          markdown: md,
-          fallback: false,
-        };
-      }
-    }
-  } catch {
-    /* fall through to fallback */
-  }
-
-  let title: string | undefined;
-  let bodyHtml = withBase;
-  try {
-    const { document } = parseHTML(withBase);
-    title = document.querySelector('title')?.textContent?.trim() || undefined;
-    const body = document.querySelector('body');
-    if (body) bodyHtml = body.innerHTML;
-  } catch {
-    /* use raw HTML */
-  }
-
-  return {
-    title,
-    markdown: htmlToMarkdown(bodyHtml),
-    fallback: true,
-  };
-}
-
-function htmlToMarkdown(html: string): string {
-  let md: string;
-  try {
-    md = turndown.turndown(html);
-  } catch {
-    md = html
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-  return md
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function injectBaseHref(html: string, baseUrl: string): string {
-  const escaped = baseUrl.replace(/"/g, '&quot;');
-  const tag = `<base href="${escaped}">`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b[^>]*>/i, (m) => `${m}${tag}`);
-  }
-  if (/<html\b[^>]*>/i.test(html)) {
-    return html.replace(/<html\b[^>]*>/i, (m) => `${m}<head>${tag}</head>`);
-  }
-  return `<html><head>${tag}</head><body>${html}</body></html>`;
 }
