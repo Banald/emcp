@@ -232,6 +232,7 @@ async function handleMcp(
         inputSchema: tool.inputSchema,
       },
       async (args: Record<string, unknown>): Promise<SdkCallToolResult> => {
+        // TODO(phase-6): enforce per-tool rate limit (tool.rateLimit) via Redis sliding window
         const ctx = buildToolContext({
           apiKey: {
             id: apiKey.id,

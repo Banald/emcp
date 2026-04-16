@@ -5,6 +5,7 @@ import { logger } from './lib/logger.ts';
 import { redis } from './lib/redis.ts';
 import { createServer } from './server.ts';
 import { loadTools } from './tools/loader.ts';
+import { queues } from './workers/queues.ts';
 
 async function main() {
   logger.info({ node_env: config.nodeEnv, port: config.port }, 'starting mcp-server');
@@ -22,7 +23,7 @@ async function main() {
     redis,
     repo,
     registry,
-    queues: {},
+    queues,
     logger,
   });
 
