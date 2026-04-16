@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertPublicHostname } from './_helpers.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from './types.ts';
 
 const inputSchema = {
@@ -19,8 +20,6 @@ const inputSchema = {
     .describe('The URL to fetch'),
 };
 
-// TODO(phase-7): block private IP ranges and link-local addresses (SSRF defense)
-
 const tool: ToolDefinition<typeof inputSchema> = {
   name: 'fetch-url',
   title: 'Fetch URL',
@@ -29,6 +28,12 @@ const tool: ToolDefinition<typeof inputSchema> = {
   inputSchema,
   rateLimit: { perMinute: 10 },
   handler: async ({ url }, ctx: ToolContext): Promise<CallToolResult> => {
+    // SSRF defense: reject URLs that resolve to private/loopback/link-local addresses.
+    // Also enforced in the worker before the actual fetch (TOCTOU defense).
+    if (process.env.NODE_ENV !== 'test') {
+      await assertPublicHostname(new URL(url).hostname);
+    }
+
     ctx.logger.info({ url }, 'fetch-url enqueueing');
     const job = await ctx.queues.fetch.add('fetch', {
       url,

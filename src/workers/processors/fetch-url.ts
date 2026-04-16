@@ -1,4 +1,5 @@
 import type { Job } from 'bullmq';
+import { assertPublicHostname } from '../../tools/_helpers.ts';
 import type { FetchJobData, FetchJobResult } from '../queues.ts';
 import type { WorkerContext } from '../types.ts';
 
@@ -19,7 +20,10 @@ export async function fetchUrlProcessor(
     throw new Error(`unsupported protocol: ${parsed.protocol}`);
   }
 
-  // TODO(phase-7): block private IP ranges and link-local addresses (SSRF defense)
+  // SSRF defense: re-check at fetch time (TOCTOU — DNS could change between enqueue and execution)
+  if (process.env.NODE_ENV !== 'test') {
+    await assertPublicHostname(parsed.hostname);
+  }
 
   await job.updateProgress(10);
 
