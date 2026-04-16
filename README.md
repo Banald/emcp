@@ -37,26 +37,70 @@ See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 - `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `migrations/` — SQL migrations.
 
-## Running in production
+## Deploy from a release
 
-Build:
+Download the latest release tarball from the [Releases](../../releases) page and extract it:
+
 ```bash
-npm run build
+tar -xzf echo-v*.tar.gz
+cd echo
+npm ci --omit=dev
 ```
 
-Process management with PM2:
+Configure the environment:
+
+```bash
+cp .env.example .env
+# Edit .env — see comments in the file for each variable.
+# At minimum: DATABASE_URL, REDIS_URL, API_KEY_HMAC_SECRET,
+# PUBLIC_HOST, ALLOWED_ORIGINS.
+```
+
+Start SearXNG (required for the `web-search` tool):
+
+```bash
+cd infra/searxng && docker compose up -d && cd -
+```
+
+Run database migrations and create your first API key:
+
+```bash
+node --env-file=.env dist/db/migrate.js up
+node --env-file=.env dist/cli/keys.js create --name "production"
+# Save the printed key — it will not be shown again.
+```
+
+Start with PM2:
+
 ```bash
 pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-The server binds to `127.0.0.1` by default. Front it with a reverse proxy (nginx, Caddy) that handles TLS, sets `X-Forwarded-*` headers, and forwards only `/mcp` externally. `/health` and `/metrics` are loopback-only by design.
-
-Required infrastructure:
+### Required infrastructure
 
 - PostgreSQL 14+
 - Redis 7+ with `maxmemory-policy noeviction` (BullMQ requirement; corruption otherwise)
-- SearXNG (Docker) — required for the `web-search` tool. Config in `infra/searxng/`. Start with `cd infra/searxng && docker compose up -d`
+- SearXNG (Docker) — config included in `infra/searxng/`
+
+### Network
+
+The server binds to `127.0.0.1` by default. Front it with a reverse proxy (nginx, Caddy) that handles TLS, sets `X-Forwarded-*` headers, and forwards only `/mcp` externally. `/health` and `/metrics` are loopback-only by design.
+
+## Running from source
+
+Build:
+
+```bash
+npm run build
+```
+
+Process management with PM2:
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+```
 
 ## Testing
 
