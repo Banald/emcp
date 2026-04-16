@@ -1,15 +1,25 @@
-// Integration test harness. Starts a Postgres container via Testcontainers,
-// runs migrations, seeds a test API key, boots a real MCP server on an
-// ephemeral port, and returns everything needed for end-to-end testing.
+// Integration test harness. Starts Postgres and Redis containers via
+// Testcontainers, runs migrations, seeds a test API key, boots a real MCP
+// server on an ephemeral port, and returns everything needed for end-to-end
+// testing.
 //
-// First run may take ~10–20 seconds to pull the Postgres Docker image.
-// Subsequent runs reuse the cached image and start much faster (~2–5s).
+// CRITICAL: All src/ imports are dynamic (await import(...)). Module evaluation
+// happens AFTER env vars are set. Static imports would evaluate queues.ts (and
+// trigger Redis connection) before REDIS_URL is set, causing connect-refused
+// errors. Do not convert these to static imports.
+//
+// First run may take ~10–20 seconds to pull Docker images.
+// Subsequent runs reuse the cached images and start much faster (~2–5s).
 
 import { createServer as createNetServer } from 'node:net';
 import path from 'node:path';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
+import type { Redis as RedisType } from 'ioredis';
 import { runner } from 'node-pg-migrate';
+import type { Pool as PoolType } from 'pg';
 import pg from 'pg';
+import type { Logger as LoggerType } from 'pino';
+import { GenericContainer } from 'testcontainers';
 
 const { Pool } = pg;
 
@@ -28,17 +38,32 @@ async function findFreePort(): Promise<number> {
   });
 }
 
+export interface WorkerContext {
+  readonly logger: LoggerType;
+  readonly db: PoolType;
+  readonly redis: RedisType;
+}
+
 export interface TestServer {
   url: string;
   apiKey: string;
   pool: InstanceType<typeof Pool>;
+  redis: RedisType;
+  workerConnection: RedisType;
+  workerCtx: WorkerContext;
   close: () => Promise<void>;
 }
 
 export async function startTestServer(): Promise<TestServer> {
-  // 1. Start Postgres container.
+  // 1. Start containers FIRST — before any src/ imports.
   const pgContainer = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const redisContainer = await new GenericContainer('redis:7-alpine')
+    .withExposedPorts(6379)
+    .withCommand(['redis-server', '--maxmemory-policy', 'noeviction'])
+    .start();
+
   const databaseUrl = pgContainer.getConnectionUri();
+  const redisUrl = `redis://localhost:${redisContainer.getMappedPort(6379)}`;
 
   // 2. Find a free port so we can set PUBLIC_HOST before importing src/.
   const port = await findFreePort();
@@ -53,7 +78,7 @@ export async function startTestServer(): Promise<TestServer> {
   process.env.ALLOWED_ORIGINS = `http://${host}:${port}`;
   process.env.DATABASE_URL = databaseUrl;
   process.env.DATABASE_POOL_MAX = '5';
-  process.env.REDIS_URL = 'redis://placeholder:6379';
+  process.env.REDIS_URL = redisUrl;
   process.env.API_KEY_HMAC_SECRET = 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==';
   process.env.LOG_LEVEL = 'silent';
   process.env.RATE_LIMIT_DEFAULT_PER_MINUTE = '60';
@@ -69,7 +94,8 @@ export async function startTestServer(): Promise<TestServer> {
     verbose: false,
   });
 
-  // 5. Dynamic imports from src/ — config.ts evaluates here with the correct env.
+  // 5. Dynamic imports from src/ — module evaluation happens here, AFTER env is set.
+  //    This ordering is NOT optional. See the comment at the top of this file.
   const { createServer } = await import('../../../src/server.ts');
   const { ApiKeyRepository } = await import('../../../src/db/repos/api-keys.ts');
   const { generateApiKey, hashApiKey, extractKeyPrefix } = await import(
@@ -77,6 +103,11 @@ export async function startTestServer(): Promise<TestServer> {
   );
   const { loadTools } = await import('../../../src/tools/loader.ts');
   const { createLogger } = await import('../../../src/lib/logger.ts');
+  const redisMod = await import('../../../src/lib/redis.ts');
+  const dbClientMod = await import('../../../src/db/client.ts');
+  const connectionMod = await import('../../../src/workers/_connection.ts');
+  const { workerConnection, producerConnection } = connectionMod;
+  const { queues } = await import('../../../src/workers/queues.ts');
 
   // 6. Create a pg Pool connected to the container (separate from any src/ singleton).
   const pool = new Pool({ connectionString: databaseUrl, max: 5 });
@@ -97,14 +128,15 @@ export async function startTestServer(): Promise<TestServer> {
   // 8. Load tools from src/tools/.
   const registry = await loadTools(path.resolve(process.cwd(), 'src/tools'));
 
-  // 9. Build the server with real deps (Redis stubbed — not needed for Phase 4 tools).
+  // 9. Build the server with real deps — Redis is now a real container.
   const logger = createLogger({ level: 'silent' });
+  const redis = redisMod.getRedis();
   const { httpServer, close: closeServer } = await createServer({
     pool,
-    redis: {} as never, // Phase 5 wires a real Redis container
+    redis,
     repo,
     registry,
-    queues: {},
+    queues,
     logger,
   });
 
@@ -114,15 +146,27 @@ export async function startTestServer(): Promise<TestServer> {
   });
 
   const url = `http://${host}:${port}`;
+  const workerCtx: WorkerContext = { logger, db: pool, redis };
 
   return {
     url,
     apiKey: rawKey,
     pool,
+    redis,
+    workerConnection,
+    workerCtx,
     close: async () => {
       await closeServer();
+      await queues.fetch.close();
       await pool.end();
+      // Also close the module-level pool singleton created by src/db/client.ts
+      // (imported as a side effect of src/server.ts).
+      await dbClientMod.pool.end();
+      redis.disconnect();
+      producerConnection.disconnect();
+      workerConnection.disconnect();
       await pgContainer.stop();
+      await redisContainer.stop();
     },
   };
 }
