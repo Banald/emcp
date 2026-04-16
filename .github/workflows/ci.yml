@@ -62,3 +62,24 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 7
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+          PORT: '0'
+          PUBLIC_HOST: localhost
+          ALLOWED_ORIGINS: http://localhost
+          API_KEY_HMAC_SECRET: dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==
+          DATABASE_URL: postgres://placeholder/placeholder
+          REDIS_URL: redis://placeholder
