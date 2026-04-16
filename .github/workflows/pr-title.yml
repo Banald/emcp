@@ -1,0 +1,39 @@
+name: PR title
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
+        with:
+          egress-policy: audit
+      - name: Validate title against AGENTS.md commit types
+        uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825 # v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed types mirror AGENTS.md ("Commit conventions" section).
+          types: |
+            feat
+            fix
+            chore
+            docs
+            test
+            refactor
+            ci
+          requireScope: false
+          subjectPattern: ^[a-z0-9].+$
+          subjectPatternError: |
+            The subject "{subject}" doesn't match the required pattern.
+            Start with a lowercase letter or digit — e.g. "feat(auth): add HMAC key hashing".
