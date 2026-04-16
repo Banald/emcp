@@ -43,6 +43,11 @@ const envSchema = z.object({
   RATE_LIMIT_DEFAULT_PER_MINUTE: integer(1).default(60),
   WORKER_CONCURRENCY: integer(1).default(3),
   SHUTDOWN_TIMEOUT_MS: integer(1000).default(30000),
+  SEARXNG_URL: z
+    .string()
+    .url()
+    .default('http://localhost:8080')
+    .transform((u) => u.replace(/\/+$/, '')),
 });
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
@@ -62,6 +67,7 @@ export interface Config {
   readonly rateLimitDefaultPerMinute: number;
   readonly workerConcurrency: number;
   readonly shutdownTimeoutMs: number;
+  readonly searxngUrl: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -93,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     rateLimitDefaultPerMinute: raw.RATE_LIMIT_DEFAULT_PER_MINUTE,
     workerConcurrency: raw.WORKER_CONCURRENCY,
     shutdownTimeoutMs: raw.SHUTDOWN_TIMEOUT_MS,
+    searxngUrl: raw.SEARXNG_URL,
   };
   return Object.freeze(resolved);
 }

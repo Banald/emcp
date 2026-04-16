@@ -1,0 +1,55 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - brave
+      - bing
+      - qwant
+      - startpage
+
+general:
+  instance_name: "Echo SearXNG"
+
+search:
+  safe_search: 0
+  default_lang: "sv"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "1dcf71def86fe4cbb980449d89275ae763d36cc8ad5c19c57cf98fb64f752e92"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+    language: sv
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+    language: sv
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    disabled: false
+    language: sv
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+    disabled: false
+    language: sv
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    disabled: false
+    language: sv

@@ -17,15 +17,15 @@ This document explains **why** the system is built the way it is. Read this befo
                                            │   - Streamable HTTP /mcp     │
                                            │   - Auth middleware          │
                                            │   - Rate limiting            │
-                                           │   - Tool dispatch            │
-                                           │   - Metrics collection       │
-                                           └──────┬───────────────┬───────┘
-                                                  │               │
-                                          enqueue │               │ query
-                                                  ▼               ▼
-                                           ┌──────────┐    ┌──────────────┐
-                                           │  Redis   │◀───│  PostgreSQL  │
-                                           │ (BullMQ, │    │ (API keys,   │
+                                           │   - Tool dispatch ───────────┼──── HTTP (loopback)
+                                           │   - Metrics collection       │            │
+                                           └──────┬───────────────┬───────┘            ▼
+                                                  │               │          ┌──────────────────┐
+                                          enqueue │               │ query    │  SearXNG (Docker) │
+                                                  ▼               ▼          │  - web-search     │
+                                           ┌──────────┐    ┌──────────────┐  │    backend        │
+                                           │  Redis   │◀───│  PostgreSQL  │  │  - 127.0.0.1:8080 │
+                                           │ (BullMQ, │    │ (API keys,   │  └──────────────────┘
                                            │  cache,  │    │  metrics,    │
                                            │  rate    │    │  tool data)  │
                                            │  limit)  │    └──────────────┘
@@ -225,6 +225,7 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `RATE_LIMIT_DEFAULT_PER_MINUTE` | no | `60` | Fallback when key has no override. Default 60. |
 | `WORKER_CONCURRENCY` | no | `3` | Default per-queue concurrency. Default 3. |
 | `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Server graceful shutdown deadline. Default 30s (server) / 60s (worker). |
+| `SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 

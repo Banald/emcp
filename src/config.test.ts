@@ -99,6 +99,20 @@ describe('loadConfig', () => {
       env.LOG_LEVEL = 'warn';
       assert.equal(loadConfig(env).logLevel, 'warn');
     });
+
+    it('applies SEARXNG_URL default when unset', () => {
+      const env = validEnv();
+      delete env.SEARXNG_URL;
+      const config = loadConfig(env);
+      assert.equal(config.searxngUrl, 'http://localhost:8080');
+    });
+
+    it('strips trailing slashes from SEARXNG_URL', () => {
+      const env = validEnv();
+      env.SEARXNG_URL = 'http://localhost:8080///';
+      const config = loadConfig(env);
+      assert.equal(config.searxngUrl, 'http://localhost:8080');
+    });
   });
 
   describe('ALLOWED_ORIGINS parsing', () => {
@@ -210,6 +224,12 @@ describe('loadConfig', () => {
     it('rejects a SHUTDOWN_TIMEOUT_MS below the 1000ms floor', () => {
       const env = validEnv();
       env.SHUTDOWN_TIMEOUT_MS = '500';
+      assert.throws(() => loadConfig(env), ConfigError);
+    });
+
+    it('rejects an invalid SEARXNG_URL', () => {
+      const env = validEnv();
+      env.SEARXNG_URL = 'not-a-url';
       assert.throws(() => loadConfig(env), ConfigError);
     });
   });

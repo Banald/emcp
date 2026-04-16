@@ -20,6 +20,9 @@ node --env-file=.env src/db/migrate.ts up
 node --env-file=.env src/cli/keys.ts create --name "local-dev"
 # Save the printed key — it will not be shown again.
 
+# Start SearXNG (required for the web-search tool)
+cd infra/searxng && docker compose up -d && cd -
+
 # Run server + worker (two terminals)
 npm run dev
 npm run dev:worker
@@ -53,6 +56,7 @@ Required infrastructure:
 
 - PostgreSQL 14+
 - Redis 7+ with `maxmemory-policy noeviction` (BullMQ requirement; corruption otherwise)
+- SearXNG (Docker) — required for the `web-search` tool. Config in `infra/searxng/`. Start with `cd infra/searxng && docker compose up -d`
 
 ## Testing
 

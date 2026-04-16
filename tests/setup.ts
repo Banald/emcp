@@ -15,6 +15,7 @@ const defaults: Record<string, string> = {
   RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
   WORKER_CONCURRENCY: '3',
   SHUTDOWN_TIMEOUT_MS: '5000',
+  SEARXNG_URL: 'http://localhost:8080',
 };
 
 for (const [key, value] of Object.entries(defaults)) {

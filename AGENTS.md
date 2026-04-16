@@ -49,6 +49,11 @@ These are defaults, not laws. Deviate when there's a good reason, and note the r
 
 ## Quick reference
 
+### Start SearXNG (required for web-search tool)
+```bash
+cd infra/searxng && docker compose up -d && cd -
+```
+
 ### Run the server (dev)
 ```bash
 node --env-file=.env --watch src/index.ts
