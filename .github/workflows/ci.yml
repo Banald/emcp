@@ -4,6 +4,12 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  # Run JavaScript actions (checkout, setup-node, upload-artifact, ...) on
+  # Node.js 24 instead of the deprecated Node.js 20. GitHub will force this
+  # default in June 2026; opting in now matches our runtime pin.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   ci:
     runs-on: ubuntu-latest
