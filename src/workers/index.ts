@@ -1,7 +1,7 @@
 import { config } from '../config.ts';
 import { pool } from '../db/client.ts';
-import { logger } from '../lib/logger.ts';
-import { registerShutdown } from '../lib/shutdown.ts';
+import { fatalAndExit, logger } from '../lib/logger.ts';
+import { installSignalHandlers, registerShutdown, runShutdown } from '../lib/shutdown.ts';
 import { loadWorkers } from '../shared/workers/loader.ts';
 import { createScheduler } from '../shared/workers/scheduler.ts';
 
@@ -32,7 +32,19 @@ async function main() {
   logger.info('mcp-worker ready');
 }
 
-main().catch((err) => {
-  logger.fatal({ err }, 'worker startup failed');
-  setTimeout(() => process.exit(1), 100);
+installSignalHandlers();
+
+process.on('unhandledRejection', (reason) => {
+  setTimeout(() => process.exit(1), 5_000).unref();
+  void runShutdown('unhandled-rejection').finally(() =>
+    fatalAndExit(reason, 'worker exiting after unhandled rejection'),
+  );
 });
+process.on('uncaughtException', (err) => {
+  setTimeout(() => process.exit(1), 5_000).unref();
+  void runShutdown('uncaught-exception').finally(() =>
+    fatalAndExit(err, 'worker exiting after uncaught exception'),
+  );
+});
+
+main().catch((err) => fatalAndExit(err, 'worker startup failed'));

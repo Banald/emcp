@@ -1,8 +1,9 @@
 import { config } from './config.ts';
 import { pool } from './db/client.ts';
 import { ApiKeyRepository } from './db/repos/api-keys.ts';
-import { logger } from './lib/logger.ts';
+import { fatalAndExit, logger } from './lib/logger.ts';
 import { redis } from './lib/redis.ts';
+import { installSignalHandlers, runShutdown } from './lib/shutdown.ts';
 import { createServer } from './server.ts';
 import { loadTools } from './shared/tools/loader.ts';
 
@@ -31,10 +32,23 @@ async function main() {
   logger.info({ port: config.port, bind: config.bindHost }, 'mcp-server listening');
 }
 
-main().catch((err) => {
-  logger.fatal({ err }, 'startup failed');
-  // Allow logger to flush
-  setTimeout(() => process.exit(1), 100);
+installSignalHandlers();
+
+// The 5s exit floor only fires if something else keeps the loop alive; it is
+// load-bearing when a shutdown handler wedges (pool.end / redis.quit each
+// register their own timers that are NOT unref'ed). The unref here prevents
+// the floor itself from blocking a clean exit.
+process.on('unhandledRejection', (reason) => {
+  setTimeout(() => process.exit(1), 5_000).unref();
+  void runShutdown('unhandled-rejection').finally(() =>
+    fatalAndExit(reason, 'exiting after unhandled rejection'),
+  );
+});
+process.on('uncaughtException', (err) => {
+  setTimeout(() => process.exit(1), 5_000).unref();
+  void runShutdown('uncaught-exception').finally(() =>
+    fatalAndExit(err, 'exiting after uncaught exception'),
+  );
 });
 
-// Signal handlers already registered by src/lib/shutdown.ts (Phase 1)
+main().catch((err) => fatalAndExit(err, 'startup failed'));

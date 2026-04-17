@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
-import { describe, it } from 'node:test';
-import { createChildLogger, createLogger, logger, REDACT_PATHS } from './logger.ts';
+import { describe, it, mock } from 'node:test';
+import type { Logger } from 'pino';
+import { createChildLogger, createLogger, fatalAndExit, logger, REDACT_PATHS } from './logger.ts';
 
 function captureLogger(level = 'trace') {
   const chunks: string[] = [];
@@ -147,5 +148,74 @@ describe('default logger singleton', () => {
 
   it('uses silent level in the test environment', () => {
     assert.equal(logger.level, 'silent');
+  });
+});
+
+describe('fatalAndExit', () => {
+  function makeFakeLogger(): {
+    logger: Logger;
+    fatalCalls: Array<[Record<string, unknown>, string]>;
+    flushWasCalled: () => boolean;
+  } {
+    const fatalCalls: Array<[Record<string, unknown>, string]> = [];
+    let flushCalled = false;
+    const fake = {
+      fatal: (bindings: Record<string, unknown>, message: string) => {
+        fatalCalls.push([bindings, message]);
+      },
+      flush: (cb: () => void) => {
+        flushCalled = true;
+        cb();
+      },
+    } as unknown as Logger;
+    return { logger: fake, fatalCalls, flushWasCalled: () => flushCalled };
+  }
+
+  it('logs a fatal record, flushes the logger, then exits with the given code', async () => {
+    const fake = makeFakeLogger();
+    const exit = mock.fn<(code: number) => never>(
+      ((_code: number) => undefined as never) as (code: number) => never,
+    );
+    await fatalAndExit(new Error('boom'), 'startup failed', 17, fake.logger, exit);
+    assert.equal(fake.fatalCalls.length, 1);
+    const [bindings, message] = fake.fatalCalls[0];
+    assert.ok(bindings.err instanceof Error);
+    assert.equal(message, 'startup failed');
+    assert.equal(fake.flushWasCalled(), true);
+    assert.equal(exit.mock.callCount(), 1);
+    assert.equal(exit.mock.calls[0].arguments[0], 17);
+  });
+
+  it('defaults exit code to 1', async () => {
+    const fake = makeFakeLogger();
+    let received: number | undefined;
+    await fatalAndExit('reason', 'msg', undefined, fake.logger, ((code: number): never => {
+      received = code;
+      return undefined as never;
+    }) as (code: number) => never);
+    assert.equal(received, 1);
+  });
+
+  it('awaits flush before exiting', async () => {
+    const fatalCalls: Array<[Record<string, unknown>, string]> = [];
+    let flushResolve: (() => void) | undefined;
+    const fake = {
+      fatal: (b: Record<string, unknown>, m: string) => fatalCalls.push([b, m]),
+      flush: (cb: () => void) => {
+        flushResolve = cb;
+      },
+    } as unknown as Logger;
+    let exited = false;
+    const exitFn = ((_code: number): never => {
+      exited = true;
+      return undefined as never;
+    }) as (code: number) => never;
+    const pending = fatalAndExit(new Error('x'), 'pending', 1, fake, exitFn);
+    // Give the microtask queue a chance — flush hasn't fired, so exit hasn't happened.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(exited, false);
+    flushResolve?.();
+    await pending;
+    assert.equal(exited, true);
   });
 });

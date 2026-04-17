@@ -127,5 +127,3 @@ export function installSignalHandlers(): void {
     void handleSignal('SIGINT');
   });
 }
-
-installSignalHandlers();
