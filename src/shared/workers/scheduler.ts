@@ -150,7 +150,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       }
       for (const state of states) {
         if (state.def.runOnStartup) {
-          await runOnce(state);
+          // Fire-and-forget: a cron scheduler is "ready" when it's ticking,
+          // not when the first tick's I/O has finished. Overlap protection
+          // (via state.inFlight) prevents the scheduled cron tick from
+          // colliding with this startup run; shutdown drains in-flight runs
+          // via the shared abort signal.
+          void runOnce(state);
         }
       }
     },

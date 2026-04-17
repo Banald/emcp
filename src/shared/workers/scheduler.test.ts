@@ -228,9 +228,63 @@ describe('createScheduler', () => {
 
     await sch.start();
 
+    // The handler is invoked synchronously within runOnce (before its first
+    // await), so callCount flips immediately even though start() is
+    // fire-and-forget.
     assert.equal(handler.mock.callCount(), 1);
+
+    // Success metric lands only after the handler's promise settles — drain
+    // the microtask queue before asserting on it.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
     const incCalls = metrics.inc.mock.calls.map((c) => c.arguments[0]);
     assert.deepEqual(incCalls, [{ worker: 'boot', status: 'success' }]);
+
+    await sch.stop(1_000);
+  });
+
+  it('start() does not block on a slow runOnStartup handler', async () => {
+    let release: (() => void) | undefined;
+    const handler = mock.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const worker: WorkerDefinition = {
+      name: 'slow-boot',
+      schedule: '* * * * *',
+      handler,
+      runOnStartup: true,
+    };
+    const metrics = makeMetrics();
+    const { factory } = makeCronFactory();
+    const shutdown = makeAbortController();
+
+    const sch = createScheduler({
+      workers: [worker],
+      db: fakeDb,
+      logger: makeLogger(),
+      shutdownSignal: shutdown.signal,
+      cronFactory: factory,
+      metrics,
+    });
+
+    // start() must resolve even though the handler promise is still pending.
+    await sch.start();
+    assert.equal(handler.mock.callCount(), 1);
+    assert.equal(
+      metrics.inc.mock.callCount(),
+      0,
+      'success metric must not be recorded before the handler settles',
+    );
+
+    release?.();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const incCalls = metrics.inc.mock.calls.map((c) => c.arguments[0]);
+    assert.deepEqual(incCalls, [{ worker: 'slow-boot', status: 'success' }]);
 
     await sch.stop(1_000);
   });

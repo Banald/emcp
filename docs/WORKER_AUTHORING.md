@@ -60,7 +60,7 @@ export interface WorkerDefinition {
   readonly description?: string;
   readonly schedule: string;        // croner-compatible 5- or 6-field cron
   readonly timezone?: string;       // IANA zone; defaults to UTC
-  readonly runOnStartup?: boolean;  // fire once during start(), in addition to the cron
+  readonly runOnStartup?: boolean;  // fire once at startup alongside the cron; does not block start()
   readonly timeoutMs?: number;      // per-run timeout; default 5 minutes
   readonly handler: (ctx: WorkerContext) => Promise<void>;
 }
