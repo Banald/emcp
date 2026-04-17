@@ -12,7 +12,9 @@ import {
   KeyBlacklistedError,
   KeyDeletedError,
   NotFoundError,
+  OriginOrHostRejectedError,
   RateLimitError,
+  SessionNotFoundError,
   TransientError,
   ValidationError,
 } from './errors.ts';
@@ -86,6 +88,21 @@ const cases: Array<readonly [string, Ctor, Expected]> = [
     'ConfigError',
     ConfigError,
     { httpStatus: 500, jsonRpcCode: -32603, retryable: false, name: 'ConfigError' },
+  ],
+  [
+    'SessionNotFoundError',
+    SessionNotFoundError,
+    { httpStatus: 404, jsonRpcCode: -32006, retryable: false, name: 'SessionNotFoundError' },
+  ],
+  [
+    'OriginOrHostRejectedError',
+    OriginOrHostRejectedError,
+    {
+      httpStatus: 403,
+      jsonRpcCode: -32007,
+      retryable: false,
+      name: 'OriginOrHostRejectedError',
+    },
   ],
 ];
 

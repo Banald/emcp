@@ -64,6 +64,18 @@ export class ConflictError extends AppError {
   readonly retryable = false;
 }
 
+export class SessionNotFoundError extends AppError {
+  readonly httpStatus = 404;
+  readonly jsonRpcCode = -32006;
+  readonly retryable = false;
+}
+
+export class OriginOrHostRejectedError extends AppError {
+  readonly httpStatus = 403;
+  readonly jsonRpcCode = -32007;
+  readonly retryable = false;
+}
+
 export class TransientError extends AppError {
   readonly httpStatus = 503;
   readonly jsonRpcCode = -32013;

@@ -154,12 +154,15 @@ Every API key has a default rate limit applied at the auth middleware layer. Too
 | Key not found | 401 | -32003 (invalid credentials) |
 | Key blacklisted | 403 | -32004 (key blacklisted) |
 | Key soft-deleted | 403 | -32005 (key deleted) |
+| Unknown session / session-key mismatch | 404 | -32006 (session not found) |
+| Origin / Host invalid | 403 | -32007 (forbidden) |
 | Rate limit exceeded | 429 | -32029 (rate limited) |
-| Origin/Host invalid | 403 | n/a (rejected before JSON-RPC layer) |
 
 Error response messages should be **generic** to avoid leaking enumeration vectors. The detailed reason goes to logs, not to the client. Example: blacklisted and deleted keys both return "Authentication failed" to the client; the audit log distinguishes them.
 
 **Exception**: blacklisted and deleted keys MAY receive distinct messages (`"This API key has been blocked."`, `"This API key has been deleted."`) per product requirements. This is a deliberate trade-off — it leaks status but provides clearer UX for legitimate key holders. Confirmed by user requirements.
+
+**Session conflation (`-32006`)**: a key holder presenting another key's session ID receives the same `"Session not found"` response as a stale / unknown session. Distinguishing the two would let a key holder probe for session IDs belonging to other keys. Same HTTP status, same JSON-RPC code, same message — the audit log distinguishes the two outcomes for forensic review.
 
 ## Rule 9: Secrets and configuration
 

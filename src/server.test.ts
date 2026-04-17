@@ -333,6 +333,11 @@ describe('MCP endpoint auth and headers', () => {
         body: '{}',
       });
       assert.equal(res.status, 403);
+      const body = JSON.parse(res.body);
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.error.code, -32007);
+      assert.equal(body.error.message, 'Forbidden');
+      assert.equal(body.id, null);
     } finally {
       await close();
     }
@@ -709,13 +714,16 @@ describe('Stateful MCP sessions', () => {
       });
       assert.equal(res.status, 404);
       const body = JSON.parse(res.body);
-      assert.equal(body.error.code, -32001);
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.error.code, -32006);
+      assert.equal(body.error.message, 'Session not found');
+      assert.equal(body.id, null);
     } finally {
       await close();
     }
   });
 
-  it('returns 403 when session key does not match request key', async () => {
+  it('conflates a session key mismatch into session-not-found (404/-32006)', async () => {
     // Use two different keys — first creates the session, second tries to use it
     let callCount = 0;
     const repo = makeRepo({
@@ -757,7 +765,11 @@ describe('Stateful MCP sessions', () => {
         headers: { ...stdHeaders, 'mcp-session-id': sessionId },
         body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
       });
-      assert.equal(res.status, 403);
+      assert.equal(res.status, 404);
+      const body = JSON.parse(res.body);
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.error.code, -32006);
+      assert.equal(body.error.message, 'Session not found');
     } finally {
       await close();
     }

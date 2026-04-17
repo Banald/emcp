@@ -19,7 +19,14 @@ import { validateHeaders } from './core/headers.ts';
 import { metrics, register } from './core/metrics.ts';
 import { createRateLimiter, type RateLimiter, type RateLimitResult } from './core/rate-limiter.ts';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
-import { isAppError, RateLimitError, TransientError } from './lib/errors.ts';
+import {
+  type AppError,
+  isAppError,
+  OriginOrHostRejectedError,
+  RateLimitError,
+  SessionNotFoundError,
+  TransientError,
+} from './lib/errors.ts';
 import { registerShutdown } from './lib/shutdown.ts';
 import type { ToolRegistry } from './shared/tools/loader.ts';
 
@@ -174,6 +181,17 @@ function applyRateLimitHeaders(res: ServerResponse, result: RateLimitResult): vo
   res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAtMs / 1000)));
 }
 
+export function writeJsonRpcError(res: ServerResponse, err: AppError): void {
+  res.writeHead(err.httpStatus, { 'Content-Type': 'application/json' });
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: { code: err.jsonRpcCode, message: err.publicMessage },
+      id: null,
+    }),
+  );
+}
+
 async function handleHealth(
   req: IncomingMessage,
   res: ServerResponse,
@@ -271,8 +289,7 @@ async function handleMcp(
 
   if (!headerResult.ok) {
     log.warn({ reason: headerResult.reason }, 'header validation failed');
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Forbidden' }));
+    writeJsonRpcError(res, new OriginOrHostRejectedError(headerResult.reason, 'Forbidden'));
     return;
   }
 
@@ -312,8 +329,7 @@ async function handleMcp(
       { reason: headerResult2.reason, api_key_prefix: apiKey.prefix },
       'per-key header validation failed',
     );
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Forbidden' }));
+    writeJsonRpcError(res, new OriginOrHostRejectedError(headerResult2.reason, 'Forbidden'));
     return;
   }
 
@@ -345,21 +361,15 @@ async function handleMcp(
     // --- Existing session ---
     const session = sessions.get(sessionId);
     if (!session) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Session not found' },
-          id: null,
-        }),
-      );
+      writeJsonRpcError(res, new SessionNotFoundError('session not found', 'Session not found'));
       return;
     }
 
+    // Key mismatch is deliberately conflated with "not found" so a key holder
+    // cannot probe for other keys' session IDs. Same code, same status.
     if (session.apiKeyId !== apiKey.id) {
       log.warn({ sessionId, expected: session.apiKeyId, got: apiKey.id }, 'session key mismatch');
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Forbidden' }));
+      writeJsonRpcError(res, new SessionNotFoundError('session key mismatch', 'Session not found'));
       return;
     }
 
