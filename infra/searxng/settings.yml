@@ -38,19 +38,19 @@ engines:
     engine: brave
     shortcut: br
     disabled: false
-    language: sv
+    region: sv-SE
 
   - name: bing
     engine: bing
     shortcut: bi
     disabled: false
-    language: sv
+    region: sv-SE
 
   - name: qwant
     engine: qwant
     shortcut: qw
     disabled: false
-    language: sv
+    region: sv-SE
 
   - name: startpage
     engine: startpage
