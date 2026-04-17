@@ -65,6 +65,14 @@ export async function createServer(
   const rateLimiter = createRateLimiter(redis);
   const sessions = new Map<string, Session>();
 
+  // Request-scoped shutdown signal: combined into every ctx.signal below so a
+  // SIGTERM aborts in-flight tool handlers that honor ctx.signal, instead of
+  // letting them block shutdown up to their per-call timeout.
+  const shutdownCtrl = new AbortController();
+  registerShutdown('tool-abort', async () => {
+    shutdownCtrl.abort(new Error('server shutting down'));
+  });
+
   /** Idempotent session removal — safe to call multiple times for the same id. */
   const removeSession = async (id: string) => {
     const session = sessions.get(id);
@@ -100,6 +108,7 @@ export async function createServer(
         rateLimiter,
         sessions,
         removeSession,
+        shutdownSignal: shutdownCtrl.signal,
       });
     } catch (err) {
       log.error({ err }, 'unhandled request error');
@@ -140,6 +149,7 @@ interface HandlerDeps {
   rateLimiter: RateLimiter;
   sessions: Map<string, Session>;
   removeSession: (id: string) => Promise<void>;
+  shutdownSignal: AbortSignal;
 }
 
 async function handleRequest(
@@ -280,7 +290,8 @@ async function handleMcp(
   res: ServerResponse,
   deps: HandlerDeps,
 ): Promise<void> {
-  const { pool, redis, repo, registry, log, rateLimiter, sessions, removeSession } = deps;
+  const { pool, redis, repo, registry, log, rateLimiter, sessions, removeSession, shutdownSignal } =
+    deps;
   const method = req.method ?? 'GET';
 
   // Step 1: Validate headers (Origin/Host) — initial check without per-key origin requirement.
@@ -454,6 +465,7 @@ async function handleMcp(
     rateLimiter,
     registry,
     repo,
+    shutdownSignal,
   });
 
   const payload = parseJsonRpcBody(res, body);
@@ -490,9 +502,10 @@ function registerSessionTools(
     rateLimiter: RateLimiter;
     registry: ToolRegistry;
     repo: ApiKeyRepository;
+    shutdownSignal: AbortSignal;
   },
 ): void {
-  const { pool, redis, log, rateLimiter, registry, repo } = deps;
+  const { pool, redis, log, rateLimiter, registry, repo, shutdownSignal } = deps;
 
   for (const tool of registry.list()) {
     mcpServer.registerTool(
@@ -552,7 +565,10 @@ function registerSessionTools(
           },
           toolName: tool.name,
           requestId,
-          signal: AbortSignal.timeout(config.mcpToolCallTimeoutMs),
+          signal: AbortSignal.any([
+            AbortSignal.timeout(config.mcpToolCallTimeoutMs),
+            shutdownSignal,
+          ]),
           pool,
           redis,
           rootLogger: log,
@@ -596,15 +612,21 @@ function registerSessionTools(
           return result;
         } catch (err) {
           timer();
-          ctx.logger.error({ err }, 'tool handler error');
+          const abortedByShutdown = shutdownSignal.aborted;
+          ctx.logger.error({ err, aborted_by_shutdown: abortedByShutdown }, 'tool handler error');
           if (!(err instanceof RateLimitError)) {
-            metrics.requestsTotal.inc({ tool: tool.name, status: 'error' });
+            metrics.requestsTotal.inc({
+              tool: tool.name,
+              status: abortedByShutdown ? 'aborted_shutdown' : 'error',
+            });
           }
           auditToolCall({
             keyId: apiKey.id,
             keyPrefix: apiKey.prefix,
             tool: tool.name,
-            outcome: `error:${categorizeToolError(err)}`,
+            outcome: abortedByShutdown
+              ? 'error:aborted_shutdown'
+              : `error:${categorizeToolError(err)}`,
             durationMs: Date.now() - startMs,
             bytesIn: requestBytes,
             bytesOut: 0,

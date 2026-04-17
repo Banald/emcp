@@ -189,7 +189,7 @@ registerShutdown(async () => {
 
 | Metric | Type | Labels | Purpose |
 |--|--|--|--|
-| `mcp_requests_total` | counter | `tool`, `status` | Request count per tool, success/error |
+| `mcp_requests_total` | counter | `tool`, `status` | Request count per tool. `status` ∈ `success`, `error`, `rate_limited`, `aborted_shutdown`. |
 | `mcp_request_duration_seconds` | histogram | `tool` | Per-tool latency distribution |
 | `mcp_request_bytes_in` | histogram | `tool` | Request size distribution |
 | `mcp_request_bytes_out` | histogram | `tool` | Response size distribution |
