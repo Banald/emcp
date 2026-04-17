@@ -8,6 +8,8 @@ export interface CliDeps {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
   logger: Logger;
+  /** Audit-stream logger for key mutations. Production wires this to src/lib/audit.ts; tests mock it. */
+  auditLogger: Logger;
 }
 
 export type SubcommandRun = (args: string[], deps: CliDeps) => Promise<number>;
@@ -53,13 +55,18 @@ export interface AuditContext {
   [field: string]: unknown;
 }
 
+/**
+ * Emits an audit record via the provided logger. Production call sites pass
+ * the dedicated audit logger from `src/lib/audit.ts` so mutations land in the
+ * audit stream; tests pass a mock logger to inspect the record shape.
+ */
 export function audit(
   logger: Logger,
   event: string,
   message: string,
   context: AuditContext = {},
 ): void {
-  logger.info({ audit: true, event, ...context }, message);
+  logger.info({ event, ...context }, message);
 }
 
 // Wraps a parseArgs call: writes the error and usage string to stderr on failure, returns null.

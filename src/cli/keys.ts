@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { pool } from '../db/client.ts';
 import { ApiKeyRepository } from '../db/repos/api-keys.ts';
+import { auditLogger } from '../lib/audit.ts';
 import { isAppError } from '../lib/errors.ts';
 import { logger } from '../lib/logger.ts';
 import type { CliDeps, SubcommandRun } from './common.ts';
@@ -91,6 +92,7 @@ export async function main(argv: string[], options: MainOptions = {}): Promise<n
     stdout: process.stdout,
     stderr: process.stderr,
     logger,
+    auditLogger,
   };
   const close = options.closePool ?? (() => pool.end());
   try {

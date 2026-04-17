@@ -55,7 +55,6 @@ describe('keys set-rate-limit', () => {
     assert.match(stdoutText(), /set to 180/);
     const audit = logs.find((l) => l.fields.event === 'api_key.rate_limit_changed');
     assert.ok(audit);
-    assert.equal(audit.fields.audit, true);
     assert.equal(audit.fields.keyId, 'key-id-1');
     assert.equal(audit.fields.previousRateLimitPerMinute, 60);
     assert.equal(audit.fields.rateLimitPerMinute, 180);

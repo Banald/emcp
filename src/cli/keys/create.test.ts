@@ -89,7 +89,6 @@ describe('keys create', () => {
     await run(['--name', 'Production CI'], deps);
     const audit = logs.find((entry) => entry.fields.event === 'api_key.created');
     assert.ok(audit, 'expected api_key.created audit log');
-    assert.equal(audit.fields.audit, true);
     assert.equal(audit.fields.keyId, record.id);
     assert.equal(audit.fields.keyPrefix, record.keyPrefix);
     assert.equal(audit.fields.name, record.name);

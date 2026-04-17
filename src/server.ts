@@ -19,6 +19,7 @@ import { validateHeaders } from './core/headers.ts';
 import { metrics, register } from './core/metrics.ts';
 import { createRateLimiter, type RateLimiter, type RateLimitResult } from './core/rate-limiter.ts';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
+import { auditAuthFail, auditRateLimitHit, auditToolCall } from './lib/audit.ts';
 import {
   type AppError,
   isAppError,
@@ -181,6 +182,13 @@ function applyRateLimitHeaders(res: ServerResponse, result: RateLimitResult): vo
   res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAtMs / 1000)));
 }
 
+function categorizeToolError(err: unknown): string {
+  if (err instanceof RateLimitError) return 'rate_limit';
+  if (err instanceof TransientError) return 'transient';
+  if (isAppError(err)) return (err as AppError).name;
+  return 'unknown';
+}
+
 export function writeJsonRpcError(res: ServerResponse, err: AppError): void {
   res.writeHead(err.httpStatus, { 'Content-Type': 'application/json' });
   res.end(
@@ -251,8 +259,10 @@ async function handleMetrics(req: IncomingMessage, res: ServerResponse): Promise
   res.end(await register.metrics());
 }
 
-// Map auth error reasons to bounded metric labels.
-function authReasonLabel(error: { jsonRpcCode: number }): string {
+type AuthReasonLabel = 'missing' | 'malformed' | 'unknown' | 'blacklisted' | 'deleted';
+
+// Map auth error reasons to bounded metric / audit labels.
+function authReasonLabel(error: { jsonRpcCode: number }): AuthReasonLabel {
   switch (error.jsonRpcCode) {
     case -32001:
       return 'missing';
@@ -299,8 +309,10 @@ async function handleMcp(
 
   if (!authResult.ok) {
     const err = authResult.error;
-    metrics.authFailuresTotal.inc({ reason: authReasonLabel(err) });
+    const reasonLabel = authReasonLabel(err);
+    metrics.authFailuresTotal.inc({ reason: reasonLabel });
     log.warn({ reason: err.message, code: err.jsonRpcCode }, 'auth failed');
+    auditAuthFail({ reason: reasonLabel, jsonRpcCode: err.jsonRpcCode });
     res.writeHead(err.httpStatus, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
@@ -342,6 +354,7 @@ async function handleMcp(
   applyRateLimitHeaders(res, rlResult);
   if (!rlResult.allowed) {
     metrics.rateLimitHitsTotal.inc({ scope: 'per_key' });
+    auditRateLimitHit({ keyId: apiKey.id, keyPrefix: apiKey.prefix, scope: 'per_key' });
     res.setHeader('Retry-After', String(rlResult.retryAfterSec));
     res.writeHead(429, { 'Content-Type': 'application/json' });
     res.end(
@@ -496,6 +509,9 @@ function registerSessionTools(
         ...(tool.requiresConfirmation ? { annotations: { destructiveHint: true } } : {}),
       },
       async (args: Record<string, unknown>): Promise<SdkCallToolResult> => {
+        const requestBytes = JSON.stringify(args).length;
+        const startMs = Date.now();
+
         // Per-tool rate limiting: enforced at the tool layer, not HTTP layer.
         if (tool.rateLimit) {
           const toolRlResult = await rateLimiter.check({
@@ -506,6 +522,21 @@ function registerSessionTools(
           if (!toolRlResult.allowed) {
             metrics.rateLimitHitsTotal.inc({ scope: 'per_tool' });
             metrics.requestsTotal.inc({ tool: tool.name, status: 'rate_limited' });
+            auditRateLimitHit({
+              keyId: apiKey.id,
+              keyPrefix: apiKey.prefix,
+              scope: 'per_tool',
+              tool: tool.name,
+            });
+            auditToolCall({
+              keyId: apiKey.id,
+              keyPrefix: apiKey.prefix,
+              tool: tool.name,
+              outcome: 'error:rate_limit',
+              durationMs: Date.now() - startMs,
+              bytesIn: requestBytes,
+              bytesOut: 0,
+            });
             throw new RateLimitError(
               `per-tool rate limit exceeded for ${tool.name}`,
               `Rate limit exceeded for ${tool.name}. Retry in ${toolRlResult.retryAfterSec}s.`,
@@ -514,8 +545,6 @@ function registerSessionTools(
         }
 
         const requestId = randomUUID();
-        const requestBytes = JSON.stringify(args).length;
-        const startMs = Date.now();
         const timer = metrics.requestDuration.startTimer({ tool: tool.name });
 
         const ctx = buildToolContext({
@@ -539,9 +568,19 @@ function registerSessionTools(
           const result = (await tool.handler(args, ctx)) as SdkCallToolResult;
           timer();
           const responseBytes = JSON.stringify(result).length;
+          const durationMs = Date.now() - startMs;
           metrics.requestsTotal.inc({ tool: tool.name, status: 'success' });
           metrics.requestBytesIn.observe({ tool: tool.name }, requestBytes);
           metrics.requestBytesOut.observe({ tool: tool.name }, responseBytes);
+          auditToolCall({
+            keyId: apiKey.id,
+            keyPrefix: apiKey.prefix,
+            tool: tool.name,
+            outcome: result.isError ? 'error:tool_is_error' : 'success',
+            durationMs,
+            bytesIn: requestBytes,
+            bytesOut: responseBytes,
+          });
 
           // Fire-and-forget usage persistence to Postgres.
           queueMicrotask(() => {
@@ -551,7 +590,7 @@ function registerSessionTools(
                 toolName: tool.name,
                 bytesIn: requestBytes,
                 bytesOut: responseBytes,
-                computeMs: Date.now() - startMs,
+                computeMs: durationMs,
               })
               .catch((err) => {
                 log.error({ err, key_id: apiKey.id, tool: tool.name }, 'recordUsage failed');
@@ -565,6 +604,15 @@ function registerSessionTools(
           if (!(err instanceof RateLimitError)) {
             metrics.requestsTotal.inc({ tool: tool.name, status: 'error' });
           }
+          auditToolCall({
+            keyId: apiKey.id,
+            keyPrefix: apiKey.prefix,
+            tool: tool.name,
+            outcome: `error:${categorizeToolError(err)}`,
+            durationMs: Date.now() - startMs,
+            bytesIn: requestBytes,
+            bytesOut: 0,
+          });
           if (isAppError(err)) throw err;
           throw new TransientError('tool execution failed', 'An error occurred.');
         }

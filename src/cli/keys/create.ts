@@ -63,7 +63,7 @@ export const run: SubcommandRun = async (args, deps: CliDeps) => {
   writeLine(deps.stdout, `Prefix: ${record.keyPrefix}`);
   writeLine(deps.stdout, `Name:   ${record.name}`);
 
-  audit(deps.logger, 'api_key.created', 'api key created', {
+  audit(deps.auditLogger, 'api_key.created', 'api key created', {
     keyId: record.id,
     keyPrefix: record.keyPrefix,
     name: record.name,

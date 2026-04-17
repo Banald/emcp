@@ -51,7 +51,7 @@ export const run: SubcommandRun = async (args, deps: CliDeps) => {
   await deps.repo.softDelete(record.id);
   writeLine(deps.stdout, `deleted ${record.keyPrefix} (${record.name})`);
 
-  audit(deps.logger, 'api_key.deleted', 'api key soft-deleted', {
+  audit(deps.auditLogger, 'api_key.deleted', 'api key soft-deleted', {
     keyId: record.id,
     keyPrefix: record.keyPrefix,
   });

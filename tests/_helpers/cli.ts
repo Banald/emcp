@@ -65,6 +65,7 @@ export function makeCapturedDeps(opts: {
     stdout,
     stderr,
     logger: loggerMock,
+    auditLogger: loggerMock,
   };
   return {
     deps,

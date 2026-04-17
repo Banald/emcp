@@ -62,6 +62,7 @@ describe('confirm', () => {
       stdout: capturedWritable().stream,
       stderr: capturedWritable().stream,
       logger: {} as Logger,
+      auditLogger: {} as Logger,
     };
   }
 
@@ -121,15 +122,15 @@ describe('safeParse', () => {
 });
 
 describe('audit', () => {
-  it('logs with audit: true and event field', () => {
+  it('logs with event field and provided context', () => {
     const info = mock.fn();
     const logger = { info } as unknown as Logger;
     audit(logger, 'api_key.created', 'key created', { keyId: '123', keyPrefix: 'mcp_live' });
     assert.equal(info.mock.callCount(), 1);
     const args = info.mock.calls[0].arguments;
-    assert.equal((args[0] as Record<string, unknown>).audit, true);
     assert.equal((args[0] as Record<string, unknown>).event, 'api_key.created');
     assert.equal((args[0] as Record<string, unknown>).keyId, '123');
+    assert.equal((args[0] as Record<string, unknown>).keyPrefix, 'mcp_live');
     assert.equal(args[1], 'key created');
   });
 });

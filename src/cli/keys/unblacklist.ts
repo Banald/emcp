@@ -54,7 +54,7 @@ export const run: SubcommandRun = async (args, deps: CliDeps) => {
   await deps.repo.unblacklist(record.id);
   writeLine(deps.stdout, `unblacklisted ${record.keyPrefix} (${record.name})`);
 
-  audit(deps.logger, 'api_key.unblacklisted', 'api key unblacklisted', {
+  audit(deps.auditLogger, 'api_key.unblacklisted', 'api key unblacklisted', {
     keyId: record.id,
     keyPrefix: record.keyPrefix,
   });

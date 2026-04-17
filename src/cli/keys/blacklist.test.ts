@@ -53,7 +53,6 @@ describe('keys blacklist', () => {
     assert.match(stdoutText(), /blacklisted mcp_live_abc/);
     const audit = logs.find((l) => l.fields.event === 'api_key.blacklisted');
     assert.ok(audit);
-    assert.equal(audit.fields.audit, true);
     assert.equal(audit.fields.keyId, 'key-id-1');
   });
 

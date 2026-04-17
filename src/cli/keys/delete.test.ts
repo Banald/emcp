@@ -53,7 +53,6 @@ describe('keys delete', () => {
     assert.match(stdoutText(), /deleted mcp_live_abc/);
     const audit = logs.find((l) => l.fields.event === 'api_key.deleted');
     assert.ok(audit);
-    assert.equal(audit.fields.audit, true);
     assert.equal(audit.fields.keyId, 'key-id-1');
   });
 

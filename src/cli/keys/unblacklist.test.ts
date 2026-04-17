@@ -74,7 +74,6 @@ describe('keys unblacklist', () => {
     assert.match(stdoutText(), /unblacklisted mcp_live_abc/);
     const audit = logs.find((l) => l.fields.event === 'api_key.unblacklisted');
     assert.ok(audit);
-    assert.equal(audit.fields.audit, true);
     assert.equal(audit.fields.keyId, 'key-id-1');
   });
 

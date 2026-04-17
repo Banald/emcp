@@ -45,7 +45,7 @@ export const run: SubcommandRun = async (args, deps: CliDeps) => {
     `rate limit for ${record.keyPrefix} (${record.name}) set to ${perMinute} / min`,
   );
 
-  audit(deps.logger, 'api_key.rate_limit_changed', 'api key rate limit changed', {
+  audit(deps.auditLogger, 'api_key.rate_limit_changed', 'api key rate limit changed', {
     keyId: record.id,
     keyPrefix: record.keyPrefix,
     previousRateLimitPerMinute: record.rateLimitPerMinute,
