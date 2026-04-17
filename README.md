@@ -63,7 +63,10 @@ cp .env.example .env
 mkdir -p secrets
 openssl rand -base64 24 > secrets/postgres_password.txt
 openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
-chmod 0600 secrets/*.txt
+# 0644 (not 0600): Compose `secrets:` bind-mounts these files into the
+# container with host permissions preserved, and the non-root container
+# user (UID 10001) must be able to read them. See secrets/README.md.
+chmod 0644 secrets/*.txt
 
 # 3. Authenticate to ghcr.io
 # Banald/echo is private, so pulling the image requires auth. If gh CLI

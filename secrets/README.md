@@ -23,8 +23,15 @@ image's entrypoint and Echo's entrypoint strip them.
 mkdir -p secrets
 openssl rand -base64 24 > secrets/postgres_password.txt
 openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
-chmod 0600 secrets/*.txt
+chmod 0644 secrets/*.txt
 ```
+
+`0644` (not `0600`) is required: Docker Compose `secrets:` bind-mounts these
+files into the service container with host permissions preserved, and the
+non-root container user (`echo`, UID 10001) must be able to read them.
+Mode `0600` breaks the mount for that user, and the entrypoint refuses to
+start with `$_FILE is not readable`. The files still must not be committed
+(enforced by the repo's `.gitignore`).
 
 ## Rotation
 
