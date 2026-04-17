@@ -19,12 +19,15 @@ async function main() {
     shutdownSignal: shutdown.signal,
   });
 
-  await scheduler.start();
-
+  // Register shutdown BEFORE start() so a SIGTERM arriving during startup
+  // (including while runOnStartup handlers are still in flight) still drives
+  // the scheduler through its stop path.
   registerShutdown('worker-scheduler', async () => {
     shutdown.abort();
     await scheduler.stop(config.shutdownTimeoutMs);
   });
+
+  await scheduler.start();
 
   logger.info('mcp-worker ready');
 }
