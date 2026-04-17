@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { query } from '../../db/client.ts';
 import type { NewsSourceKey } from './sources.ts';
 
 export interface NewsArticleRecord {
@@ -70,7 +71,7 @@ export class NewsArticlesRepository {
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM news_articles');
+      await query('DELETE FROM news_articles', [], client);
 
       const params: unknown[] = [];
       const placeholders: string[] = [];
@@ -90,11 +91,12 @@ export class NewsArticlesRepository {
         );
       }
 
-      await client.query(
+      await query(
         `INSERT INTO news_articles
            (source, source_rank, url, title, description, content, published_at)
          VALUES ${placeholders.join(', ')}`,
         params,
+        client,
       );
 
       await client.query('COMMIT');
@@ -111,8 +113,10 @@ export class NewsArticlesRepository {
   }
 
   async listAll(): Promise<NewsArticleRecord[]> {
-    const { rows } = await this.pool.query<NewsArticleRow>(
+    const { rows } = await query<NewsArticleRow>(
       `SELECT ${SELECT_COLUMNS} FROM news_articles ORDER BY source, source_rank`,
+      [],
+      this.pool,
     );
     return rows.map(mapRow);
   }

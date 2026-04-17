@@ -85,6 +85,22 @@ describe('ApiKeyRepository.create', () => {
       /api key create returned no row/,
     );
   });
+
+  it('maps a pg 23505 unique-violation to ConflictError via the query() wrapper', async () => {
+    // A raw pg Error with code '23505' now flows through mapPgError since the
+    // repo goes through query() instead of pool.query directly.
+    const pgError = Object.assign(new Error('duplicate key'), { code: '23505' });
+    const pool = {
+      query: mock.fn(async () => {
+        throw pgError;
+      }),
+    } as unknown as Pool;
+    const repo = new ApiKeyRepository(pool);
+    await assert.rejects(
+      repo.create({ keyPrefix: 'p', keyHash: 'h', name: 'n' }),
+      (err: Error) => err.name === 'ConflictError',
+    );
+  });
 });
 
 describe('ApiKeyRepository.findById / findByPrefix', () => {

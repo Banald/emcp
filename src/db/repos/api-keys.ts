@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { config } from '../../config.ts';
 import { logger } from '../../lib/logger.ts';
+import { query } from '../client.ts';
 
 export type ApiKeyStatus = 'active' | 'blacklisted' | 'deleted';
 
@@ -106,11 +107,12 @@ export class ApiKeyRepository {
   async create(input: CreateApiKeyInput): Promise<ApiKeyRecord> {
     const rateLimit = input.rateLimitPerMinute ?? config.rateLimitDefaultPerMinute;
     const allowNoOrigin = input.allowNoOrigin ?? false;
-    const { rows } = await this.pool.query<ApiKeyRow>(
+    const { rows } = await query<ApiKeyRow>(
       `INSERT INTO api_keys (key_prefix, key_hash, name, rate_limit_per_minute, allow_no_origin)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING ${SELECT_COLUMNS}`,
       [input.keyPrefix, input.keyHash, input.name, rateLimit, allowNoOrigin],
+      this.pool,
     );
     const row = rows[0];
     if (!row) throw new Error('api key create returned no row');
@@ -118,18 +120,20 @@ export class ApiKeyRepository {
   }
 
   async findById(id: string): Promise<ApiKeyRecord | null> {
-    const { rows } = await this.pool.query<ApiKeyRow>(
+    const { rows } = await query<ApiKeyRow>(
       `SELECT ${SELECT_COLUMNS} FROM api_keys WHERE id = $1`,
       [id],
+      this.pool,
     );
     const row = rows[0];
     return row ? mapRow(row) : null;
   }
 
   async findByPrefix(prefix: string): Promise<ApiKeyRecord | null> {
-    const { rows } = await this.pool.query<ApiKeyRow>(
+    const { rows } = await query<ApiKeyRow>(
       `SELECT ${SELECT_COLUMNS} FROM api_keys WHERE key_prefix = $1 LIMIT 1`,
       [prefix],
+      this.pool,
     );
     const row = rows[0];
     return row ? mapRow(row) : null;
@@ -137,9 +141,10 @@ export class ApiKeyRepository {
 
   // Primary auth hot path — relies on the UNIQUE index on key_hash.
   async findByHash(keyHash: string): Promise<ApiKeyRecord | null> {
-    const { rows } = await this.pool.query<ApiKeyRow>(
+    const { rows } = await query<ApiKeyRow>(
       `SELECT ${SELECT_COLUMNS} FROM api_keys WHERE key_hash = $1`,
       [keyHash],
+      this.pool,
     );
     const row = rows[0];
     return row ? mapRow(row) : null;
@@ -158,42 +163,46 @@ export class ApiKeyRepository {
       sql += " WHERE status <> 'deleted'";
     }
     sql += ' ORDER BY created_at DESC';
-    const { rows } = await this.pool.query<ApiKeyRow>(sql, params);
+    const { rows } = await query<ApiKeyRow>(sql, params, this.pool);
     return rows.map(mapRow);
   }
 
   async blacklist(id: string): Promise<void> {
-    await this.pool.query(
+    await query(
       `UPDATE api_keys SET status = 'blacklisted', blacklisted_at = now() WHERE id = $1`,
       [id],
+      this.pool,
     );
   }
 
   // Guarded: only a currently-blacklisted key can be reactivated. A deleted key is permanent.
   async unblacklist(id: string): Promise<void> {
-    await this.pool.query(
+    await query(
       `UPDATE api_keys SET status = 'active', blacklisted_at = NULL
        WHERE id = $1 AND status = 'blacklisted'`,
       [id],
+      this.pool,
     );
   }
 
   async softDelete(id: string): Promise<void> {
-    await this.pool.query(
+    await query(
       `UPDATE api_keys SET status = 'deleted', deleted_at = now() WHERE id = $1`,
       [id],
+      this.pool,
     );
   }
 
   async setRateLimit(id: string, perMinute: number): Promise<void> {
-    await this.pool.query(`UPDATE api_keys SET rate_limit_per_minute = $1 WHERE id = $2`, [
-      perMinute,
-      id,
-    ]);
+    await query(
+      `UPDATE api_keys SET rate_limit_per_minute = $1 WHERE id = $2`,
+      [perMinute, id],
+      this.pool,
+    );
   }
 
   async touchLastUsed(id: string): Promise<void> {
-    await this.pool.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [id]);
+    await query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [id], this.pool);
   }
 
   // Atomically updates the aggregate counters on api_keys AND the per-tool breakdown.
@@ -204,7 +213,7 @@ export class ApiKeyRepository {
     try {
       client = await this.pool.connect();
       await client.query('BEGIN');
-      await client.query(
+      await query(
         `UPDATE api_keys
          SET request_count    = request_count + 1,
              bytes_in         = bytes_in + $2,
@@ -213,9 +222,10 @@ export class ApiKeyRepository {
              last_used_at     = now()
          WHERE id = $1`,
         [input.keyId, input.bytesIn, input.bytesOut, input.computeMs],
+        client,
       );
       if (input.toolName !== null) {
-        await client.query(
+        await query(
           `INSERT INTO api_key_tool_usage
              (key_id, tool_name, invocation_count, bytes_in, bytes_out, total_compute_ms, last_used_at)
            VALUES ($1, $2, 1, $3, $4, $5, now())
@@ -226,6 +236,7 @@ export class ApiKeyRepository {
              total_compute_ms = api_key_tool_usage.total_compute_ms + EXCLUDED.total_compute_ms,
              last_used_at     = now()`,
           [input.keyId, input.toolName, input.bytesIn, input.bytesOut, input.computeMs],
+          client,
         );
       }
       await client.query('COMMIT');

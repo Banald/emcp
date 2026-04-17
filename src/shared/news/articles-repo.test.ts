@@ -232,5 +232,20 @@ describe('NewsArticlesRepository', () => {
       };
       assert.deepEqual(record, expected);
     });
+
+    it('surfaces a pg 23505 via mapPgError as ConflictError', async () => {
+      const pgError = Object.assign(new Error('dup row'), { code: '23505' });
+      const pool = {
+        connect: mock.fn(async () => makeClient().client),
+        query: mock.fn(async () => {
+          throw pgError;
+        }),
+      } as unknown as Pool;
+      const repo = new NewsArticlesRepository(pool);
+      await assert.rejects(
+        () => repo.listAll(),
+        (err: Error) => err.name === 'ConflictError',
+      );
+    });
   });
 });
