@@ -76,8 +76,13 @@ describe('get-news handler', () => {
     const result = await tool.handler({}, makeCtx(pool));
 
     assert.equal(result.isError, true);
-    assert.match((result.content[0] as { text: string }).text, /empty/i);
-    assert.match((result.content[0] as { text: string }).text, /not populated/);
+    const text = (result.content[0] as { text: string }).text;
+    assert.match(text, /empty/i);
+    assert.match(text, /not populated/);
+    // The current-date section is still prepended in the error path so the
+    // LLM does not fall back to a stale training-data year in its reply.
+    assert.match(text, /# Current date/);
+    assert.match(text, /current year is \d{4}/);
   });
 
   it('groups records by source, orders by rank, and fills empty sources', async () => {
@@ -121,7 +126,7 @@ describe('get-news handler', () => {
     assert.equal(fetchedAt, '2026-04-16T14:30:00.000Z');
   });
 
-  it('renders the text block with source headers, titles, URLs, and content', async () => {
+  it('renders the text block with Markdown source headers, per-article source, URL, and body', async () => {
     const rows = [
       fakeRow({
         source: 'aftonbladet',
@@ -139,13 +144,41 @@ describe('get-news handler', () => {
     const result = await tool.handler({}, makeCtx(poolReturning(rows)));
 
     const text = (result.content[0] as { text: string }).text;
-    assert.match(text, /=== Aftonbladet ===/);
-    assert.match(text, /=== Expressen ===/);
-    assert.match(text, /=== SVT Nyheter ===/);
-    assert.match(text, /1\. AB-headline/);
-    assert.match(text, /URL: https:\/\/www\.aftonbladet\.se\/a/);
+    assert.match(text, /^## Aftonbladet$/m);
+    assert.match(text, /^## Expressen$/m);
+    assert.match(text, /^## SVT Nyheter$/m);
+    assert.match(text, /^### 1\. AB-headline$/m);
+    assert.match(text, /- \*\*Källa:\*\* Aftonbladet/);
+    assert.match(text, /- \*\*URL:\*\* https:\/\/www\.aftonbladet\.se\/a/);
     assert.match(text, /Body text for AB\./);
     assert.match(text, /\(inga cachade artiklar\)/);
+  });
+
+  it('prepends a strong current-date section with the year and language instruction', async () => {
+    const rows = [fakeRow()];
+    const result = await tool.handler({}, makeCtx(poolReturning(rows)));
+    const text = (result.content[0] as { text: string }).text;
+
+    // Header with weekday + ISO date + UTC + year emphasis.
+    assert.match(text, /^# Current date$/m, 'must begin with a Current date Markdown header');
+    const year = new Date().getUTCFullYear();
+    const isoDate = new Date().toISOString().slice(0, 10);
+    assert.match(
+      text,
+      new RegExp(`Today is \\w+, ${isoDate} \\(UTC\\)\\. The current year is ${year}\\.`),
+    );
+
+    // Strong instruction against stale-year hallucination.
+    assert.match(text, /training cutoff/i);
+    assert.match(text, /2024/);
+    assert.match(text, /do NOT claim it is still 2024/i);
+
+    // Language-matching instruction.
+    assert.match(text, /same language they wrote/i);
+    assert.match(text, /English.*Swedish/);
+
+    // Section is visually separated from the articles.
+    assert.match(text, /\n---\n/);
   });
 
   it('labels missing publishedAt as "okänt" and missing description as "(ingen sammanfattning)"', async () => {
@@ -160,8 +193,29 @@ describe('get-news handler', () => {
     const result = await tool.handler({}, makeCtx(poolReturning(rows)));
     const text = (result.content[0] as { text: string }).text;
 
-    assert.match(text, /Publicerad: okänt/);
+    assert.match(text, /- \*\*Publicerad:\*\* okänt/);
     assert.match(text, /\(ingen sammanfattning\)/);
+  });
+
+  it('exposes current_date and current_weekday in structuredContent', async () => {
+    const rows = [fakeRow()];
+    const before = Date.now();
+    const result = await tool.handler({}, makeCtx(poolReturning(rows)));
+    const after = Date.now();
+
+    const structured = result.structuredContent as {
+      current_date: string;
+      current_weekday: string;
+    };
+    const t = Date.parse(structured.current_date);
+    assert.ok(
+      Number.isFinite(t) && t >= before - 1 && t <= after + 1,
+      `current_date should be a valid ISO 8601 timestamp near "now" — got ${structured.current_date}`,
+    );
+    assert.match(
+      structured.current_weekday,
+      /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/,
+    );
   });
 
   it('produces structuredContent that validates against the declared outputSchema', async () => {

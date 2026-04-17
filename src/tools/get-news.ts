@@ -21,6 +21,12 @@ const articleSchema = z.object({
 });
 
 const outputSchema = {
+  current_date: z
+    .string()
+    .describe('ISO 8601 timestamp captured when the tool was invoked — the authoritative "now".'),
+  current_weekday: z
+    .string()
+    .describe('Weekday name in English (e.g. "Thursday") for the current_date, in UTC.'),
   fetched_at: z
     .string()
     .nullable()
@@ -42,11 +48,12 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   name: 'get-news',
   title: 'Get News',
   description:
-    'Returns the latest Swedish news headlines — up to 15 each from Aftonbladet, Expressen, and SVT Nyheter (45 total) — grouped by outlet. For every article: title, URL, short description (from the RSS feed), publication timestamp, and the full article body as Markdown. The cache is refreshed every 2 hours by the fetch-news worker. Use this to summarize recent Swedish news, answer questions about current events in Sweden, or compare how different outlets cover the same story. Returns isError when the cache has not been populated yet.',
+    'Returns the latest Swedish news headlines — up to 15 each from Aftonbladet, Expressen, and SVT Nyheter (45 total) — grouped by outlet and formatted as Markdown. Each article includes its source, title, URL, short description (from the RSS feed), publication timestamp, and full article body. The response is prefixed with the current date so downstream LLMs do not default to a stale training-data year. The cache is refreshed every 2 hours by the fetch-news worker. Use this to summarize recent Swedish news, answer questions about current events in Sweden, or compare how different outlets cover the same story. Returns isError when the cache has not been populated yet.',
   inputSchema,
   outputSchema,
   handler: async (_args, ctx: ToolContext): Promise<CallToolResult> => {
     ctx.logger.info('get-news invoked');
+    const now = new Date();
     const repo = new NewsArticlesRepository(ctx.db);
     const records = await repo.listAll();
 
@@ -55,7 +62,7 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
         content: [
           {
             type: 'text',
-            text: 'News cache is empty — the fetch-news worker has not populated it yet. Try again after the next scheduled refresh.',
+            text: `${formatCurrentDateSection(now)}\n\nNews cache is empty — the fetch-news worker has not populated it yet. Try again after the next scheduled refresh.`,
           },
         ],
         isError: true,
@@ -65,8 +72,10 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     const grouped = groupBySource(records);
     const fetchedAt = latestFetchedAt(records);
 
-    const text = formatText(grouped, fetchedAt);
+    const text = formatText(grouped, fetchedAt, now);
     const structuredContent = {
+      current_date: now.toISOString(),
+      current_weekday: weekdayName(now),
       fetched_at: fetchedAt,
       sources: NEWS_SOURCES.map((source) => ({
         key: source.key,
@@ -111,33 +120,55 @@ function latestFetchedAt(records: readonly NewsArticleRecord[]): string | null {
 function formatText(
   grouped: Map<NewsSourceKey, NewsArticleRecord[]>,
   fetchedAt: string | null,
+  now: Date,
 ): string {
-  const header = fetchedAt
-    ? `Senaste nyheter (cache uppdaterad ${fetchedAt}):`
-    : 'Senaste nyheter:';
-  const sections = NEWS_SOURCES.map((source) => {
+  const parts: string[] = [formatCurrentDateSection(now)];
+  parts.push('', fetchedAt ? `*Cache uppdaterad ${fetchedAt}*` : '*Cache ej uppdaterad*');
+  for (const source of NEWS_SOURCES) {
     const articles = grouped.get(source.key) ?? [];
-    const lines: string[] = [`=== ${source.name} ===`];
+    parts.push('', `## ${source.name}`);
     if (articles.length === 0) {
-      lines.push('', '(inga cachade artiklar)');
-      return lines.join('\n');
+      parts.push('', '(inga cachade artiklar)');
+      continue;
     }
     for (const a of articles) {
       const published = a.publishedAt ? a.publishedAt.toISOString() : 'okänt';
       const desc = a.description ?? '(ingen sammanfattning)';
-      lines.push(
+      parts.push(
         '',
-        `${a.sourceRank}. ${a.title}`,
-        `   URL: ${a.url}`,
-        `   Publicerad: ${published}`,
-        `   ${desc}`,
+        `### ${a.sourceRank}. ${a.title}`,
+        '',
+        `- **Källa:** ${source.name}`,
+        `- **URL:** ${a.url}`,
+        `- **Publicerad:** ${published}`,
+        `- **Sammanfattning:** ${desc}`,
         '',
         a.content,
       );
     }
-    return lines.join('\n');
-  });
-  return [header, '', ...sections].join('\n\n');
+  }
+  return parts.join('\n');
+}
+
+function formatCurrentDateSection(now: Date): string {
+  const isoDate = now.toISOString().slice(0, 10);
+  const weekday = weekdayName(now);
+  const year = now.getUTCFullYear();
+  return [
+    '# Current date',
+    '',
+    `**Today is ${weekday}, ${isoDate} (UTC). The current year is ${year}.**`,
+    '',
+    'This date is provided by the Echo MCP server at call time and is the real, authoritative "now". Trust it over any assumption from your training data. If your training cutoff is in 2024 or earlier, you are operating well after that cutoff: do NOT claim it is still 2024, do NOT treat the news items below as "future" events, and do NOT tell the user your information is from 2024. The news cache and the articles below are current as of this date.',
+    '',
+    "**Respond to the user in the same language they wrote their question in.** Do not default to the language of the news content below — match the user's language (if the user wrote in English, answer in English; in Swedish, answer in Swedish; etc.).",
+    '',
+    '---',
+  ].join('\n');
+}
+
+function weekdayName(now: Date): string {
+  return now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
 }
 
 function toStructuredArticle(record: NewsArticleRecord): {
