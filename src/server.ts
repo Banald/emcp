@@ -74,10 +74,10 @@ export async function createServer(
   });
 
   /** Idempotent session removal — safe to call multiple times for the same id. */
-  const removeSession = async (id: string) => {
-    const session = sessions.get(id);
+  const removeSession = async (sessionId: string) => {
+    const session = sessions.get(sessionId);
     if (!session) return;
-    sessions.delete(id);
+    sessions.delete(sessionId);
     metrics.activeSessions.dec();
     try {
       await session.mcpServer.close();
@@ -88,10 +88,10 @@ export async function createServer(
 
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
-    for (const [id, session] of sessions) {
+    for (const [sessionId, session] of sessions) {
       if (now - session.lastActivityMs > config.mcpSessionIdleMs) {
-        log.info({ sessionId: id }, 'evicting idle session');
-        void removeSession(id);
+        log.info({ sessionId }, 'evicting idle session');
+        void removeSession(sessionId);
       }
     }
   }, config.mcpSessionCleanupIntervalMs);
@@ -128,8 +128,8 @@ export async function createServer(
   const close = async () => {
     clearInterval(cleanupInterval);
     const promises: Promise<void>[] = [];
-    for (const [id] of sessions) {
-      promises.push(removeSession(id));
+    for (const [sessionId] of sessions) {
+      promises.push(removeSession(sessionId));
     }
     await Promise.all(promises);
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
@@ -148,7 +148,7 @@ interface HandlerDeps {
   log: Logger;
   rateLimiter: RateLimiter;
   sessions: Map<string, Session>;
-  removeSession: (id: string) => Promise<void>;
+  removeSession: (sessionId: string) => Promise<void>;
   shutdownSignal: AbortSignal;
 }
 
