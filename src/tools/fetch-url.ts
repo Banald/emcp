@@ -1,8 +1,8 @@
-import { Buffer } from 'node:buffer';
+import type { Buffer } from 'node:buffer';
 import { z } from 'zod';
 import { extractArticle } from '../shared/html/extract.ts';
-import { assertPublicHostname } from '../shared/net/ssrf.ts';
-import { USER_AGENT } from '../shared/net/user-agent.ts';
+import { decodeBody, parseCharset } from '../shared/net/decode.ts';
+import { fetchSafe } from '../shared/net/http.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -11,6 +11,9 @@ const MAX_REDIRECTS = 5;
 const MIN_MAX_LENGTH = 500;
 const DEFAULT_MAX_LENGTH = 50_000;
 const MAX_MAX_LENGTH = 100_000;
+
+const ACCEPT_HEADER =
+  'text/html, application/xhtml+xml, text/plain, application/json, application/xml, text/*;q=0.9, */*;q=0.5';
 
 const inputSchema = {
   url: z
@@ -77,8 +80,23 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
 
   handler: async ({ url, max_length }, ctx: ToolContext): Promise<CallToolResult> => {
     try {
-      const outcome = await performFetch(url, ctx.signal);
-      return formatOutcome(outcome, max_length);
+      const outcome = await fetchSafe(url, {
+        signal: ctx.signal,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        maxBytes: MAX_RESPONSE_BYTES,
+        maxRedirects: MAX_REDIRECTS,
+        headers: { Accept: ACCEPT_HEADER },
+      });
+      return formatOutcome(
+        {
+          finalUrl: outcome.finalUrl,
+          status: outcome.status,
+          contentType: outcome.contentType,
+          body: outcome.body,
+          wireTruncated: outcome.wireTruncated,
+        },
+        max_length,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.logger.warn({ url, err: message }, 'fetch-url failed');
@@ -96,110 +114,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
 };
 
 export default tool;
-
-async function performFetch(initialUrl: string, callerSignal: AbortSignal): Promise<FetchOutcome> {
-  const combinedSignal = AbortSignal.any([callerSignal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
-  let current: URL;
-  try {
-    current = new URL(initialUrl);
-  } catch {
-    throw new Error('invalid URL');
-  }
-  let redirects = 0;
-
-  while (true) {
-    if (current.protocol !== 'http:' && current.protocol !== 'https:') {
-      throw new Error(`unsupported protocol "${current.protocol}" (only http and https allowed)`);
-    }
-
-    await assertPublicHostname(current.hostname);
-
-    let response: Response;
-    try {
-      response = await fetch(current.toString(), {
-        method: 'GET',
-        redirect: 'manual',
-        signal: combinedSignal,
-        headers: {
-          'User-Agent': USER_AGENT,
-          Accept:
-            'text/html, application/xhtml+xml, text/plain, application/json, application/xml, text/*;q=0.9, */*;q=0.5',
-        },
-      });
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw new Error(`timed out after ${FETCH_TIMEOUT_MS}ms`);
-      }
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        throw new Error('request aborted');
-      }
-      throw new Error(`network error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    if (response.status >= 300 && response.status < 400 && response.status !== 304) {
-      const location = response.headers.get('location');
-      void response.body?.cancel().catch(() => undefined);
-      if (!location) {
-        throw new Error(`redirect ${response.status} with no Location header`);
-      }
-      redirects++;
-      if (redirects > MAX_REDIRECTS) {
-        throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
-      }
-      let next: URL;
-      try {
-        next = new URL(location, current);
-      } catch {
-        throw new Error(`redirect ${response.status} has invalid Location "${location}"`);
-      }
-      current = next;
-      continue;
-    }
-
-    const { buffer, wireTruncated } = await readCappedBody(response, MAX_RESPONSE_BYTES);
-    return {
-      finalUrl: current.toString(),
-      status: response.status,
-      contentType: response.headers.get('content-type'),
-      body: buffer,
-      wireTruncated,
-    };
-  }
-}
-
-async function readCappedBody(
-  response: Response,
-  maxBytes: number,
-): Promise<{ buffer: Buffer; wireTruncated: boolean }> {
-  if (!response.body) {
-    return { buffer: Buffer.alloc(0), wireTruncated: false };
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let truncated = false;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.length;
-      if (total > maxBytes) {
-        const overflow = total - maxBytes;
-        const keep = value.length - overflow;
-        if (keep > 0) chunks.push(value.subarray(0, keep));
-        truncated = true;
-        break;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.cancel().catch(() => undefined);
-  }
-
-  return { buffer: Buffer.concat(chunks), wireTruncated: truncated };
-}
 
 function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult {
   const { finalUrl, status, contentType, body, wireTruncated } = outcome;
@@ -305,21 +219,8 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
 
 function parseContentType(raw: string | null): { mime: string; charset: string } {
   if (!raw) return { mime: 'application/octet-stream', charset: 'utf-8' };
-  const parts = raw.split(';').map((p) => p.trim());
-  const mime = (parts[0] ?? '').toLowerCase();
-  let charset = 'utf-8';
-  for (const p of parts.slice(1)) {
-    const eq = p.indexOf('=');
-    if (eq === -1) continue;
-    const key = p.slice(0, eq).trim().toLowerCase();
-    if (key !== 'charset') continue;
-    charset = p
-      .slice(eq + 1)
-      .trim()
-      .replace(/^"(.*)"$/, '$1')
-      .toLowerCase();
-  }
-  return { mime, charset };
+  const mime = (raw.split(';')[0] ?? '').trim().toLowerCase();
+  return { mime, charset: parseCharset(raw) };
 }
 
 function isTextMime(mime: string): boolean {
@@ -339,12 +240,4 @@ function isTextMime(mime: string): boolean {
 
 function isHtmlMime(mime: string): boolean {
   return mime === 'text/html' || mime === 'application/xhtml+xml';
-}
-
-function decodeBody(body: Buffer, charset: string): string {
-  try {
-    return new TextDecoder(charset, { fatal: false }).decode(body);
-  } catch {
-    return body.toString('utf8');
-  }
 }

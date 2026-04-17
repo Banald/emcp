@@ -1,8 +1,8 @@
-import { Buffer } from 'node:buffer';
 import type { Logger } from 'pino';
 import { extractArticle } from '../shared/html/extract.ts';
+import { decodeBody, parseCharset } from '../shared/net/decode.ts';
+import { type AssertPublicHost, type Fetcher, fetchSafe } from '../shared/net/http.ts';
 import { assertPublicHostname } from '../shared/net/ssrf.ts';
-import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { ArticleToInsert } from '../shared/news/articles-repo.ts';
 import { NewsArticlesRepository } from '../shared/news/articles-repo.ts';
 import { type FeedItem, parseFeed } from '../shared/news/feed.ts';
@@ -16,8 +16,9 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_CONTENT_CHARS = 50_000;
 const DEFAULT_CONCURRENCY = 5;
 
-type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
-type AssertPublicHost = (hostname: string) => Promise<void>;
+const RSS_ACCEPT =
+  'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8';
+const ARTICLE_ACCEPT = 'text/html, application/xhtml+xml';
 
 export interface CollectDeps {
   readonly sources: readonly NewsSource[];
@@ -106,56 +107,30 @@ interface FeedFetchDeps {
 }
 
 async function fetchFeed(source: NewsSource, deps: FeedFetchDeps): Promise<FeedItem[] | null> {
-  let url: URL;
+  let outcome: Awaited<ReturnType<typeof fetchSafe>>;
   try {
-    url = new URL(source.rssUrl);
-  } catch (err) {
-    deps.logger.warn(
-      { source: source.key, url: source.rssUrl, err: errMessage(err) },
-      'feed URL invalid',
-    );
-    return null;
-  }
-
-  try {
-    await deps.assertPublicHost(url.hostname);
-  } catch (err) {
-    deps.logger.warn({ source: source.key, err: errMessage(err) }, 'feed hostname rejected');
-    return null;
-  }
-
-  const combined = AbortSignal.any([deps.signal, AbortSignal.timeout(RSS_TIMEOUT_MS)]);
-
-  let response: Response;
-  try {
-    response = await deps.fetcher(source.rssUrl, {
-      method: 'GET',
-      signal: combined,
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8',
-      },
+    // Feeds follow their own redirects naturally via the host CDN.
+    // fetchSafe also handles URL validation and SSRF in one pass.
+    outcome = await fetchSafe(source.rssUrl, {
+      signal: deps.signal,
+      timeoutMs: RSS_TIMEOUT_MS,
+      maxBytes: MAX_RESPONSE_BYTES,
+      maxRedirects: MAX_REDIRECTS,
+      headers: { Accept: RSS_ACCEPT },
+      fetcher: deps.fetcher,
+      assertPublicHost: deps.assertPublicHost,
     });
   } catch (err) {
     deps.logger.warn({ source: source.key, err: errMessage(err) }, 'feed fetch failed');
     return null;
   }
 
-  if (!response.ok) {
-    void response.body?.cancel().catch(() => undefined);
-    deps.logger.warn({ source: source.key, status: response.status }, 'feed fetch non-2xx');
+  if (outcome.status < 200 || outcome.status >= 300) {
+    deps.logger.warn({ source: source.key, status: outcome.status }, 'feed fetch non-2xx');
     return null;
   }
 
-  let xml: string;
-  try {
-    const { buffer } = await readCappedBody(response, MAX_RESPONSE_BYTES);
-    xml = buffer.toString('utf-8');
-  } catch (err) {
-    deps.logger.warn({ source: source.key, err: errMessage(err) }, 'feed body read failed');
-    return null;
-  }
-
+  const xml = outcome.body.toString('utf-8');
   const items = parseFeed(xml);
   if (items.length === 0) {
     deps.logger.warn({ source: source.key }, 'feed parsed but contained no items');
@@ -196,120 +171,20 @@ async function fetchHtml(
   initialUrl: string,
   deps: ArticleFetchDeps,
 ): Promise<{ finalUrl: string; body: string }> {
-  const combined = AbortSignal.any([deps.signal, AbortSignal.timeout(ARTICLE_TIMEOUT_MS)]);
-  let current: URL;
-  try {
-    current = new URL(initialUrl);
-  } catch {
-    throw new Error('invalid URL');
+  const outcome = await fetchSafe(initialUrl, {
+    signal: deps.signal,
+    timeoutMs: ARTICLE_TIMEOUT_MS,
+    maxBytes: MAX_RESPONSE_BYTES,
+    maxRedirects: MAX_REDIRECTS,
+    headers: { Accept: ARTICLE_ACCEPT },
+    fetcher: deps.fetcher,
+    assertPublicHost: deps.assertPublicHost,
+  });
+  if (outcome.status < 200 || outcome.status >= 300) {
+    throw new Error(`HTTP ${outcome.status}`);
   }
-
-  let redirects = 0;
-  while (true) {
-    if (current.protocol !== 'http:' && current.protocol !== 'https:') {
-      throw new Error(`unsupported protocol "${current.protocol}"`);
-    }
-    await deps.assertPublicHost(current.hostname);
-
-    let response: Response;
-    try {
-      response = await deps.fetcher(current.toString(), {
-        method: 'GET',
-        redirect: 'manual',
-        signal: combined,
-        headers: {
-          'User-Agent': USER_AGENT,
-          Accept: 'text/html, application/xhtml+xml',
-        },
-      });
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw new Error(`timed out after ${ARTICLE_TIMEOUT_MS}ms`);
-      }
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        throw new Error('request aborted');
-      }
-      throw new Error(`network error: ${errMessage(err)}`);
-    }
-
-    if (response.status >= 300 && response.status < 400 && response.status !== 304) {
-      const location = response.headers.get('location');
-      void response.body?.cancel().catch(() => undefined);
-      if (!location) throw new Error(`redirect ${response.status} with no Location`);
-      redirects++;
-      if (redirects > MAX_REDIRECTS) throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
-      try {
-        current = new URL(location, current);
-      } catch {
-        throw new Error(`redirect ${response.status} has invalid Location "${location}"`);
-      }
-      continue;
-    }
-
-    if (!response.ok) {
-      void response.body?.cancel().catch(() => undefined);
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const { buffer } = await readCappedBody(response, MAX_RESPONSE_BYTES);
-    const charset = parseCharset(response.headers.get('content-type'));
-    const body = decodeBody(buffer, charset);
-    return { finalUrl: current.toString(), body };
-  }
-}
-
-async function readCappedBody(
-  response: Response,
-  maxBytes: number,
-): Promise<{ buffer: Buffer; wireTruncated: boolean }> {
-  if (!response.body) return { buffer: Buffer.alloc(0), wireTruncated: false };
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let truncated = false;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.length;
-      if (total > maxBytes) {
-        const overflow = total - maxBytes;
-        const keep = value.length - overflow;
-        if (keep > 0) chunks.push(value.subarray(0, keep));
-        truncated = true;
-        break;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.cancel().catch(() => undefined);
-  }
-  return { buffer: Buffer.concat(chunks), wireTruncated: truncated };
-}
-
-function parseCharset(raw: string | null): string {
-  if (!raw) return 'utf-8';
-  const parts = raw.split(';').slice(1);
-  for (const p of parts) {
-    const eq = p.indexOf('=');
-    if (eq === -1) continue;
-    if (p.slice(0, eq).trim().toLowerCase() !== 'charset') continue;
-    return p
-      .slice(eq + 1)
-      .trim()
-      .replace(/^"(.*)"$/, '$1')
-      .toLowerCase();
-  }
-  return 'utf-8';
-}
-
-function decodeBody(body: Buffer, charset: string): string {
-  try {
-    return new TextDecoder(charset, { fatal: false }).decode(body);
-  } catch {
-    return body.toString('utf8');
-  }
+  const body = decodeBody(outcome.body, parseCharset(outcome.contentType));
+  return { finalUrl: outcome.finalUrl, body };
 }
 
 function errMessage(err: unknown): string {
