@@ -180,8 +180,12 @@ services:
       - "${HTTPS_PORT:-443}:443"
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
     volumes:
-      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # PUBLIC_SCHEME selects which Caddyfile is mounted: https (default,
+      # auto-TLS) or http (plaintext — trusted networks only). Typos fail
+      # loudly with "no such file" on startup.
+      - ./infra/caddy/Caddyfile.${PUBLIC_SCHEME:-https}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

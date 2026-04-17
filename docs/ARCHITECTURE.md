@@ -238,6 +238,7 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `RATE_LIMIT_DEFAULT_PER_MINUTE` | no | `60` | Fallback when key has no override. Default 60. |
 | `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Graceful shutdown deadline for both processes. Default 30s. |
 | `SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
+| `PUBLIC_SCHEME` | no (compose only) | `https` | Selects which Caddyfile the caddy container mounts: `https` (default, auto-TLS) or `http` (plaintext, trusted networks only). App code does not read this — it's a compose-layer knob. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 

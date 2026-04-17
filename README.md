@@ -122,12 +122,32 @@ in `.env`. First `up -d` will build the image from the working tree.
 
 ### TLS
 
-Caddy picks a strategy based on `PUBLIC_HOST`:
+Controlled by `PUBLIC_SCHEME` in `.env` (default `https`).
+
+**HTTPS mode (`PUBLIC_SCHEME=https`, default).** Caddy picks a strategy based
+on `PUBLIC_HOST`:
 
 - `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
   Trust once with `caddy trust` if you want browsers to stop warning.
 - A real public hostname → Let's Encrypt. Requires DNS A/AAAA pointing at the
   host and ports 80/443 reachable from the internet.
+- An internal-only hostname (e.g. `host.corp.local`) needs `tls internal` in
+  `infra/caddy/Caddyfile.https` — Let's Encrypt can't validate it.
+
+**HTTP mode (`PUBLIC_SCHEME=http`).** Caddy serves plaintext on port 80 with
+TLS fully disabled. Intended for deployments on trusted internal networks
+where installing Caddy's internal CA on every client is impractical and
+Let's Encrypt isn't reachable. Caveats:
+
+- Bearer tokens on `/mcp` travel in the clear — anyone on-path can read them.
+  Do not use across untrusted networks.
+- Update `ALLOWED_ORIGINS` to include the `http://` origin clients will send.
+- Host port 443 is still published by compose but nothing listens on it
+  inside the container; connections are refused. Benign, but set
+  `HTTPS_PORT=` to an unused value if it collides with something else.
+
+Switching modes is a restart, not a rebuild: edit `.env`, then
+`docker compose up -d` picks up the new Caddyfile mount.
 
 ### Required infrastructure
 
