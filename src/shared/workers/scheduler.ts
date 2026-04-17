@@ -45,6 +45,8 @@ interface WorkerState {
   def: WorkerDefinition;
   cronHandle: CronHandle;
   inFlight: boolean;
+  /** Promise for the currently-running handler, if any. Cleared in `finally`. */
+  running: Promise<void> | null;
 }
 
 export function createScheduler(deps: SchedulerDeps): Scheduler {
@@ -66,69 +68,75 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
     state.inFlight = true;
 
-    const runId = randomUUID();
-    const log = deps.logger.child({ worker: def.name, run_id: runId });
-    const timeoutMs = def.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const run = (async (): Promise<void> => {
+      const runId = randomUUID();
+      const log = deps.logger.child({ worker: def.name, run_id: runId });
+      const timeoutMs = def.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    const timeoutCtl = new AbortController();
-    const signal = AbortSignal.any([deps.shutdownSignal, timeoutCtl.signal]);
-    const ctx: WorkerContext = { logger: log, db: deps.db, signal };
-    const startedAt = Date.now();
+      const timeoutCtl = new AbortController();
+      const signal = AbortSignal.any([deps.shutdownSignal, timeoutCtl.signal]);
+      const ctx: WorkerContext = { logger: log, db: deps.db, signal };
+      const startedAt = Date.now();
 
-    log.info('worker_run_start');
+      log.info('worker_run_start');
 
-    let handlerSettled = false;
-    let handlerSuccess = false;
-    let handlerError: unknown;
+      let handlerSettled = false;
+      let handlerSuccess = false;
+      let handlerError: unknown;
 
-    const handlerPromise = def.handler(ctx).then(
-      () => {
-        handlerSettled = true;
-        handlerSuccess = true;
-      },
-      (err: unknown) => {
-        handlerSettled = true;
-        handlerError = err;
-      },
-    );
+      const handlerPromise = def.handler(ctx).then(
+        () => {
+          handlerSettled = true;
+          handlerSuccess = true;
+        },
+        (err: unknown) => {
+          handlerSettled = true;
+          handlerError = err;
+        },
+      );
 
-    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<void>((resolve) => {
-      timeoutTimer = setTimeout(() => {
-        if (!handlerSettled) {
-          timeoutCtl.abort(new Error('worker run timed out'));
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<void>((resolve) => {
+        timeoutTimer = setTimeout(() => {
+          if (!handlerSettled) {
+            timeoutCtl.abort(new Error('worker run timed out'));
+          }
+          resolve();
+        }, timeoutMs);
+        // Don't let an idle timeout clock keep the event loop alive past shutdown.
+        timeoutTimer.unref?.();
+      });
+
+      try {
+        await Promise.race([handlerPromise, timeoutPromise]);
+      } finally {
+        if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+      }
+
+      const durationMs = Date.now() - startedAt;
+      const durationSec = durationMs / 1000;
+
+      if (handlerSettled) {
+        if (handlerSuccess) {
+          log.info({ duration_ms: durationMs }, 'worker_run_success');
+          schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'success' });
+        } else {
+          log.error({ err: handlerError, duration_ms: durationMs }, 'worker_run_failure');
+          schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'failure' });
         }
-        resolve();
-      }, timeoutMs);
-      // Don't let an idle timeout clock keep the event loop alive past shutdown.
-      timeoutTimer.unref?.();
+        schedulerMetrics.runDuration.observe({ worker: def.name }, durationSec);
+      } else {
+        log.error({ duration_ms: durationMs }, 'worker_run_timeout');
+        schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'timeout' });
+        schedulerMetrics.runDuration.observe({ worker: def.name }, durationSec);
+      }
+    })().finally(() => {
+      state.inFlight = false;
+      state.running = null;
     });
 
-    try {
-      await Promise.race([handlerPromise, timeoutPromise]);
-    } finally {
-      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
-    }
-
-    const durationMs = Date.now() - startedAt;
-    const durationSec = durationMs / 1000;
-
-    if (handlerSettled) {
-      if (handlerSuccess) {
-        log.info({ duration_ms: durationMs }, 'worker_run_success');
-        schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'success' });
-      } else {
-        log.error({ err: handlerError, duration_ms: durationMs }, 'worker_run_failure');
-        schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'failure' });
-      }
-      schedulerMetrics.runDuration.observe({ worker: def.name }, durationSec);
-    } else {
-      log.error({ duration_ms: durationMs }, 'worker_run_timeout');
-      schedulerMetrics.runsTotal.inc({ worker: def.name, status: 'timeout' });
-      schedulerMetrics.runDuration.observe({ worker: def.name }, durationSec);
-    }
-
-    state.inFlight = false;
+    state.running = run;
+    await run;
   };
 
   return {
@@ -137,6 +145,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         const state: WorkerState = {
           def,
           inFlight: false,
+          running: null,
           cronHandle: { stop: () => {} },
         };
         state.cronHandle = cronFactory(def.schedule, { timezone: def.timezone }, () => {
@@ -165,14 +174,25 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       for (const state of states) {
         state.cronHandle.stop();
       }
-      const deadline = Date.now() + graceTimeoutMs;
-      while (Date.now() < deadline) {
-        const anyInFlight = states.some((s) => s.inFlight);
-        if (!anyInFlight) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      // Drain on the actual per-run promises instead of polling state.inFlight
+      // every 50 ms. Matches the "fast exit once workers settle" posture; the
+      // timeout branch only fires when a handler ignores the abort signal.
+      const drain = Promise.all(states.map((s) => s.running ?? Promise.resolve())).then(
+        () => 'drained' as const,
+      );
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<'timeout'>((resolve) => {
+        timeoutTimer = setTimeout(() => resolve('timeout'), graceTimeoutMs);
+        timeoutTimer.unref?.();
+      });
+      let outcome: 'drained' | 'timeout';
+      try {
+        outcome = await Promise.race([drain, timeoutPromise]);
+      } finally {
+        if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       }
       deps.logger.info(
-        { in_flight_remaining: states.filter((s) => s.inFlight).length },
+        { outcome, in_flight_remaining: states.filter((s) => s.inFlight).length },
         'worker_stopped',
       );
     },

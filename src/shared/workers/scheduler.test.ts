@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Writable } from 'node:stream';
 import { describe, it, mock } from 'node:test';
 import type { Pool } from 'pg';
 import { createLogger } from '../../lib/logger.ts';
@@ -8,6 +9,28 @@ import type { WorkerDefinition } from './types.ts';
 
 function makeLogger() {
   return createLogger({ level: 'silent' });
+}
+
+function makeCapturingLogger(): {
+  logger: ReturnType<typeof createLogger>;
+  entries: () => Array<Record<string, unknown>>;
+} {
+  const chunks: string[] = [];
+  const destination = new Writable({
+    write(chunk, _enc, cb) {
+      chunks.push(chunk.toString('utf8'));
+      cb();
+    },
+  });
+  const logger = createLogger({ level: 'trace', destination });
+  return {
+    logger,
+    entries: () =>
+      chunks
+        .flatMap((c) => c.split('\n'))
+        .filter((l) => l.length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>),
+  };
 }
 
 function makeMetrics(): SchedulerMetrics & {
@@ -345,6 +368,70 @@ describe('createScheduler', () => {
     await sch.stop(100);
     const elapsed = Date.now() - start;
     assert.ok(elapsed >= 90 && elapsed < 1_000, `expected grace to elapse (got ${elapsed}ms)`);
+  });
+
+  it('stop reports outcome=drained when workers settle before the grace window', async () => {
+    let release: (() => void) | undefined;
+    const handler = mock.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const worker: WorkerDefinition = { name: 'fast', schedule: '* * * * *', handler };
+    const { factory, handles } = makeCronFactory();
+    const shutdown = makeAbortController();
+    const cap = makeCapturingLogger();
+
+    const sch = createScheduler({
+      workers: [worker],
+      db: fakeDb,
+      logger: cap.logger,
+      shutdownSignal: shutdown.signal,
+      cronFactory: factory,
+      metrics: makeMetrics(),
+    });
+
+    await sch.start();
+    handles[0]?.trigger();
+    await new Promise((r) => setImmediate(r));
+
+    const stopPromise = sch.stop(2_000);
+    setTimeout(() => release?.(), 30);
+    await stopPromise;
+
+    const stopped = cap.entries().find((e) => e.msg === 'worker_stopped');
+    assert.ok(stopped, 'expected worker_stopped log');
+    assert.equal(stopped.outcome, 'drained');
+    assert.equal(stopped.in_flight_remaining, 0);
+  });
+
+  it('stop reports outcome=timeout when the grace window elapses first', async () => {
+    const handler = mock.fn(() => new Promise<void>(() => {}));
+    const worker: WorkerDefinition = { name: 'wedged', schedule: '* * * * *', handler };
+    const { factory, handles } = makeCronFactory();
+    const shutdown = makeAbortController();
+    const cap = makeCapturingLogger();
+
+    const sch = createScheduler({
+      workers: [worker],
+      db: fakeDb,
+      logger: cap.logger,
+      shutdownSignal: shutdown.signal,
+      cronFactory: factory,
+      metrics: makeMetrics(),
+    });
+
+    await sch.start();
+    handles[0]?.trigger();
+    await new Promise((r) => setImmediate(r));
+
+    await sch.stop(60);
+
+    const stopped = cap.entries().find((e) => e.msg === 'worker_stopped');
+    assert.ok(stopped, 'expected worker_stopped log');
+    assert.equal(stopped.outcome, 'timeout');
+    assert.equal(stopped.in_flight_remaining, 1);
   });
 
   it('refuses subsequent fires after stop', async () => {
