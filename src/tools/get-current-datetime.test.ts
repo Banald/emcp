@@ -264,21 +264,5 @@ describe('get-current-datetime tool', () => {
       const parsed = schema.safeParse(result.structuredContent);
       assert.equal(parsed.success, true, parsed.success ? '' : parsed.error.message);
     });
-
-    it('logs the resolved timezone on invocation', async () => {
-      mock.timers.enable({
-        apis: ['Date'],
-        now: new Date('2026-04-17T12:00:00.000Z').getTime(),
-      });
-
-      const ctx = makeCtx();
-      await tool.handler({ timezone: 'Europe/Stockholm', format: 'both' }, ctx);
-
-      const infoFn = ctx.logger.info as unknown as ReturnType<typeof mock.fn>;
-      assert.equal(infoFn.mock.callCount(), 1);
-      const logArg = infoFn.mock.calls[0].arguments[0] as Record<string, unknown>;
-      assert.equal(logArg.timezone, 'Europe/Stockholm');
-      assert.equal(logArg.format, 'both');
-    });
   });
 });

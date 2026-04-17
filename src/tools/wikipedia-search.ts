@@ -103,8 +103,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     { query, limit, language, offset },
     ctx: ToolContext,
   ): Promise<CallToolResult> => {
-    ctx.logger.info({ query, limit, language, offset }, 'wikipedia-search invoked');
-
     const url = new URL(`https://${language}.wikipedia.org/w/api.php`);
     url.searchParams.set('action', 'query');
     url.searchParams.set('list', 'search');

@@ -66,8 +66,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   rateLimit: { perMinute: 60 },
 
   handler: async ({ term, language_code }, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info({ term, language_code }, 'dictionary invoked');
-
     const encoded = encodeURIComponent(term);
     const url = `https://en.wiktionary.org/api/rest_v1/page/definition/${encoded}?redirect=true`;
 

@@ -76,7 +76,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   rateLimit: { perMinute: 30 },
 
   handler: async ({ url, max_length }, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info({ url, max_length }, 'fetch-url invoked');
     try {
       const outcome = await performFetch(url, ctx.signal);
       return formatOutcome(outcome, max_length);

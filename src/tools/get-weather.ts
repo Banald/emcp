@@ -82,8 +82,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   rateLimit: { perMinute: 30 },
 
   handler: async ({ latitude, longitude, steps }, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info({ latitude, longitude, steps }, 'get-weather invoked');
-
     const lat = round6(latitude);
     const lon = round6(longitude);
     // SMHI URL order is lon first, then lat. Easy to reverse — hold it in one place.

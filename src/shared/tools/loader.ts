@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { ConfigError } from '../../lib/errors.ts';
 import { logger } from '../../lib/logger.ts';
+import { buildRedactor, type Redactor } from './redact.ts';
 import type { ToolDefinition } from './types.ts';
 
 const TOOL_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
@@ -35,12 +36,19 @@ function hasRequiredFields(obj: unknown): obj is {
 export interface ToolRegistry {
   list(): readonly ToolDefinition[];
   get(name: string): ToolDefinition | undefined;
+  /**
+   * Returns a copy of `args` with fields flagged `.meta({ sensitive: true })`
+   * replaced by `'[REDACTED]'`. Used by the tool wrapper's entry log so
+   * credential-bearing fields never reach the operational log stream.
+   */
+  redact(name: string, args: Record<string, unknown>): Record<string, unknown>;
 }
 
 export async function loadTools(toolsDir: string): Promise<ToolRegistry> {
   const entries = await readdir(toolsDir, { recursive: true });
   const tools = new Map<string, ToolDefinition>();
   const nameToFile = new Map<string, string>();
+  const redactors = new Map<string, Redactor>();
 
   for (const entry of entries) {
     if (!entry.endsWith('.ts') && !entry.endsWith('.js')) continue;
@@ -113,11 +121,15 @@ export async function loadTools(toolsDir: string): Promise<ToolRegistry> {
     }
     tools.set(def.name, def);
     nameToFile.set(def.name, relPath);
+    redactors.set(def.name, buildRedactor(def.inputSchema as z.ZodRawShape));
     logger.debug({ tool: def.name, file: relPath }, 'loaded tool');
   }
+
+  const identity: Redactor = (args) => args;
 
   return {
     list: () => [...tools.values()],
     get: (name: string) => tools.get(name),
+    redact: (name, args) => (redactors.get(name) ?? identity)(args),
   };
 }

@@ -144,8 +144,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     { path, language, mode, query, format },
     ctx: ToolContext,
   ): Promise<CallToolResult> => {
-    ctx.logger.info({ path, language, mode, format }, 'scb-query invoked');
-
     if (mode === 'data' && (query === undefined || query.length === 0)) {
       return {
         content: [

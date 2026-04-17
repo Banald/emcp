@@ -533,6 +533,8 @@ function registerSessionTools(
           rootLogger: log,
         });
 
+        ctx.logger.info(registry.redact(tool.name, args), 'tool invoked');
+
         try {
           const result = (await tool.handler(args, ctx)) as SdkCallToolResult;
           timer();

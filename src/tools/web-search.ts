@@ -77,8 +77,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     { query, language, limit, categories },
     ctx: ToolContext,
   ): Promise<CallToolResult> => {
-    ctx.logger.info({ query, language, limit }, 'web-search invoked');
-
     const url = new URL('/search', config.searxngUrl);
     url.searchParams.set('q', query);
     url.searchParams.set('format', 'json');

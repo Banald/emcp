@@ -80,8 +80,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   rateLimit: { perMinute: 60 },
 
   handler: async ({ title, language }, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info({ title, language }, 'wikipedia-get invoked');
-
     const encoded = encodeURIComponent(title.replace(/ /g, '_'));
     const url = `https://${language}.wikipedia.org/api/rest_v1/page/summary/${encoded}?redirect=true`;
 

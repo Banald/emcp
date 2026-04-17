@@ -289,31 +289,6 @@ describe('web-search tool', () => {
         },
       );
     });
-
-    it('logs query details on invocation', async () => {
-      mock.method(
-        globalThis,
-        'fetch',
-        async () =>
-          new Response(JSON.stringify(makeSearxngResponse(sampleResults)), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-      );
-
-      const ctx = makeCtx();
-      await tool.handler(
-        { query: 'log test', language: 'sv', limit: 5, categories: 'general' },
-        ctx,
-      );
-
-      const infoFn = ctx.logger.info as unknown as ReturnType<typeof mock.fn>;
-      assert.equal(infoFn.mock.callCount(), 1);
-      const logArg = infoFn.mock.calls[0].arguments[0] as Record<string, unknown>;
-      assert.equal(logArg.query, 'log test');
-      assert.equal(logArg.language, 'sv');
-      assert.equal(logArg.limit, 5);
-    });
   });
 
   describe('input schema validation', () => {

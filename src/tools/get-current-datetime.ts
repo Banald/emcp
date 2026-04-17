@@ -59,9 +59,7 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     'Returns the server\'s current wall-clock time, normalized to UTC and a caller-specified IANA timezone (default UTC). Useful when the assistant needs authoritative "right now" for planning, timestamping, or recency reasoning — the server clock is the authority, not the model\'s training data. Output exposes UTC and local ISO 8601 strings, the UTC offset, weekday, Unix milliseconds, and a DST flag. Unknown time zones return isError instead of throwing.',
   inputSchema,
   outputSchema,
-  handler: async ({ timezone, format }, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info({ timezone, format }, 'get-current-datetime invoked');
-
+  handler: async ({ timezone, format }, _ctx: ToolContext): Promise<CallToolResult> => {
     if (!isValidTimeZone(timezone)) {
       return {
         content: [

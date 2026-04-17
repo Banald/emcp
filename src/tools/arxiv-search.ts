@@ -78,8 +78,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     { query, limit, start, sort_by, sort_order },
     ctx: ToolContext,
   ): Promise<CallToolResult> => {
-    ctx.logger.info({ query, limit, start, sort_by, sort_order }, 'arxiv-search invoked');
-
     const url = new URL(API_URL);
     url.searchParams.set('search_query', query);
     url.searchParams.set('start', String(start));

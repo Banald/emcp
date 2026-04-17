@@ -52,7 +52,6 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   inputSchema,
   outputSchema,
   handler: async (_args, ctx: ToolContext): Promise<CallToolResult> => {
-    ctx.logger.info('get-news invoked');
     const now = new Date();
     const repo = new NewsArticlesRepository(ctx.db);
     const records = await repo.listAll();

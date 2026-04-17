@@ -688,19 +688,4 @@ describe('fetch-url tool', () => {
       assert.match(textOf(result), /fallback/);
     });
   });
-
-  describe('logging', () => {
-    it('logs query details on invocation', async () => {
-      queueFetch([textResponse('ok')]);
-      const ctx = makeCtx();
-
-      await tool.handler({ url: 'https://example.com/', max_length: 50_000 }, ctx);
-
-      const info = ctx.logger.info as unknown as ReturnType<typeof mock.fn>;
-      assert.equal(info.mock.callCount(), 1);
-      const arg = info.mock.calls[0].arguments[0] as Record<string, unknown>;
-      assert.equal(arg.url, 'https://example.com/');
-      assert.equal(arg.max_length, 50_000);
-    });
-  });
 });

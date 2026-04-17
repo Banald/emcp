@@ -63,6 +63,7 @@ function makeRegistry(
   return {
     list: () => [...map.values()],
     get: (name: string) => map.get(name),
+    redact: (_name, args) => args,
   };
 }
 
