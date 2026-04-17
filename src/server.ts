@@ -31,6 +31,14 @@ const SESSION_IDLE_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 60_000; // check every minute
 const TOOL_CALL_TIMEOUT_MS = 30_000; // per tool-call abort timeout
 
+export const EXPECTED_HEALTH_CHECKS = ['db', 'redis'] as const;
+
+export function computeHealthAllOk(
+  checks: Record<string, { status: string } | undefined>,
+): boolean {
+  return EXPECTED_HEALTH_CHECKS.every((k) => checks[k]?.status === 'ok');
+}
+
 interface Session {
   transport: StreamableHTTPServerTransport;
   mcpServer: McpServer;
@@ -203,7 +211,7 @@ async function handleHealth(
     checks.redis = { status: 'fail', error: (err as Error).message };
   }
 
-  const allOk = Object.values(checks).every((c) => c.status === 'ok');
+  const allOk = computeHealthAllOk(checks);
   const body = {
     status: allOk ? 'ok' : 'fail',
     version: PKG_VERSION,

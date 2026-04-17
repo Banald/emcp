@@ -5,7 +5,7 @@ import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
 import { createLogger } from './lib/logger.ts';
-import { createServer } from './server.ts';
+import { computeHealthAllOk, createServer, EXPECTED_HEALTH_CHECKS } from './server.ts';
 import type { ToolRegistry } from './shared/tools/loader.ts';
 
 // Stable test key hash and authentication setup
@@ -112,6 +112,38 @@ function fetch(
     req.end();
   });
 }
+
+describe('computeHealthAllOk', () => {
+  it('requires every expected check to be present and ok', () => {
+    assert.equal(computeHealthAllOk({}), false);
+    assert.equal(computeHealthAllOk({ db: { status: 'ok' } }), false);
+    assert.equal(computeHealthAllOk({ redis: { status: 'ok' } }), false);
+    assert.equal(computeHealthAllOk({ db: { status: 'ok' }, redis: { status: 'ok' } }), true);
+  });
+
+  it('returns false when any expected check is not ok', () => {
+    assert.equal(computeHealthAllOk({ db: { status: 'fail' }, redis: { status: 'ok' } }), false);
+    assert.equal(computeHealthAllOk({ db: { status: 'ok' }, redis: { status: 'fail' } }), false);
+  });
+
+  it('ignores unexpected checks entirely', () => {
+    // Adding an unexpected key does not flip a fully-populated ok to fail,
+    // and does not rescue a missing expected key.
+    assert.equal(
+      computeHealthAllOk({
+        db: { status: 'ok' },
+        redis: { status: 'ok' },
+        extra: { status: 'fail' },
+      }),
+      true,
+    );
+    assert.equal(computeHealthAllOk({ extra: { status: 'ok' } }), false);
+  });
+
+  it('exports the expected set', () => {
+    assert.deepEqual([...EXPECTED_HEALTH_CHECKS], ['db', 'redis']);
+  });
+});
 
 describe('HTTP server', () => {
   let server: Server;
