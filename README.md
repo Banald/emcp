@@ -66,14 +66,14 @@ openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
 chmod 0600 secrets/*.txt
 
 # 3. Authenticate to ghcr.io
-# The Echo container image lives at ghcr.io/banald/echo and the source
-# repo is private — so this registry requires auth before `up -d`. Create
-# a Personal Access Token (classic) with the `read:packages` scope at
-# https://github.com/settings/tokens/new?scopes=read:packages and then:
-echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
-# Shortcut if you already have gh CLI with the packages scope:
-#   gh auth refresh --scopes read:packages
-#   gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+# Banald/echo is private, so pulling the image requires auth. If gh CLI
+# is already signed in, extend your token with `read:packages` once and
+# pipe it straight into docker login:
+gh auth refresh -s read:packages   # one-time per machine
+gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+# No gh CLI? Create a classic PAT with `read:packages` at
+# https://github.com/settings/tokens/new?scopes=read:packages and:
+#   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
 
 # 4. Bring up the stack (pulls the prebuilt image; builds from source if
 #    ECHO_PULL_POLICY=build is set in .env)
