@@ -1,3 +1,8 @@
+// Worker scheduler — internals. Worker authors should not edit this file.
+// Changes here affect every worker: overlap protection, per-run timeout,
+// shutdown drain, metrics. A deliberate scheduler change lands here; an
+// ordinary worker change lands in src/workers/<your-worker>.ts.
+
 import { randomUUID } from 'node:crypto';
 import { Cron } from 'croner';
 import type { Pool } from 'pg';

@@ -1,3 +1,9 @@
+// Worker loader — internals. Worker authors should not edit this file.
+// It discovers drop-in WorkerDefinition modules under src/workers/ and
+// returns a validated registry to the bootstrap at src/workers/index.ts.
+// A deliberate loader change lands here; an ordinary worker change lands
+// in src/workers/<your-worker>.ts.
+
 import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';

@@ -1,3 +1,12 @@
+// Worker process bootstrap — DO NOT MODIFY as a worker author.
+//
+// This file wires croner's scheduler to the drop-in workers discovered
+// under src/workers/. Worker authors drop a `.ts` file alongside this one
+// (see docs/WORKER_AUTHORING.md); the scheduler handles the rest.
+//
+// Scheduler-/loader-level changes belong in src/shared/workers/ — edit
+// scheduler.ts or loader.ts deliberately, not this bootstrap.
+
 import { config } from '../config.ts';
 import { pool } from '../db/client.ts';
 import { fatalAndExit, logger } from '../lib/logger.ts';
