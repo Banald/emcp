@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { z } from 'zod';
 import { extractArticle } from '../shared/html/extract.ts';
 import { assertPublicHostname } from '../shared/net/ssrf.ts';
+import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -10,8 +11,6 @@ const MAX_REDIRECTS = 5;
 const MIN_MAX_LENGTH = 500;
 const DEFAULT_MAX_LENGTH = 50_000;
 const MAX_MAX_LENGTH = 100_000;
-
-const USER_AGENT = 'EchoMCP/0.2 (+fetch-url)';
 
 const inputSchema = {
   url: z

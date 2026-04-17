@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { TransientError } from '../lib/errors.ts';
+import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
 const SEARXNG_ENGINES = 'google,brave,bing,qwant,startpage';
@@ -73,7 +74,7 @@ const tool: ToolDefinition<typeof inputSchema> = {
     try {
       response = await fetch(url.toString(), {
         signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]),
-        headers: { Accept: 'application/json' },
+        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
       });
     } catch (err) {
       throw new TransientError(

@@ -2,13 +2,13 @@ import { Buffer } from 'node:buffer';
 import type { Logger } from 'pino';
 import { extractArticle } from '../shared/html/extract.ts';
 import { assertPublicHostname } from '../shared/net/ssrf.ts';
+import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { ArticleToInsert } from '../shared/news/articles-repo.ts';
 import { NewsArticlesRepository } from '../shared/news/articles-repo.ts';
 import { type FeedItem, parseFeed } from '../shared/news/feed.ts';
 import { ARTICLES_PER_SOURCE, NEWS_SOURCES, type NewsSource } from '../shared/news/sources.ts';
 import type { WorkerDefinition } from '../shared/workers/types.ts';
 
-const USER_AGENT = 'EchoMCP/0.3 (+fetch-news)';
 const RSS_TIMEOUT_MS = 15_000;
 const ARTICLE_TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 5;
