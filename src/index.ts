@@ -1,6 +1,7 @@
 import { config } from './config.ts';
 import { pool } from './db/client.ts';
 import { ApiKeyRepository } from './db/repos/api-keys.ts';
+import { shouldWarnBareBindHost } from './lib/bind-host-warning.ts';
 import { fatalAndExit, logger } from './lib/logger.ts';
 import { redis } from './lib/redis.ts';
 import { installSignalHandlers, runShutdown } from './lib/shutdown.ts';
@@ -10,8 +11,16 @@ import { loadTools } from './shared/tools/loader.ts';
 async function main() {
   logger.info({ node_env: config.nodeEnv, port: config.port }, 'starting mcp-server');
 
-  if (config.nodeEnv === 'production' && config.bindHost === '0.0.0.0') {
-    logger.warn('BIND_HOST is 0.0.0.0 in production — only safe behind a reverse proxy');
+  if (
+    shouldWarnBareBindHost({
+      nodeEnv: config.nodeEnv,
+      bindHost: config.bindHost,
+      composeProjectName: process.env.COMPOSE_PROJECT_NAME,
+    })
+  ) {
+    logger.warn(
+      'BIND_HOST is 0.0.0.0 in production outside compose — only safe behind a reverse proxy',
+    );
   }
 
   const registry = await loadTools(new URL('./tools', import.meta.url).pathname);

@@ -227,7 +227,7 @@ All configuration lives in environment variables, parsed and validated by Zod at
 |--|--|--|--|
 | `NODE_ENV` | yes | `production` | `development` \| `production` \| `test` |
 | `PORT` | yes | `3000` | HTTP port for MCP server (bind to loopback) |
-| `BIND_HOST` | no | `127.0.0.1` | Interface to bind. Default `127.0.0.1`. Never `0.0.0.0` in production. |
+| `BIND_HOST` | no | `127.0.0.1` | Interface to bind. Bare-metal deploys use `127.0.0.1` (default) and rely on a loopback-only reverse proxy as ingress. Containerized deploys (compose, k8s) set `0.0.0.0` so the proxy container can reach the process across the private bridge network. In both cases the external ingress is the reverse proxy — the app process is never published to a public IP. |
 | `PUBLIC_HOST` | yes | `mcp.example.com` | Expected `Host` header value (DNS rebinding defense) |
 | `ALLOWED_ORIGINS` | yes | `https://app.example.com,https://...` | Comma-separated allowlist for `Origin` header |
 | `DATABASE_URL` | yes | `postgres://user:pass@localhost:5432/mcp` | Postgres connection string |
