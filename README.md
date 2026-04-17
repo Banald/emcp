@@ -65,14 +65,25 @@ openssl rand -base64 24 > secrets/postgres_password.txt
 openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
 chmod 0600 secrets/*.txt
 
-# 3. Bring up the stack (builds the image locally on first run)
+# 3. Authenticate to ghcr.io
+# The Echo container image lives at ghcr.io/banald/echo and the source
+# repo is private — so this registry requires auth before `up -d`. Create
+# a Personal Access Token (classic) with the `read:packages` scope at
+# https://github.com/settings/tokens/new?scopes=read:packages and then:
+echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
+# Shortcut if you already have gh CLI with the packages scope:
+#   gh auth refresh --scopes read:packages
+#   gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+
+# 4. Bring up the stack (pulls the prebuilt image; builds from source if
+#    ECHO_PULL_POLICY=build is set in .env)
 docker compose up -d
 
-# 4. Create your first API key
+# 5. Create your first API key
 docker compose run --rm mcp-server node dist/cli/keys.js create --name "production"
 # Save the printed key — it will not be shown again.
 
-# 5. Tail logs
+# 6. Tail logs
 docker compose logs -f mcp-server mcp-worker
 ```
 
@@ -83,23 +94,28 @@ Migrations run automatically via a one-shot `migrate` service on every
 docker compose run --rm migrate
 ```
 
-### Using a pre-built image from ghcr.io
+### Pinning a specific version
 
-The release workflow publishes a private image to
-`ghcr.io/banald/echo:<version>`.
+By default compose pulls `ghcr.io/banald/echo:latest`. To pin a release tag
+(recommended for production), set in `.env`:
 
-```bash
-# One-time: log in with a PAT that has `read:packages`
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
-
-# In .env (pre-filled with the canonical owner — change if you forked):
-#   GHCR_OWNER=banald
-#   ECHO_IMAGE_TAG=v0.4.0
-#   ECHO_PULL_POLICY=always
-
-docker compose pull
-docker compose up -d
 ```
+ECHO_IMAGE_TAG=v0.5.1
+ECHO_PULL_POLICY=always
+```
+
+Then `docker compose pull && docker compose up -d` to refresh.
+
+### Building from source instead of pulling
+
+If you've forked the repo, or you're iterating on the image locally, skip
+the ghcr.io login and build from source instead:
+
+```
+ECHO_PULL_POLICY=build
+```
+
+in `.env`. First `up -d` will build the image from the working tree.
 
 ### TLS
 
