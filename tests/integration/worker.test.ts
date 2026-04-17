@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { runner } from 'node-pg-migrate';
+import { buildTestEnv } from '../_helpers/env.ts';
 
 describe('worker process', { timeout: 120_000 }, () => {
   let pgContainer: StartedPostgreSqlContainer;
@@ -34,22 +35,14 @@ describe('worker process', { timeout: 120_000 }, () => {
     // mode, which hides the startup logs this test asserts on. Production mode
     // writes JSON to stdout synchronously via pino with no transport — exactly
     // what we need for log-based assertions.
-    return {
+    return buildTestEnv({
       NODE_ENV: 'production',
-      PORT: '3000',
-      BIND_HOST: '127.0.0.1',
       PUBLIC_HOST: '127.0.0.1:3000',
       ALLOWED_ORIGINS: 'http://127.0.0.1:3000',
       DATABASE_URL: databaseUrl,
       DATABASE_POOL_MAX: '2',
-      REDIS_URL: 'redis://localhost:6379',
-      API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
       LOG_LEVEL: 'info',
-      RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
-      SHUTDOWN_TIMEOUT_MS: '5000',
-      PATH: process.env.PATH ?? '',
-      HOME: process.env.HOME ?? '',
-    };
+    });
   }
 
   function waitForChild(child: ChildProcess, timeoutMs = 20_000): Promise<number | null> {

@@ -7,6 +7,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { runner } from 'node-pg-migrate';
 import pg from 'pg';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
+import { buildTestEnv } from '../_helpers/env.ts';
 
 const { Pool } = pg;
 
@@ -33,18 +34,16 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
       verbose: false,
     });
 
-    // Set env vars BEFORE any src/ import — config.ts evaluates eagerly.
-    process.env.NODE_ENV = 'test';
-    process.env.PORT = '3000';
-    process.env.BIND_HOST = '127.0.0.1';
-    process.env.PUBLIC_HOST = 'localhost:3000';
-    process.env.ALLOWED_ORIGINS = 'http://localhost:3000';
-    process.env.DATABASE_URL = databaseUrl;
-    process.env.DATABASE_POOL_MAX = '2';
-    process.env.REDIS_URL = redisUrl;
-    process.env.API_KEY_HMAC_SECRET = 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==';
-    process.env.LOG_LEVEL = 'silent';
-    process.env.SHUTDOWN_TIMEOUT_MS = '10000';
+    // Override container-scoped env vars on top of the defaults from tests/setup.ts.
+    Object.assign(
+      process.env,
+      buildTestEnv({
+        DATABASE_URL: databaseUrl,
+        DATABASE_POOL_MAX: '2',
+        REDIS_URL: redisUrl,
+        SHUTDOWN_TIMEOUT_MS: '10000',
+      }),
+    );
 
     // Seed a test API key
     const pool = new Pool({ connectionString: databaseUrl, max: 2 });
@@ -71,22 +70,15 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
   });
 
   function buildEnv(port: number): Record<string, string> {
-    return {
-      NODE_ENV: 'test',
+    return buildTestEnv({
       PORT: String(port),
-      BIND_HOST: '127.0.0.1',
       PUBLIC_HOST: `127.0.0.1:${port}`,
       ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
       DATABASE_URL: databaseUrl,
       DATABASE_POOL_MAX: '2',
       REDIS_URL: redisUrl,
-      API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
-      LOG_LEVEL: 'silent',
-      RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
       SHUTDOWN_TIMEOUT_MS: '10000',
-      PATH: process.env.PATH ?? '',
-      HOME: process.env.HOME ?? '',
-    };
+    });
   }
 
   function findFreePort(): Promise<number> {

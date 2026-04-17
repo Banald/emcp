@@ -26,6 +26,7 @@ import { createLogger } from '../../../src/lib/logger.ts';
 import { REDIS_OPTIONS } from '../../../src/lib/redis.ts';
 import { createServer } from '../../../src/server.ts';
 import { loadTools } from '../../../src/shared/tools/loader.ts';
+import { buildTestEnv } from '../../_helpers/env.ts';
 
 const { Pool } = pg;
 
@@ -66,20 +67,20 @@ export async function startTestServer(): Promise<TestServer> {
   const port = await findFreePort();
   const host = '127.0.0.1';
 
-  // 3. Set env vars BEFORE any src/ import. config.ts evaluates its Zod schema at
-  //    module load time and throws if required vars are missing.
-  process.env.NODE_ENV = 'test';
-  process.env.PORT = String(port);
-  process.env.BIND_HOST = host;
-  process.env.PUBLIC_HOST = `${host}:${port}`;
-  process.env.ALLOWED_ORIGINS = `http://${host}:${port}`;
-  process.env.DATABASE_URL = databaseUrl;
-  process.env.DATABASE_POOL_MAX = '5';
-  process.env.REDIS_URL = redisUrl;
-  process.env.API_KEY_HMAC_SECRET = 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==';
-  process.env.LOG_LEVEL = 'silent';
-  process.env.RATE_LIMIT_DEFAULT_PER_MINUTE = '60';
-  process.env.SHUTDOWN_TIMEOUT_MS = '5000';
+  // 3. Override the container-scoped env vars on top of the defaults from
+  //    tests/setup.ts. Anything we overwrite here lands in process.env for
+  //    src/config.ts to read on next load; the rest inherits the defaults.
+  Object.assign(
+    process.env,
+    buildTestEnv({
+      PORT: String(port),
+      BIND_HOST: host,
+      PUBLIC_HOST: `${host}:${port}`,
+      ALLOWED_ORIGINS: `http://${host}:${port}`,
+      DATABASE_URL: databaseUrl,
+      REDIS_URL: redisUrl,
+    }),
+  );
 
   // 4. Run migrations against the container.
   await runner({
