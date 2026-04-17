@@ -396,7 +396,9 @@ async function handleMcp(
       return;
     }
 
-    await session.transport.handleRequest(req, res, JSON.parse(body.toString('utf-8')));
+    const payload = parseJsonRpcBody(res, body);
+    if (payload === null) return;
+    await session.transport.handleRequest(req, res, payload);
     return;
   }
 
@@ -445,8 +447,14 @@ async function handleMcp(
     repo,
   });
 
+  const payload = parseJsonRpcBody(res, body);
+  if (payload === null) {
+    await mcpServer.close();
+    return;
+  }
+
   await mcpServer.connect(transport);
-  await transport.handleRequest(req, res, JSON.parse(body.toString('utf-8')));
+  await transport.handleRequest(req, res, payload);
 
   if (newSessionId) {
     sessions.set(newSessionId, {
@@ -557,6 +565,22 @@ function registerSessionTools(
         }
       },
     );
+  }
+}
+
+export function parseJsonRpcBody(res: ServerResponse, body: Buffer): unknown | null {
+  try {
+    return JSON.parse(body.toString('utf-8'));
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32700, message: 'Parse error' },
+        id: null,
+      }),
+    );
+    return null;
   }
 }
 

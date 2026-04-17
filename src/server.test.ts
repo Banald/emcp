@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
-import { request as httpRequest, type IncomingMessage, type Server } from 'node:http';
+import {
+  request as httpRequest,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
 import { after, before, describe, it, mock } from 'node:test';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { ApiKeyRepository } from './db/repos/api-keys.ts';
 import { createLogger } from './lib/logger.ts';
-import { computeHealthAllOk, createServer, EXPECTED_HEALTH_CHECKS } from './server.ts';
+import {
+  computeHealthAllOk,
+  createServer,
+  EXPECTED_HEALTH_CHECKS,
+  parseJsonRpcBody,
+} from './server.ts';
 import type { ToolRegistry } from './shared/tools/loader.ts';
 
 // Stable test key hash and authentication setup
@@ -112,6 +122,46 @@ function fetch(
     req.end();
   });
 }
+
+describe('parseJsonRpcBody', () => {
+  function makeRes(): {
+    res: ServerResponse;
+    written: { status?: number; headers?: Record<string, string>; body?: string };
+  } {
+    const written: { status?: number; headers?: Record<string, string>; body?: string } = {};
+    const res = {
+      writeHead: mock.fn((status: number, headers: Record<string, string>) => {
+        written.status = status;
+        written.headers = headers;
+      }),
+      end: mock.fn((body: string) => {
+        written.body = body;
+      }),
+    } as unknown as ServerResponse;
+    return { res, written };
+  }
+
+  it('returns the parsed payload on valid JSON and does not write a response', () => {
+    const { res, written } = makeRes();
+    const result = parseJsonRpcBody(res, Buffer.from('{"jsonrpc":"2.0","id":1}'));
+    assert.deepEqual(result, { jsonrpc: '2.0', id: 1 });
+    assert.equal(written.status, undefined);
+    assert.equal(written.body, undefined);
+  });
+
+  it('writes a JSON-RPC parse-error envelope (400 / -32700) and returns null on malformed JSON', () => {
+    const { res, written } = makeRes();
+    const result = parseJsonRpcBody(res, Buffer.from('{ not json'));
+    assert.equal(result, null);
+    assert.equal(written.status, 400);
+    assert.equal(written.headers?.['Content-Type'], 'application/json');
+    const body = JSON.parse(written.body ?? '{}');
+    assert.equal(body.jsonrpc, '2.0');
+    assert.equal(body.error.code, -32700);
+    assert.equal(body.error.message, 'Parse error');
+    assert.equal(body.id, null);
+  });
+});
 
 describe('computeHealthAllOk', () => {
   it('requires every expected check to be present and ok', () => {
@@ -337,6 +387,29 @@ describe('MCP endpoint auth and headers', () => {
       assert.equal(body.jsonrpc, '2.0');
       assert.equal(body.error.code, -32007);
       assert.equal(body.error.message, 'Forbidden');
+      assert.equal(body.id, null);
+    } finally {
+      await close();
+    }
+  });
+
+  it('returns 400 / -32700 for malformed JSON body on /mcp', async () => {
+    const { httpServer: s, close } = await startServer();
+    try {
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+          authorization: 'Bearer mcp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'content-type': 'application/json',
+        },
+        body: '{ not json',
+      });
+      assert.equal(res.status, 400);
+      const body = JSON.parse(res.body);
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.error.code, -32700);
+      assert.equal(body.error.message, 'Parse error');
       assert.equal(body.id, null);
     } finally {
       await close();
