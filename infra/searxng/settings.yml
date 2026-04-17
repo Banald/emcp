@@ -18,7 +18,11 @@ search:
     - json
 
 server:
-  secret_key: "1dcf71def86fe4cbb980449d89275ae763d36cc8ad5c19c57cf98fb64f752e92"
+  # The literal "ultrasecretkey" placeholder is replaced at container start
+  # by SearXNG's own entrypoint using the $SEARXNG_SECRET env var. That value
+  # comes from the SEARXNG_SECRET setting in .env (see .env.example). Do not
+  # commit a real secret here.
+  secret_key: "ultrasecretkey"
   bind_address: "0.0.0.0"
   port: 8080
   limiter: false

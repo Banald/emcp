@@ -6,25 +6,25 @@ This document explains **why** the system is built the way it is. Read this befo
 
 ```
 ┌────────────────┐         HTTPS          ┌──────────────────────────────┐
-│  MCP Clients   │ ─────────────────────▶ │   Reverse Proxy (nginx)      │
+│  MCP Clients   │ ─────────────────────▶ │   Reverse Proxy (Caddy)      │
 │ (Claude, IDEs) │  Authorization: Bearer │   - TLS termination          │
 └────────────────┘                         │   - Forwards to MCP server   │
                                            └──────────────┬───────────────┘
-                                                          │ HTTP (loopback)
+                                                          │ HTTP (compose net)
                                                           ▼
                                            ┌──────────────────────────────┐
                                            │   MCP Server (Node.js)       │
                                            │   - Streamable HTTP /mcp     │
                                            │   - Auth middleware          │
                                            │   - Rate limiting            │
-                                           │   - Tool dispatch ───────────┼──── HTTP (loopback)
+                                           │   - Tool dispatch ───────────┼──── HTTP (compose net)
                                            │   - Metrics collection       │            │
                                            └──────┬───────────────┬───────┘            ▼
                                                   │               │          ┌──────────────────┐
-                                          cache / │               │ query    │  SearXNG (Docker) │
-                                          rate    │               │          │  - web-search     │
-                                          limit   ▼               ▼          │    backend        │
-                                           ┌──────────┐    ┌──────────────┐  │  - 127.0.0.1:8080 │
+                                          cache / │               │ query    │     SearXNG      │
+                                          rate    │               │          │  - web-search    │
+                                          limit   ▼               ▼          │    backend       │
+                                           ┌──────────┐    ┌──────────────┐  │  - port 8080     │
                                            │  Redis   │    │  PostgreSQL  │  └──────────────────┘
                                            │ (cache,  │    │ (API keys,   │          ▲
                                            │  rate    │    │  metrics,    │          │ reads
@@ -34,13 +34,13 @@ This document explains **why** the system is built the way it is. Read this befo
                                                                   │ writes
                                                                   │
                                            ┌──────────────────────┴───────┐
-                                           │   Worker Process (PM2)       │
+                                           │   Worker Process             │
                                            │   - croner scheduler         │
                                            │   - Drop-in cron workers     │
                                            └──────────────────────────────┘
 ```
 
-The MCP server and worker are **separate processes** managed by PM2. The only runtime linkage is Postgres — workers write data, tools read data. Workers never hold an HTTP reference to the server, and tools never enqueue or invoke workers. Redis is used by the server only (rate limiting, cache); the worker process does not open a Redis connection.
+The MCP server and worker are **separate processes**, supervised by Docker Compose in the production deployment (or by PM2 for bare-metal). The only runtime linkage is Postgres — workers write data, tools read data. Workers never hold an HTTP reference to the server, and tools never enqueue or invoke workers. Redis is used by the server only (rate limiting, cache); the worker process does not open a Redis connection.
 
 ## Major decisions and rationale
 
@@ -281,7 +281,7 @@ Both `/health` and `/metrics` are unauthenticated because the process binds to `
 | `mcp-server` | 1 | HTTP server, MCP transport, auth, tool dispatch |
 | `mcp-worker` | 1 | croner scheduler, drop-in cron workers |
 
-Managed by PM2 in production. Both processes share the same codebase and the same Postgres. Only `mcp-server` talks to Redis. Graceful shutdown drains in-flight requests / worker runs with the `SHUTDOWN_TIMEOUT_MS` budget.
+Supervised by Docker Compose in the production deployment (`compose.yaml` at the repo root) — one container each for `mcp-server` and `mcp-worker`, running the same image with different `CMD`. Bare-metal deploys use PM2 (`ecosystem.config.cjs`). Both processes share the same codebase and the same Postgres. Only `mcp-server` talks to Redis. Graceful shutdown drains in-flight requests / worker runs with the `SHUTDOWN_TIMEOUT_MS` budget; `stop_grace_period` in compose and `kill_timeout` in PM2 are both tuned to match.
 
 **Worker scaling (known limitation)**: `mcp-worker` runs as a single instance because croner schedules are in-memory. Running multiple instances would fire every cron tick per instance. Horizontal scaling requires a Redis advisory lock around every fire — out of scope for the initial migration, documented as a follow-up in `docs/WORKER_AUTHORING.md`.
 

@@ -1,0 +1,41 @@
+# Build artifacts and caches (rebuilt inside the image)
+node_modules
+dist
+coverage
+
+# VCS / tooling
+.git
+.gitignore
+.github
+.claude
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+*.log
+
+# Env files (secrets) — never copy into the image
+.env
+.env.*
+!.env.example
+
+# Tests and test config (not shipped)
+tests
+**/*.test.ts
+tsconfig.test.json
+biome.json
+.c8rc.json
+
+# Deployment config consumed by compose at runtime, not baked in
+compose.yaml
+docker-compose.yml
+ecosystem.config.cjs
+infra
+secrets
+
+# Docs not needed at runtime
+README.md
+AGENTS.md
+CLAUDE.md
+docs

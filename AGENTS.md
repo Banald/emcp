@@ -51,7 +51,7 @@ These are defaults, not laws. Deviate when there's a good reason, and note the r
 
 ### Start SearXNG (required for web-search tool)
 ```bash
-cd infra/searxng && docker compose up -d && cd -
+docker compose up -d searxng
 ```
 
 ### Run the server (dev)
@@ -84,10 +84,16 @@ npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json
 ```
 
 ### Run in production
+Primary path is Docker Compose — one Dockerfile, one compose file, full stack:
+```bash
+docker compose up -d        # postgres + redis + searxng + migrate + server + worker + caddy
+```
+See `README.md` "Deploy with Docker Compose" for first-time setup (secrets, `.env`). Bare-metal (no Docker) is supported as a fallback:
 ```bash
 npm run build               # tsc → dist/
 npm start                   # node dist/index.js
 npm run start:worker        # node dist/workers/index.js
+# Or via PM2 with ecosystem.config.cjs
 ```
 
 ### Run migrations

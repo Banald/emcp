@@ -6,7 +6,7 @@ Production-grade MCP server in TypeScript. Streamable HTTP transport, API key au
 
 Node.js 24 LTS · TypeScript · PostgreSQL · Redis · croner · Pino · Prometheus
 
-## Quickstart
+## Quickstart (local dev)
 
 ```bash
 nvm use
@@ -21,7 +21,7 @@ node --env-file=.env src/cli/keys.ts create --name "local-dev"
 # Save the printed key — it will not be shown again.
 
 # Start SearXNG (required for the web-search tool)
-cd infra/searxng && docker compose up -d && cd -
+docker compose up -d searxng
 
 # Run server + worker (two terminals)
 npm run dev
@@ -38,70 +38,130 @@ See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 - `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `migrations/` — SQL migrations.
 
-## Deploy from a release
+## Deploy with Docker Compose
 
-Download the latest release tarball from the [Releases](../../releases) page and extract it:
+The preferred deployment path. One Dockerfile, one compose file, the whole
+stack (Postgres, Redis, SearXNG, Caddy, server, worker) comes up together.
+
+### Prerequisites
+
+- Docker 24+ with Compose v2
+- Ports 80 and 443 available on the host (or override via `HTTP_PORT` / `HTTPS_PORT`)
+
+### Steps
 
 ```bash
-tar -xzf echo-v*.tar.gz
+git clone https://github.com/Banald/echo.git
 cd echo
-npm ci --omit=dev
-```
 
-Configure the environment:
-
-```bash
+# 1. Configure
 cp .env.example .env
-# Edit .env — see comments in the file for each variable.
-# At minimum: DATABASE_URL, REDIS_URL, API_KEY_HMAC_SECRET,
-# PUBLIC_HOST, ALLOWED_ORIGINS.
-```
+# Edit .env — at minimum set PUBLIC_HOST and ALLOWED_ORIGINS. Change
+# SEARXNG_SECRET to a fresh value.
 
-Start SearXNG (required for the `web-search` tool):
+# 2. Create Docker secrets
+mkdir -p secrets
+openssl rand -base64 24 > secrets/postgres_password.txt
+openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
+chmod 0600 secrets/*.txt
 
-```bash
-cd infra/searxng && docker compose up -d && cd -
-```
+# 3. Bring up the stack (builds the image locally on first run)
+docker compose up -d
 
-Run database migrations and create your first API key:
-
-```bash
-node --env-file=.env dist/db/migrate.js up
-node --env-file=.env dist/cli/keys.js create --name "production"
+# 4. Create your first API key
+docker compose run --rm mcp-server node dist/cli/keys.js create --name "production"
 # Save the printed key — it will not be shown again.
+
+# 5. Tail logs
+docker compose logs -f mcp-server mcp-worker
 ```
 
-Start with PM2:
+Migrations run automatically via a one-shot `migrate` service on every
+`docker compose up`. To apply pending migrations without touching the rest:
 
 ```bash
-pm2 start ecosystem.config.cjs
-pm2 save
+docker compose run --rm migrate
 ```
+
+### Using a pre-built image from ghcr.io
+
+The release workflow publishes a private image to
+`ghcr.io/banald/echo:<version>`.
+
+```bash
+# One-time: log in with a PAT that has `read:packages`
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
+
+# In .env (pre-filled with the canonical owner — change if you forked):
+#   GHCR_OWNER=banald
+#   ECHO_IMAGE_TAG=v0.4.0
+#   ECHO_PULL_POLICY=always
+
+docker compose pull
+docker compose up -d
+```
+
+### TLS
+
+Caddy picks a strategy based on `PUBLIC_HOST`:
+
+- `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
+  Trust once with `caddy trust` if you want browsers to stop warning.
+- A real public hostname → Let's Encrypt. Requires DNS A/AAAA pointing at the
+  host and ports 80/443 reachable from the internet.
 
 ### Required infrastructure
 
-- PostgreSQL 14+
-- Redis 7+ (used for rate limiting and cache; no special eviction policy required)
-- SearXNG (Docker) — config included in `infra/searxng/`
+All provisioned by the compose stack — no external dependencies. If you
+need your own DB or Redis, switch to the bare-metal path below.
 
 ### Network
 
-The server binds to `127.0.0.1` by default. Front it with a reverse proxy (nginx, Caddy) that handles TLS, sets `X-Forwarded-*` headers, and forwards only `/mcp` externally. `/health` and `/metrics` are loopback-only by design.
+The server binds `0.0.0.0:3000` inside its container but is only reachable
+through Caddy (no other service publishes ports). `/health` and `/metrics`
+remain loopback-only at the app layer, so Caddy forwards them nowhere.
 
-## Running from source
+## Deploy from source (bare-metal, no Docker)
 
-Build:
-
-```bash
-npm run build
-```
-
-Process management with PM2:
+If you can't run Docker in the target environment, Echo still ships as a
+straight Node.js app. You'll need to provision PostgreSQL, Redis, and
+SearXNG yourself.
 
 ```bash
+git clone https://github.com/Banald/echo.git
+cd echo
+nvm use                # picks up Node 24 from .nvmrc
+npm ci --omit=dev
+npm run build          # tsc → dist/
+
+cp .env.example .env
+# Uncomment the "Bare-metal only" block and fill in DATABASE_URL, REDIS_URL,
+# SEARXNG_URL, API_KEY_HMAC_SECRET. Set NODE_ENV=production, PORT, BIND_HOST,
+# PUBLIC_HOST, ALLOWED_ORIGINS.
+
+# Migrations + first key
+node --env-file=.env dist/db/migrate.js up
+node --env-file=.env dist/cli/keys.js create --name "production"
+
+# SearXNG still runs in Docker — it's the simplest way to ship it
+docker compose up -d searxng
+
+# PM2 supervises both node processes
 pm2 start ecosystem.config.cjs
 pm2 save
 ```
+
+Required infrastructure for bare-metal:
+
+- PostgreSQL 14+
+- Redis 7+ (rate limiting and cache; no special eviction policy required)
+- SearXNG via `docker compose up -d searxng` (config lives in `infra/searxng/`)
+- A reverse proxy you provision yourself (nginx, Caddy, HAProxy, …) that
+  terminates TLS, sets `X-Forwarded-*` headers, and forwards only `/mcp`
+  externally. `/health` and `/metrics` are loopback-only by design.
+
+The server binds `127.0.0.1` by default in this mode — keep it that way and
+rely on the reverse proxy as the ingress boundary.
 
 ## Testing
 

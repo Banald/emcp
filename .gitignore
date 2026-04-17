@@ -10,3 +10,8 @@ coverage/
 .idea/
 
 .claude/
+
+# Docker secrets — never commit. README and .gitkeep are kept for discoverability.
+secrets/*
+!secrets/.gitkeep
+!secrets/README.md

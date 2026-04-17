@@ -109,7 +109,7 @@ CI runs migrations against a fresh Postgres container at the start of integratio
 
 ## Graceful shutdown
 
-Both the server process and worker processes handle `SIGTERM` and `SIGINT` with a coordinated shutdown sequence. PM2 sends `SIGINT` first, then `SIGKILL` after `kill_timeout`.
+Both the server process and worker processes handle `SIGTERM` and `SIGINT` with a coordinated shutdown sequence. Docker Compose sends `SIGTERM` on `docker compose stop`, then `SIGKILL` after `stop_grace_period`. PM2 on bare-metal sends `SIGINT` first, then `SIGKILL` after `kill_timeout`. Both paths are wired to the same budgets: 35s for the server (`SHUTDOWN_TIMEOUT_MS` + 5s) and 65s for the worker.
 
 ### Server shutdown sequence
 
@@ -121,7 +121,7 @@ Both the server process and worker processes handle `SIGTERM` and `SIGINT` with 
 6. **Flush logs** — `pino.flush()` ensures buffered logs reach the transport.
 7. **Exit 0.**
 
-If the entire sequence exceeds `SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit with code 1. PM2 will restart.
+If the entire sequence exceeds `SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit with code 1. The supervisor (Docker Compose or PM2) will restart per its `restart` / `autorestart` policy.
 
 ### Worker shutdown sequence
 
@@ -131,7 +131,7 @@ If the entire sequence exceeds `SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit w
 4. **Close the Postgres pool.**
 5. **Flush logs, exit 0.**
 
-If a handler ignores the signal and blocks past the grace window, the scheduler returns anyway and the process proceeds to exit. PM2's `kill_timeout: 65000` on `mcp-worker` gives ample margin.
+If a handler ignores the signal and blocks past the grace window, the scheduler returns anyway and the process proceeds to exit. The supervisor's grace window — Docker Compose `stop_grace_period: 65s` or PM2 `kill_timeout: 65000` — gives ample margin.
 
 ### Implementation pattern
 
@@ -206,6 +206,83 @@ registerShutdown(async () => {
 - **Never label by user input.** Tool names are bounded (the registered set); user-supplied strings are not.
 - New metrics need a brief comment explaining why aggregate observability requires them.
 - Endpoint binds to loopback only — same as `/health`.
+
+## Containerized deployment operations
+
+When Echo runs under Docker Compose (see `README.md`), every CLI command
+runs via `docker compose run --rm <service>`. The image is the same one
+that powers `mcp-server` and `mcp-worker` — it ships `dist/db/migrate.js`,
+`dist/cli/keys.js`, and the full runtime.
+
+### Applying migrations
+
+```bash
+docker compose run --rm migrate
+# Equivalent to: node dist/db/migrate.js up
+```
+
+Other migration commands target the same service with an explicit override:
+
+```bash
+docker compose run --rm migrate node dist/db/migrate.js status
+docker compose run --rm migrate node dist/db/migrate.js down 1
+```
+
+The `migrate` service also runs automatically on `docker compose up` (as a
+one-shot `restart: "no"` dependency of `mcp-server` and `mcp-worker`).
+
+### Managing API keys
+
+```bash
+docker compose run --rm mcp-server node dist/cli/keys.js create --name "..."
+docker compose run --rm mcp-server node dist/cli/keys.js list
+docker compose run --rm mcp-server node dist/cli/keys.js blacklist <id-or-prefix>
+```
+
+Use `mcp-server` rather than `mcp-worker` — the image is identical but the
+server service is wired with Postgres access in its env.
+
+### Health and metrics access
+
+`/health` and `/metrics` bind to loopback inside the server container and
+are blocked at the Caddy edge. To inspect them:
+
+```bash
+docker compose exec mcp-server \
+  node -e "fetch('http://127.0.0.1:3000/health').then(r=>r.text()).then(console.log)"
+```
+
+Or scrape metrics from the host:
+
+```bash
+docker compose exec mcp-server \
+  node -e "fetch('http://127.0.0.1:3000/metrics').then(r=>r.text()).then(console.log)"
+```
+
+For Prometheus scraping, run the scraper as another compose service on the
+same compose network and point it at `mcp-server:3000/metrics` — but
+**do not publish those ports on Caddy**. That would defeat the loopback
+check.
+
+### Secrets rotation
+
+See `secrets/README.md` for the inventory. Rotation procedure:
+
+1. Replace the file contents in `secrets/`.
+2. `docker compose restart <affected-services>`.
+
+Rotating `api_key_hmac_secret.txt` invalidates every existing API key —
+coordinate a re-hash before rotating.
+
+### Graceful restarts
+
+```bash
+docker compose restart mcp-server   # 35s grace period (= SHUTDOWN_TIMEOUT_MS + 5s)
+docker compose restart mcp-worker   # 65s grace period (allows long cron handlers to drain)
+```
+
+The grace periods are configured via `stop_grace_period` in `compose.yaml`
+and mirror the PM2 `kill_timeout` values in `ecosystem.config.cjs`.
 
 ## Backup considerations (deferred)
 

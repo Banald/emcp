@@ -1,0 +1,29 @@
+# Caddy reverse proxy for Echo.
+#
+# Behavior:
+#  - {$PUBLIC_HOST:localhost} is the site address. `localhost` or IP literals
+#    get Caddy's internal CA (self-signed TLS). Real hostnames trigger
+#    automatic Let's Encrypt.
+#  - Only the /mcp endpoint is forwarded. /health and /metrics are explicitly
+#    blocked here and also rejected by the app for non-loopback peers.
+#
+# Configure via .env:
+#   PUBLIC_HOST     — the hostname this server serves on
+#   ACME_EMAIL      — optional, used by Caddy global `email` directive if set
+
+{$PUBLIC_HOST:localhost} {
+	route {
+		# Block observability endpoints at the edge. Redundant with the
+		# server's loopback-only check in src/server.ts, but surfaces
+		# intent and saves a round-trip.
+		@internal path /health /metrics /health/* /metrics/*
+		respond @internal 404
+
+		# The MCP endpoint is the only thing exposed externally.
+		@mcp path /mcp
+		reverse_proxy @mcp mcp-server:3000
+
+		# Everything else: 404.
+		respond "Not Found" 404
+	}
+}

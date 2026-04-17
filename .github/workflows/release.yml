@@ -105,13 +105,6 @@ jobs:
           node src/db/migrate.ts down
           node src/db/migrate.ts up
           node src/db/migrate.ts status
-      - name: Upload dist for release job
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 1
-          if-no-files-found: error
       - name: Upload coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
@@ -151,12 +144,18 @@ jobs:
           DATABASE_URL: postgres://placeholder/placeholder
           REDIS_URL: redis://placeholder
 
-  release:
+  docker:
     needs: [ci, integration]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
-      contents: write # gh release create
+      contents: read
+      packages: write     # push to ghcr.io
+      id-token: write     # SLSA provenance keyless signing
+      attestations: write # attach provenance to registry
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
@@ -165,40 +164,101 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Download dist from ci job
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Compute lowercased image name
+        id: image
+        # ghcr.io rejects uppercase characters in image paths, but GitHub
+        # usernames and org names may contain them. Lowercase once, reuse.
+        run: |
+          owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${owner}/echo" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Log in to ghcr.io
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
-          name: dist
-          path: dist/
-      - name: Assemble release
-        run: |
-          mkdir staging
-          cp -r dist staging/
-          cp -r migrations staging/
-          cp -r docs staging/
-          cp -r infra staging/
-          cp package.json package-lock.json ecosystem.config.cjs .env.example README.md staging/
-      - name: Create tarball and checksum
-        run: |
-          TARBALL="echo-${{ github.ref_name }}.tar.gz"
-          tar -czf "$TARBALL" -C staging .
-          sha256sum "$TARBALL" > "$TARBALL.sha256"
-          echo "Artifacts:"
-          ls -l "$TARBALL" "$TARBALL.sha256"
-          echo "---"
-          cat "$TARBALL.sha256"
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ steps.image.outputs.name }}
+          # `latest=auto` (default) only promotes stable releases to `latest`
+          # and skips prereleases. The major/minor guards do the same for
+          # those roll-up tags — never point v1.2 at v1.2.3-rc1.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+            type=sha,prefix=sha-
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    # Creates a GitHub Release page with auto-generated notes. The release
+    # artifact is the container image pushed by the `docker` job above —
+    # there is no tarball and no downloadable binary.
+    needs: [docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          IMAGE: ${{ needs.docker.outputs.image }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
+          VERSION="${TAG#v}"
           PRERELEASE_FLAG=""
           if echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-.+'; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          NOTES_FILE=$(mktemp)
+          cat > "$NOTES_FILE" <<EOF
+          ## Container image
+
+          \`\`\`
+          docker pull ${IMAGE}:${VERSION}
+          \`\`\`
+
+          Pinned by digest:
+
+          \`\`\`
+          ${IMAGE}@${DIGEST}
+          \`\`\`
+
+          See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md#deploy-with-docker-compose) for deployment instructions.
+          EOF
           gh release create "$TAG" \
-            "echo-$TAG.tar.gz" \
-            "echo-$TAG.tar.gz.sha256" \
             --title "Echo $TAG" \
+            --notes-file "$NOTES_FILE" \
             --generate-notes \
             $PRERELEASE_FLAG

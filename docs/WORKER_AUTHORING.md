@@ -148,7 +148,7 @@ Throw to abort a run. The scheduler catches the throw, records `worker_runs_tota
 ## Running and observing
 
 - Dev: `npm run dev:worker` runs `node --env-file=.env --watch src/workers/index.ts`. Logs are pretty-printed when `NODE_ENV=development`.
-- Prod: `npm run start:worker` launches `dist/workers/index.js`. PM2 config (`ecosystem.config.cjs`) pins it to one instance — see "Known limitations" below.
+- Prod: the `mcp-worker` service in `compose.yaml` runs `node dist/workers/index.js` (one container). Bare-metal fallback: `npm run start:worker` plus PM2 config (`ecosystem.config.cjs`) that pins a single instance. See "Known limitations" below for why there is only one instance.
 - Metrics (Prometheus, scraped from the server's `/metrics`):
   - `worker_runs_total{worker, status}` — labels: `success`, `failure`, `timeout`, `skipped_overlap`.
   - `worker_run_duration_seconds{worker}` — histogram.
@@ -164,7 +164,7 @@ On SIGTERM:
 4. The Postgres pool closes.
 5. Process exits 0.
 
-If a handler wedges past the grace window, the process exits anyway. PM2's `kill_timeout` (65s) gives margin over the default 30s.
+If a handler wedges past the grace window, the process exits anyway. The supervisor's grace window — Docker Compose `stop_grace_period: 65s` or PM2 `kill_timeout: 65000` — gives margin over the default 30s.
 
 ## Testing workers
 
@@ -201,7 +201,7 @@ describe('fetch-news worker', () => {
 
 ## Known limitations
 
-- **One worker process only.** `ecosystem.config.cjs` pins `instances: 1` for `mcp-worker` because croner schedules in-memory and multiple processes would double-fire every tick. Horizontal scaling requires a Redis advisory lock around each fire (`SET key NX EX ttl`) — an explicit follow-up item, not shipped in this refactor.
+- **One worker process only.** Both `compose.yaml` (implicit `deploy.replicas: 1`) and `ecosystem.config.cjs` (`instances: 1`) pin `mcp-worker` to a single instance because croner schedules in-memory and multiple processes would double-fire every tick. Horizontal scaling requires a Redis advisory lock around each fire (`SET key NX EX ttl`) — an explicit follow-up item, not shipped in this refactor.
 - **No persistent job queue.** If the worker is down when a tick should fire, the tick is missed. This is intentional — cron workers are for recurring background refresh, not at-least-once delivery. If you need delivery guarantees, use a different pattern (outbox, external queue) and justify the complexity.
 
 ## Common pitfalls
