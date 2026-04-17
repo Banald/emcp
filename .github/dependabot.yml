@@ -33,6 +33,10 @@ updates:
       # Patch updates are allowed through (tilde range in package.json).
       - dependency-name: '@modelcontextprotocol/sdk'
         update-types: [version-update:semver-minor, version-update:semver-major]
+      # @types/node must track the runtime (engines.node). Blocks drift to
+      # Node 25+ types while the runtime is still pinned to 24.x.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
     groups:
       types:
         patterns: ['@types/*']
