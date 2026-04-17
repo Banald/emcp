@@ -3,10 +3,11 @@
 // server on an ephemeral port, and returns everything needed for end-to-end
 // testing.
 //
-// CRITICAL: All src/ imports are dynamic (await import(...)). Module evaluation
-// happens AFTER env vars are set. Static imports would evaluate src/config.ts
-// before REDIS_URL / DATABASE_URL are in place, tripping its Zod schema.
-// Do not convert these to static imports.
+// src/ imports used to be dynamic because src/config.ts evaluates its Zod
+// schema at module load time. Now that src/db/client.ts and src/lib/redis.ts
+// are both Proxy-backed lazy singletons, a static import only evaluates
+// src/config.ts on first config read — long after this file has set every
+// required env var. Dynamic imports are no longer necessary.
 //
 // First run may take ~10–20 seconds to pull Docker images.
 // Subsequent runs reuse the cached images and start much faster (~2–5s).
@@ -14,10 +15,17 @@
 import { createServer as createNetServer } from 'node:net';
 import path from 'node:path';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import type { Redis as RedisType } from 'ioredis';
+import { Redis, type Redis as RedisType } from 'ioredis';
 import { runner } from 'node-pg-migrate';
 import pg from 'pg';
 import { GenericContainer } from 'testcontainers';
+import { extractKeyPrefix, generateApiKey, hashApiKey } from '../../../src/core/auth-hash.ts';
+import { __setPoolForTesting } from '../../../src/db/client.ts';
+import { ApiKeyRepository } from '../../../src/db/repos/api-keys.ts';
+import { createLogger } from '../../../src/lib/logger.ts';
+import { REDIS_OPTIONS } from '../../../src/lib/redis.ts';
+import { createServer } from '../../../src/server.ts';
+import { loadTools } from '../../../src/shared/tools/loader.ts';
 
 const { Pool } = pg;
 
@@ -82,22 +90,11 @@ export async function startTestServer(): Promise<TestServer> {
     verbose: false,
   });
 
-  // 5. Dynamic imports from src/ — module evaluation happens here, AFTER env is set.
-  //    This ordering is NOT optional. See the comment at the top of this file.
-  const { createServer } = await import('../../../src/server.ts');
-  const { ApiKeyRepository } = await import('../../../src/db/repos/api-keys.ts');
-  const { generateApiKey, hashApiKey, extractKeyPrefix } = await import(
-    '../../../src/core/auth-hash.ts'
-  );
-  const { loadTools } = await import('../../../src/shared/tools/loader.ts');
-  const { createLogger } = await import('../../../src/lib/logger.ts');
-  const redisMod = await import('../../../src/lib/redis.ts');
-  const dbClientMod = await import('../../../src/db/client.ts');
-
-  // 6. Create a pg Pool connected to the container (separate from any src/ singleton).
+  // 5. Create a pg Pool connected to the container (separate from the src/
+  //    lazy singleton — we pass this one directly into createServer).
   const pool = new Pool({ connectionString: databaseUrl, max: 5 });
 
-  // 7. Seed a test API key via the repository.
+  // 6. Seed a test API key via the repository.
   const repo = new ApiKeyRepository(pool);
   const rawKey = generateApiKey('mcp_test');
   const keyHash = hashApiKey(rawKey);
@@ -110,12 +107,14 @@ export async function startTestServer(): Promise<TestServer> {
     allowNoOrigin: true,
   });
 
-  // 8. Load tools from src/tools/.
+  // 7. Load tools from src/tools/.
   const registry = await loadTools(path.resolve(process.cwd(), 'src/tools'));
 
-  // 9. Build the server with real deps — Redis is now a real container.
+  // 8. Build the server with real deps — test-owned Pool and Redis clients
+  //    rather than the src-side singletons, so the test harness is not
+  //    coupled to config.ts's snapshot of env vars at module load time.
   const logger = createLogger({ level: 'silent' });
-  const redis = redisMod.getRedis();
+  const redis = new Redis(redisUrl, REDIS_OPTIONS);
   const { httpServer, close: closeServer } = await createServer({
     pool,
     redis,
@@ -124,7 +123,7 @@ export async function startTestServer(): Promise<TestServer> {
     logger,
   });
 
-  // 10. Listen on the pre-allocated port.
+  // 9. Listen on the pre-allocated port.
   await new Promise<void>((resolve) => {
     httpServer.listen(port, host, () => resolve());
   });
@@ -139,9 +138,10 @@ export async function startTestServer(): Promise<TestServer> {
     close: async () => {
       await closeServer();
       await pool.end();
-      // Also close the module-level pool singleton created by src/db/client.ts
-      // (imported as a side effect of src/server.ts).
-      await dbClientMod.pool.end();
+      // Reset the lazy src-side pool singleton rather than `pool.end()`-ing it:
+      // the server was built on our own container-scoped pool, so the src
+      // singleton may never have been constructed.
+      __setPoolForTesting(null);
       redis.disconnect();
       await pgContainer.stop();
       await redisContainer.stop();

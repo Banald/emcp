@@ -3,8 +3,10 @@ import { EventEmitter } from 'node:events';
 import { describe, it, mock } from 'node:test';
 import { ConflictError, NotFoundError, TransientError, ValidationError } from '../lib/errors.ts';
 import {
+  __setPoolForTesting,
   attachErrorLogging,
   createPool,
+  getPool,
   mapPgError,
   pool,
   query,
@@ -118,13 +120,17 @@ describe('query', () => {
   });
 
   it('uses the default pool when no executor is provided', async () => {
-    const stub = mock.method(pool, 'query', async () => ({ rows: [], rowCount: 0 }));
+    const queryMock = mock.fn(async () => ({ rows: [], rowCount: 0 }));
+    const fake = { query: queryMock, end: mock.fn(async () => undefined) } as unknown as ReturnType<
+      typeof createPool
+    >;
+    __setPoolForTesting(fake);
     try {
       const result = await query('SELECT 1');
       assert.deepEqual(result.rows, []);
-      assert.equal(stub.mock.callCount(), 1);
+      assert.equal(queryMock.mock.callCount(), 1);
     } finally {
-      stub.mock.restore();
+      __setPoolForTesting(null);
     }
   });
 });
@@ -170,5 +176,46 @@ describe('mapPgError', () => {
     const original = new Error('no code');
     const mapped = mapPgError(original);
     assert.equal(mapped, original);
+  });
+});
+
+describe('lazy pool singleton', () => {
+  it('getPool returns the same instance across calls', () => {
+    __setPoolForTesting(null);
+    try {
+      const a = getPool();
+      const b = getPool();
+      assert.strictEqual(a, b);
+    } finally {
+      __setPoolForTesting(null);
+    }
+  });
+
+  it('__setPoolForTesting replaces the cached instance', () => {
+    const fake = { end: mock.fn(async () => undefined) } as unknown as ReturnType<
+      typeof createPool
+    >;
+    __setPoolForTesting(fake);
+    try {
+      assert.strictEqual(getPool(), fake);
+    } finally {
+      __setPoolForTesting(null);
+    }
+  });
+
+  it('pool Proxy forwards property access to the lazy singleton', () => {
+    const fake = {
+      query: mock.fn(async () => ({ rows: [], rowCount: 0 })),
+      end: mock.fn(async () => undefined),
+    } as unknown as ReturnType<typeof createPool>;
+    __setPoolForTesting(fake);
+    try {
+      // typeof check through the Proxy exercises the `get` trap
+      assert.equal(typeof pool.query, 'function');
+      // `has` trap
+      assert.ok('query' in pool);
+    } finally {
+      __setPoolForTesting(null);
+    }
   });
 });

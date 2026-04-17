@@ -15,7 +15,7 @@ function makeResponse(
   body: string | Uint8Array,
   init: { status?: number; headers?: Record<string, string> } = {},
 ): Response {
-  return new Response(body, {
+  return new Response(body as BodyInit, {
     status: init.status ?? 200,
     headers: init.headers ?? { 'content-type': 'text/plain; charset=utf-8' },
   });

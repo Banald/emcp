@@ -36,9 +36,34 @@ export function registerPoolShutdown(
   });
 }
 
-export const pool: Pool = createPool();
-attachErrorLogging(pool);
-registerPoolShutdown(pool);
+let poolSingleton: Pool | null = null;
+
+export function getPool(): Pool {
+  if (poolSingleton === null) {
+    poolSingleton = createPool();
+    attachErrorLogging(poolSingleton);
+    // First-use registration. The pool is always touched before shutdown, so
+    // registering here is safe in both the server and CLI paths.
+    registerPoolShutdown(poolSingleton);
+  }
+  return poolSingleton;
+}
+
+/** Test-only hook: replace or clear the cached singleton. */
+export function __setPoolForTesting(p: Pool | null): void {
+  poolSingleton = p;
+}
+
+export const pool: Pool = new Proxy({} as Pool, {
+  get(_target, prop, receiver) {
+    const p = getPool();
+    const value = Reflect.get(p, prop, receiver);
+    return typeof value === 'function' ? value.bind(p) : value;
+  },
+  has(_target, prop) {
+    return Reflect.has(getPool(), prop);
+  },
+});
 
 export interface QueryResultShape<T> {
   rows: T[];
