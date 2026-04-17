@@ -3,6 +3,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { runner } from 'node-pg-migrate';
 import { config } from '../config.ts';
+import { ConfigError } from '../lib/errors.ts';
 import { logger } from '../lib/logger.ts';
 import { createPool } from './client.ts';
 
@@ -12,10 +13,27 @@ const MIGRATIONS_TABLE = 'pgmigrations';
 async function listMigrationFiles(): Promise<string[]> {
   try {
     const entries = await readdir(MIGRATIONS_DIR);
-    return entries.filter((f) => /\.(sql|cjs|mjs|js|ts)$/.test(f)).sort();
+    return entries.filter((f) => /\.sql$/.test(f)).sort();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
+  }
+}
+
+async function assertOnlySqlMigrations(): Promise<void> {
+  let files: string[];
+  try {
+    files = await readdir(MIGRATIONS_DIR);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  const nonSql = files.filter((f) => !/\.sql$/.test(f));
+  if (nonSql.length > 0) {
+    throw new ConfigError(
+      `Non-SQL migrations are not allowed: ${nonSql.join(', ')}. See docs/OPERATIONS.md.`,
+      'Migration loading error.',
+    );
   }
 }
 
@@ -84,6 +102,9 @@ async function main(): Promise<void> {
 
   const command = positionals[0];
   try {
+    // Reject non-SQL migrations up front so a stray .js file fails at deploy
+    // time rather than being silently picked up by node-pg-migrate's loader.
+    await assertOnlySqlMigrations();
     switch (command) {
       case 'up': {
         const n = positionals[1] ? Number.parseInt(positionals[1], 10) : undefined;
