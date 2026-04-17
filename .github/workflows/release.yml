@@ -206,6 +206,13 @@ jobs:
           provenance: mode=max
           sbom: true
       - name: Attest build provenance
+        # attest-build-provenance needs a public repo or GHAS on the org.
+        # User-owned private repos get a 400 with "Feature not available".
+        # Auto-activates when visibility flips to public. The buildx step
+        # above already writes in-toto provenance into the image manifest
+        # via `provenance: mode=max` — this is the additional Sigstore-signed
+        # attestation on top of that.
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ${{ steps.image.outputs.name }}
