@@ -101,6 +101,16 @@ export async function loadTools(toolsDir: string): Promise<ToolRegistry> {
     }
 
     const def = tool as ToolDefinition;
+    if (def.outputSchema !== undefined) {
+      try {
+        z.object(def.outputSchema as z.ZodRawShape);
+      } catch (err) {
+        throw new ConfigError(
+          `Tool file "${relPath}" has a malformed outputSchema: ${err instanceof Error ? err.message : String(err)}`,
+          'Tool loading error.',
+        );
+      }
+    }
     tools.set(def.name, def);
     nameToFile.set(def.name, relPath);
     logger.debug({ tool: def.name, file: relPath }, 'loaded tool');

@@ -489,8 +489,11 @@ function registerSessionTools(
     mcpServer.registerTool(
       tool.name,
       {
+        ...(tool.title !== undefined ? { title: tool.title } : {}),
         description: tool.description,
         inputSchema: tool.inputSchema,
+        ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
+        ...(tool.requiresConfirmation ? { annotations: { destructiveHint: true } } : {}),
       },
       async (args: Record<string, unknown>): Promise<SdkCallToolResult> => {
         // Per-tool rate limiting: enforced at the tool layer, not HTTP layer.

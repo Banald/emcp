@@ -32,6 +32,32 @@ const inputSchema = {
     ),
 };
 
+const outputSchema = {
+  final_url: z.string().describe('The URL after any redirects.'),
+  status: z.number().int().describe('HTTP status code from the final (non-redirect) response.'),
+  content_type: z
+    .string()
+    .nullable()
+    .describe('Content-Type header from the final response, or null if absent.'),
+  bytes: z
+    .number()
+    .int()
+    .min(0)
+    .describe('Body size on the wire, in bytes. Capped at the per-call limit.'),
+  wire_truncated: z
+    .boolean()
+    .describe('True if the wire body was truncated at the per-call byte cap.'),
+  title: z.string().optional().describe('Article title extracted by Readability (HTML only).'),
+  byline: z.string().optional().describe('Article byline extracted by Readability (HTML only).'),
+  site_name: z.string().optional().describe('Site name extracted by Readability (HTML only).'),
+  extraction_fallback: z
+    .boolean()
+    .describe('True when Readability fell back to full-page markdown (HTML only).'),
+  content_truncated: z
+    .boolean()
+    .describe('True when returned text content was capped at max_length.'),
+};
+
 interface FetchOutcome {
   finalUrl: string;
   status: number;
@@ -40,12 +66,13 @@ interface FetchOutcome {
   wireTruncated: boolean;
 }
 
-const tool: ToolDefinition<typeof inputSchema> = {
+const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   name: 'fetch-url',
   title: 'Fetch URL',
   description:
     'Fetch an HTTP or HTTPS URL and return its content as LLM-readable text. HTML pages are parsed with Mozilla Readability and converted to clean Markdown (title, byline, article body; navigation, ads, and footer chrome are removed). JSON, XML, plain text, RSS, and Atom are returned verbatim. Binary content types return only metadata. Redirects are followed safely (each hop is SSRF-checked). On ANY failure — timeout, network error, non-2xx status, disallowed URL, malformed response — a descriptive error message is returned as content with isError set; the tool never throws. Use for articles, documentation, feeds, API responses, or any web resource.',
   inputSchema,
+  outputSchema,
   rateLimit: { perMinute: 30 },
 
   handler: async ({ url, max_length }, ctx: ToolContext): Promise<CallToolResult> => {
@@ -186,6 +213,16 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
     `Bytes: ${body.length}${wireTruncated ? ' (wire-truncated)' : ''}`,
   ];
 
+  const baseMetadata = {
+    final_url: finalUrl,
+    status,
+    content_type: contentType,
+    bytes: body.length,
+    wire_truncated: wireTruncated,
+    extraction_fallback: false,
+    content_truncated: false,
+  };
+
   if (status < 200 || status >= 300) {
     const snippet = isTextMime(parsed.mime) ? decodeBody(body, parsed.charset).slice(0, 2000) : '';
     return {
@@ -197,6 +234,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
             (snippet ? `\n\nResponse body (first 2000 chars):\n${snippet}` : ''),
         },
       ],
+      structuredContent: baseMetadata,
       isError: true,
     };
   }
@@ -209,6 +247,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
           text: `${header.join('\n')}\n\nContent is a non-text media type and was not extracted.`,
         },
       ],
+      structuredContent: baseMetadata,
     };
   }
 
@@ -217,7 +256,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
   let byline: string | undefined;
   let siteName: string | undefined;
   let text: string;
-  let extractionNote: string | undefined;
+  let extractionFallback = false;
 
   if (isHtmlMime(parsed.mime)) {
     const extracted = extractArticle(decoded, finalUrl);
@@ -225,10 +264,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
     byline = extracted.byline;
     siteName = extracted.siteName;
     text = extracted.markdown;
-    if (extracted.fallback) {
-      extractionNote =
-        'Readability did not find article content; returning full-page Markdown as fallback.';
-    }
+    extractionFallback = extracted.fallback === true;
   } else {
     text = decoded.trim();
   }
@@ -239,10 +275,23 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
   if (title) header.push(`Title: ${title}`);
   if (byline) header.push(`Byline: ${byline}`);
   if (siteName) header.push(`Site: ${siteName}`);
-  if (extractionNote) header.push(`Note: ${extractionNote}`);
+  if (extractionFallback) {
+    header.push(
+      'Note: Readability did not find article content; returning full-page Markdown as fallback.',
+    );
+  }
   if (contentTruncated) {
     header.push(`Note: content truncated to ${maxLength} of ${text.length} characters.`);
   }
+
+  const structured = {
+    ...baseMetadata,
+    ...(title !== undefined ? { title } : {}),
+    ...(byline !== undefined ? { byline } : {}),
+    ...(siteName !== undefined ? { site_name: siteName } : {}),
+    extraction_fallback: extractionFallback,
+    content_truncated: contentTruncated,
+  };
 
   return {
     content: [
@@ -251,6 +300,7 @@ function formatOutcome(outcome: FetchOutcome, maxLength: number): CallToolResult
         text: `${header.join('\n')}\n\n${truncatedText}`,
       },
     ],
+    structuredContent: structured,
   };
 }
 

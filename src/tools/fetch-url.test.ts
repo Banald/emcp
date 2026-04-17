@@ -78,6 +78,22 @@ describe('fetch-url tool', () => {
     it('has rate limit set to 30/min', () => {
       assert.deepEqual(tool.rateLimit, { perMinute: 30 });
     });
+
+    it('declares a compiling outputSchema covering response metadata', () => {
+      assert.ok(tool.outputSchema, 'expected outputSchema');
+      const schema = z.object(tool.outputSchema);
+      const parsed = schema.safeParse({
+        final_url: 'https://example.com/',
+        status: 200,
+        content_type: 'text/html; charset=utf-8',
+        bytes: 42,
+        wire_truncated: false,
+        title: 'Title',
+        extraction_fallback: false,
+        content_truncated: false,
+      });
+      assert.equal(parsed.success, true);
+    });
   });
 
   describe('input schema validation', () => {
@@ -176,6 +192,16 @@ describe('fetch-url tool', () => {
       // Chrome elements are stripped
       assert.doesNotMatch(text, /home \| about \| contact/);
       assert.doesNotMatch(text, /footer that should be removed/);
+
+      // structuredContent mirrors the headers for clients that consume typed data.
+      assert.ok(result.structuredContent, 'expected structuredContent');
+      const structured = result.structuredContent as Record<string, unknown>;
+      assert.equal(structured.final_url, 'https://example.com/article');
+      assert.equal(structured.status, 200);
+      assert.equal(structured.title, 'The Real Article');
+      assert.equal(structured.byline, 'Jane Doe');
+      assert.equal(structured.extraction_fallback, false);
+      assert.equal(structured.content_truncated, false);
     });
 
     it('drops scripts and styles', async () => {
@@ -353,6 +379,8 @@ describe('fetch-url tool', () => {
       assert.match(text, /Status: 404/);
       assert.match(text, /non-2xx status/);
       assert.match(text, /Page not found/);
+      assert.ok(result.structuredContent, 'expected structuredContent on non-2xx');
+      assert.equal((result.structuredContent as Record<string, unknown>).status, 404);
     });
 
     it('returns isError for 500 without crashing', async () => {

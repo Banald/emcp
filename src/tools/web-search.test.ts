@@ -57,6 +57,18 @@ describe('web-search tool', () => {
     it('has rate limit set', () => {
       assert.deepEqual(tool.rateLimit, { perMinute: 30 });
     });
+
+    it('declares a compiling outputSchema', () => {
+      assert.ok(tool.outputSchema, 'expected outputSchema');
+      const schema = z.object(tool.outputSchema);
+      const parsed = schema.safeParse({
+        query: 'stockholm',
+        results: [
+          { rank: 1, title: 't', url: 'https://example.com', snippet: 's', source: 'google' },
+        ],
+      });
+      assert.equal(parsed.success, true);
+    });
   });
 
   describe('handler', () => {
@@ -85,6 +97,25 @@ describe('web-search tool', () => {
       assert.match(text, /Result Two/);
       assert.match(text, /Result Three/);
       assert.match(text, /Source: google/);
+
+      // structuredContent mirrors the content[] text for clients that consume typed data.
+      assert.ok(result.structuredContent, 'expected structuredContent');
+      assert.equal(result.structuredContent?.query, 'test search');
+      const structuredResults = result.structuredContent?.results as Array<{
+        rank: number;
+        title: string;
+        url: string;
+        snippet: string;
+        source: string;
+      }>;
+      assert.equal(structuredResults.length, 3);
+      assert.deepEqual(structuredResults[0], {
+        rank: 1,
+        title: 'Result One',
+        url: 'https://example.com/1',
+        snippet: 'First snippet',
+        source: 'google',
+      });
     });
 
     it('respects the limit parameter', async () => {
@@ -224,6 +255,7 @@ describe('web-search tool', () => {
       assert.equal(result.isError, true);
       const text = (result.content[0] as { type: 'text'; text: string }).text;
       assert.match(text, /No results found for "xyznonexistent"/);
+      assert.deepEqual(result.structuredContent, { query: 'xyznonexistent', results: [] });
     });
 
     it('throws TransientError when fetch fails with network error', async () => {

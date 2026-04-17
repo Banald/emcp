@@ -49,12 +49,28 @@ const inputSchema = {
     ),
 };
 
-const tool: ToolDefinition<typeof inputSchema> = {
+const outputSchema = {
+  query: z.string().describe('The query that was executed.'),
+  results: z
+    .array(
+      z.object({
+        rank: z.number().int().min(1).describe('1-based rank of this result in the returned list.'),
+        title: z.string().describe('Result title as reported by the upstream engine.'),
+        url: z.string().describe('Result URL.'),
+        snippet: z.string().describe('Snippet/excerpt, or "(no snippet)" when absent.'),
+        source: z.string().describe('Originating search engine, or "unknown".'),
+      }),
+    )
+    .describe('Ordered list of search results. Empty when no matches found.'),
+};
+
+const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   name: 'web-search',
   title: 'Web Search',
   description:
     'Search the web using multiple search engines (Google, Brave, Bing, Qwant, Startpage). Returns titles, URLs, and snippets for each result. Default language is Swedish (sv). Use for finding current information, articles, documentation, or any web content.',
   inputSchema,
+  outputSchema,
   rateLimit: { perMinute: 30 },
 
   handler: async (
@@ -96,18 +112,27 @@ const tool: ToolDefinition<typeof inputSchema> = {
     if (results.length === 0) {
       return {
         content: [{ type: 'text', text: `No results found for "${query}".` }],
+        structuredContent: { query, results: [] },
         isError: true,
       };
     }
 
-    const lines = results.map(
-      (r, i) =>
-        `${i + 1}. ${r.title}\n   URL: ${r.url}\n   ${r.content ?? '(no snippet)'}\n   Source: ${r.engine ?? 'unknown'}`,
+    const structured = results.map((r, i) => ({
+      rank: i + 1,
+      title: r.title,
+      url: r.url,
+      snippet: r.content ?? '(no snippet)',
+      source: r.engine ?? 'unknown',
+    }));
+
+    const lines = structured.map(
+      (r) => `${r.rank}. ${r.title}\n   URL: ${r.url}\n   ${r.snippet}\n   Source: ${r.source}`,
     );
     const text = `Web search results for "${query}":\n\n${lines.join('\n\n')}`;
 
     return {
       content: [{ type: 'text', text }],
+      structuredContent: { query, results: structured },
     };
   },
 };

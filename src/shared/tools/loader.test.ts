@@ -208,4 +208,26 @@ export default tool;
     const registry = await loadTools(dir);
     assert.equal(registry.get('nonexistent'), undefined);
   });
+
+  it('accepts a tool with a compiling outputSchema', async () => {
+    const dir = await makeTmpDir();
+    const src = `
+import { z } from '${zodUrl}';
+const tool = {
+  name: 'with-output',
+  description: 'outputs things',
+  inputSchema: { query: z.string() },
+  outputSchema: { answer: z.string() },
+  handler: async (args) => ({
+    content: [{ type: 'text', text: args.query }],
+    structuredContent: { answer: args.query },
+  }),
+};
+export default tool;
+`;
+    await writeTool(dir, 'with-output.ts', src);
+    const registry = await loadTools(dir);
+    assert.equal(registry.list().length, 1);
+    assert.ok(registry.get('with-output')?.outputSchema);
+  });
 });
