@@ -1,6 +1,6 @@
 // Integration test for the worker process. Spawns src/workers/index.ts against
-// a real Postgres container, verifies the drop-in loader discovers the heartbeat
-// worker, schedules it, and exits cleanly on SIGTERM.
+// a real Postgres container, verifies the drop-in loader discovers every worker
+// under src/workers/, schedules them, and exits cleanly on SIGTERM.
 
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -92,9 +92,18 @@ describe('worker process', { timeout: 120_000 }, () => {
 
     try {
       assert.ok(ready, `worker did not become ready. Output:\n${stdout}`);
-      assert.match(stdout, /"worker_count":1/);
-      assert.match(stdout, /"worker":"heartbeat"/);
-      assert.match(stdout, /"schedule":"\*\/5 \* \* \* \*"/);
+      // Exact-count assertion: any worker added or removed under src/workers/
+      // must be reflected here deliberately. Keep this list in sync with the
+      // drop-in files on disk.
+      assert.match(stdout, /"worker_count":2/);
+      assert.match(
+        stdout,
+        /"worker":"heartbeat","schedule":"\*\/5 \* \* \* \*","timezone":"UTC","msg":"worker_scheduled"/,
+      );
+      assert.match(
+        stdout,
+        /"worker":"fetch-news","schedule":"0 \*\/2 \* \* \*","timezone":"UTC","msg":"worker_scheduled"/,
+      );
 
       child.kill('SIGTERM');
       const code = await waitForChild(child);
