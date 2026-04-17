@@ -173,6 +173,29 @@ export default tool;
     assert.equal(registry.list().length, 0);
   });
 
+  it('loads compiled .js tool files (production dist layout)', async () => {
+    const dir = await makeTmpDir();
+    // .js files in a directory without a `"type": "module"` package.json
+    // default to CommonJS; the real dist ships with ESM. Drop a minimal
+    // package.json so Node resolves the .js files as ESM like it does in prod.
+    await writeTool(dir, 'package.json', '{"type":"module"}\n');
+    await writeTool(dir, 'compiled-tool.js', validToolSource);
+    await writeTool(dir, 'types.js', 'export default { name: "x" };\n');
+    await writeTool(dir, 'loader.js', 'export default { name: "y" };\n');
+    await writeTool(dir, 'foo.test.js', 'export default { name: "z" };\n');
+    const registry = await loadTools(dir);
+    assert.equal(registry.list().length, 1);
+    assert.ok(registry.get('test-tool'));
+  });
+
+  it('ignores .js.map and other non-.ts/.js files', async () => {
+    const dir = await makeTmpDir();
+    await writeTool(dir, 'stray.js.map', '{"version":3}\n');
+    await writeTool(dir, 'readme.md', '# not a tool\n');
+    const registry = await loadTools(dir);
+    assert.equal(registry.list().length, 0);
+  });
+
   it('ignores underscore-prefixed files in subdirectories', async () => {
     const dir = await makeTmpDir();
     await writeTool(dir, 'sub/_util.ts', 'export const x = 1;\n');

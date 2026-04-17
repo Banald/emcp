@@ -9,8 +9,9 @@ import type { ToolDefinition } from './types.ts';
 const TOOL_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
 function isExcluded(filename: string): boolean {
-  if (filename === 'types.ts' || filename === 'loader.ts') return true;
-  if (filename.endsWith('.test.ts')) return true;
+  if (filename === 'types.ts' || filename === 'types.js') return true;
+  if (filename === 'loader.ts' || filename === 'loader.js') return true;
+  if (filename.endsWith('.test.ts') || filename.endsWith('.test.js')) return true;
   if (filename.startsWith('_')) return true;
   return false;
 }
@@ -42,7 +43,7 @@ export async function loadTools(toolsDir: string): Promise<ToolRegistry> {
   const nameToFile = new Map<string, string>();
 
   for (const entry of entries) {
-    if (!entry.endsWith('.ts')) continue;
+    if (!entry.endsWith('.ts') && !entry.endsWith('.js')) continue;
 
     // Check exclusion on just the filename part (not subdirectory).
     const parts = entry.split('/');

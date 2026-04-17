@@ -7,11 +7,20 @@ import { logger } from '../../lib/logger.ts';
 import type { WorkerDefinition } from './types.ts';
 
 const WORKER_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
-const EXCLUDED_FILENAMES = new Set(['types.ts', 'loader.ts', 'scheduler.ts', 'index.ts']);
+const EXCLUDED_FILENAMES = new Set([
+  'types.ts',
+  'types.js',
+  'loader.ts',
+  'loader.js',
+  'scheduler.ts',
+  'scheduler.js',
+  'index.ts',
+  'index.js',
+]);
 
 function isExcluded(filename: string): boolean {
   if (EXCLUDED_FILENAMES.has(filename)) return true;
-  if (filename.endsWith('.test.ts')) return true;
+  if (filename.endsWith('.test.ts') || filename.endsWith('.test.js')) return true;
   if (filename.startsWith('_')) return true;
   return false;
 }
@@ -41,7 +50,7 @@ export async function loadWorkers(workersDir: string): Promise<WorkerRegistry> {
   const nameToFile = new Map<string, string>();
 
   for (const entry of entries) {
-    if (!entry.endsWith('.ts')) continue;
+    if (!entry.endsWith('.ts') && !entry.endsWith('.js')) continue;
 
     const parts = entry.split('/');
     const filename = parts[parts.length - 1] ?? entry;
