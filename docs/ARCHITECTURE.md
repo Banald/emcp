@@ -239,6 +239,10 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Graceful shutdown deadline for both processes. Default 30s. |
 | `SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
 | `PUBLIC_SCHEME` | no (compose only) | `https` | Selects which Caddyfile the caddy container mounts: `https` (default, auto-TLS) or `http` (plaintext, trusted networks only). App code does not read this — it's a compose-layer knob. |
+| `MCP_MAX_BODY_BYTES` | no | `1048576` | Max POST body size to `/mcp`. Range 1 KiB–16 MiB. Default 1 MiB. |
+| `MCP_SESSION_IDLE_MS` | no | `1800000` | Idle window after which a stateful session is evicted. Range 1 min–24 h. Default 30 min. |
+| `MCP_SESSION_CLEANUP_INTERVAL_MS` | no | `60000` | How often the eviction sweep runs. Range 1 s–10 min. Default 1 min. |
+| `MCP_TOOL_CALL_TIMEOUT_MS` | no | `30000` | Per-tool-call abort timeout. Range 1 s–10 min. Default 30 s. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 

@@ -68,6 +68,46 @@ describe('loadConfig', () => {
       assert.equal(config.shutdownTimeoutMs, 30000);
     });
 
+    it('applies MCP_* defaults when unset', () => {
+      const config = loadConfig(validEnv());
+      assert.equal(config.mcpMaxBodyBytes, 1_048_576);
+      assert.equal(config.mcpSessionIdleMs, 30 * 60_000);
+      assert.equal(config.mcpSessionCleanupIntervalMs, 60_000);
+      assert.equal(config.mcpToolCallTimeoutMs, 30_000);
+    });
+
+    it('accepts MCP_* overrides within bounds', () => {
+      const env = {
+        ...validEnv(),
+        MCP_MAX_BODY_BYTES: '2048',
+        MCP_SESSION_IDLE_MS: '120000',
+        MCP_SESSION_CLEANUP_INTERVAL_MS: '5000',
+        MCP_TOOL_CALL_TIMEOUT_MS: '10000',
+      };
+      const config = loadConfig(env);
+      assert.equal(config.mcpMaxBodyBytes, 2048);
+      assert.equal(config.mcpSessionIdleMs, 120000);
+      assert.equal(config.mcpSessionCleanupIntervalMs, 5000);
+      assert.equal(config.mcpToolCallTimeoutMs, 10000);
+    });
+
+    it('rejects MCP_* values outside bounds', () => {
+      const cases: Array<[string, string]> = [
+        ['MCP_MAX_BODY_BYTES', '512'], // below 1 KiB minimum
+        ['MCP_SESSION_IDLE_MS', '1000'], // below 1 min minimum
+        ['MCP_SESSION_CLEANUP_INTERVAL_MS', '500'], // below 1 s minimum
+        ['MCP_TOOL_CALL_TIMEOUT_MS', '500'], // below 1 s minimum
+      ];
+      for (const [key, value] of cases) {
+        const env = { ...validEnv(), [key]: value };
+        assert.throws(
+          () => loadConfig(env),
+          (err) => isAppError(err) && err instanceof ConfigError,
+          `expected ${key}=${value} to be rejected`,
+        );
+      }
+    });
+
     it('defaults LOG_LEVEL to debug in development', () => {
       const env = validEnv();
       env.NODE_ENV = 'development';

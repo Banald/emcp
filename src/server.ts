@@ -34,10 +34,6 @@ import type { ToolRegistry } from './shared/tools/loader.ts';
 const PKG_VERSION: string = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
-const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const SESSION_IDLE_MS = 30 * 60 * 1000; // 30 minutes
-const CLEANUP_INTERVAL_MS = 60_000; // check every minute
-const TOOL_CALL_TIMEOUT_MS = 30_000; // per tool-call abort timeout
 
 export const EXPECTED_HEALTH_CHECKS = ['db', 'redis'] as const;
 
@@ -85,12 +81,12 @@ export async function createServer(
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [id, session] of sessions) {
-      if (now - session.lastActivityMs > SESSION_IDLE_MS) {
+      if (now - session.lastActivityMs > config.mcpSessionIdleMs) {
         log.info({ sessionId: id }, 'evicting idle session');
         void removeSession(id);
       }
     }
-  }, CLEANUP_INTERVAL_MS);
+  }, config.mcpSessionCleanupIntervalMs);
   cleanupInterval.unref();
 
   const httpServer = createHttpServer(async (req, res) => {
@@ -402,7 +398,7 @@ async function handleMcp(
     // POST with existing session.
     let body: Buffer;
     try {
-      body = await readBody(req, MAX_BODY_BYTES);
+      body = await readBody(req, config.mcpMaxBodyBytes);
     } catch {
       res.writeHead(413, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Payload too large' }));
@@ -430,7 +426,7 @@ async function handleMcp(
 
   let body: Buffer;
   try {
-    body = await readBody(req, MAX_BODY_BYTES);
+    body = await readBody(req, config.mcpMaxBodyBytes);
   } catch {
     res.writeHead(413, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Payload too large' }));
@@ -556,7 +552,7 @@ function registerSessionTools(
           },
           toolName: tool.name,
           requestId,
-          signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS),
+          signal: AbortSignal.timeout(config.mcpToolCallTimeoutMs),
           pool,
           redis,
           rootLogger: log,

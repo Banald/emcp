@@ -47,6 +47,13 @@ const envSchema = z.object({
     .url()
     .default('http://localhost:8080')
     .transform((u) => u.replace(/\/+$/, '')),
+  // MCP HTTP transport tunables. Defaults mirror the file-level constants
+  // that used to live in src/server.ts; bounds prevent pathological values
+  // at startup rather than at the first request.
+  MCP_MAX_BODY_BYTES: integer(1024, 16 * 1024 * 1024).default(1_048_576),
+  MCP_SESSION_IDLE_MS: integer(60_000, 24 * 60 * 60 * 1000).default(30 * 60_000),
+  MCP_SESSION_CLEANUP_INTERVAL_MS: integer(1_000, 10 * 60_000).default(60_000),
+  MCP_TOOL_CALL_TIMEOUT_MS: integer(1_000, 10 * 60_000).default(30_000),
 });
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
@@ -66,6 +73,10 @@ export interface Config {
   readonly rateLimitDefaultPerMinute: number;
   readonly shutdownTimeoutMs: number;
   readonly searxngUrl: string;
+  readonly mcpMaxBodyBytes: number;
+  readonly mcpSessionIdleMs: number;
+  readonly mcpSessionCleanupIntervalMs: number;
+  readonly mcpToolCallTimeoutMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -97,6 +108,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     rateLimitDefaultPerMinute: raw.RATE_LIMIT_DEFAULT_PER_MINUTE,
     shutdownTimeoutMs: raw.SHUTDOWN_TIMEOUT_MS,
     searxngUrl: raw.SEARXNG_URL,
+    mcpMaxBodyBytes: raw.MCP_MAX_BODY_BYTES,
+    mcpSessionIdleMs: raw.MCP_SESSION_IDLE_MS,
+    mcpSessionCleanupIntervalMs: raw.MCP_SESSION_CLEANUP_INTERVAL_MS,
+    mcpToolCallTimeoutMs: raw.MCP_TOOL_CALL_TIMEOUT_MS,
   };
   return Object.freeze(resolved);
 }
