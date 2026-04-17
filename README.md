@@ -1,4 +1,4 @@
-# mcp-server
+# Echo
 
 Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, drop-in scheduled background workers, drop-in tool authoring.
 
