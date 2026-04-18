@@ -124,6 +124,7 @@ This list is the source of truth. Adding to it requires explicit user approval p
 | `@mozilla/readability` | Main-content extraction for the `fetch-url` tool | Firefox's Reader Mode algorithm; battle-tested on the real web, no runtime deps |
 | `linkedom` | Lightweight DOM for Readability to operate on | Much smaller than `jsdom` (~6 transitive deps vs ~20+), sufficient for static HTML parsing |
 | `turndown` | HTML → Markdown conversion for LLM-readable output | Preserves headings/links/lists/code; LLMs handle Markdown structure better than flat text |
+| `undici` | HTTP `ProxyAgent` for outbound-egress proxy rotation | Same client Node ships internally; battle-tested `ProxyAgent` supports HTTP + CONNECT tunneling + basic auth. Hand-rolling the CONNECT path over `node:http`+`tls.connect` was the only viable alternative — rejected because the maintenance and TLS edge-case surface exceed the dep cost. Already a transitive dep via `@modelcontextprotocol/sdk` at an older version; direct dep pins the version we test against. |
 
 ## Approved dev dependencies
 
