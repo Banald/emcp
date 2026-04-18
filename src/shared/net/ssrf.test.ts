@@ -103,6 +103,37 @@ describe('isPrivateAddress', () => {
     it('allows ::ffff:8.8.8.8', () => {
       assert.equal(isPrivateAddress('::ffff:8.8.8.8'), false);
     });
+
+    // Hex form of IPv4-mapped IPv6 (AUDIT H-1). Resolvers on BSD, musl, and
+    // custom DNS can emit this form for an AAAA record pointing at a
+    // private IPv4 — it must still be caught.
+    it('rejects ::ffff:7f00:1 (hex form of 127.0.0.1)', () => {
+      assert.equal(isPrivateAddress('::ffff:7f00:1'), true);
+    });
+
+    it('rejects ::ffff:a00:1 (hex form of 10.0.0.1)', () => {
+      assert.equal(isPrivateAddress('::ffff:a00:1'), true);
+    });
+
+    it('rejects ::ffff:ac10:1 (hex form of 172.16.0.1)', () => {
+      assert.equal(isPrivateAddress('::ffff:ac10:1'), true);
+    });
+
+    it('rejects ::ffff:c0a8:1 (hex form of 192.168.0.1)', () => {
+      assert.equal(isPrivateAddress('::ffff:c0a8:1'), true);
+    });
+
+    it('allows ::ffff:8080:8 (hex form of 128.128.128.8, public)', () => {
+      assert.equal(isPrivateAddress('::ffff:8080:8'), false);
+    });
+
+    it('rejects ::FFFF:7F00:1 (mixed case hex form of 127.0.0.1)', () => {
+      assert.equal(isPrivateAddress('::FFFF:7F00:1'), true);
+    });
+
+    it('rejects ::ffff:0:7f00:1 (IPv4-translated form of 127.0.0.1)', () => {
+      assert.equal(isPrivateAddress('::ffff:0:7f00:1'), true);
+    });
   });
 });
 

@@ -47,6 +47,18 @@ function isPrivateIPv6(addr: string): boolean {
   // :: — unspecified
   if (normalized === '00000000000000000000000000000000') return true;
 
+  // ::ffff:0:0/96 — IPv4-mapped IPv6 (RFC 4291). The dotted-quad fast path in
+  // isPrivateAddress catches `::ffff:127.0.0.1`, but the hex form
+  // `::ffff:7f00:1` (same IP, different notation) falls through to here.
+  // Extract the last 32 bits as IPv4 and delegate.
+  if (normalized.startsWith('00000000000000000000ffff')) {
+    return isPrivateIPv4(extractIPv4FromHex(normalized.slice(24)));
+  }
+  // ::ffff:0:0:0/96 — IPv4-translated (SIIT, RFC 6145). Same shape, different prefix.
+  if (normalized.startsWith('0000000000000000ffff0000')) {
+    return isPrivateIPv4(extractIPv4FromHex(normalized.slice(24)));
+  }
+
   const firstNibble = Number.parseInt(normalized.charAt(0), 16);
 
   // fe80::/10 — link-local (first 10 bits: 1111111010)
@@ -62,6 +74,15 @@ function isPrivateIPv6(addr: string): boolean {
   if (firstNibble === 0xf && (normalized[1] === 'c' || normalized[1] === 'd')) return true;
 
   return false;
+}
+
+// Decode the trailing 32 bits of a normalized IPv6 (8 hex chars) as IPv4 dotted-quad.
+function extractIPv4FromHex(hex8: string): string {
+  const a = Number.parseInt(hex8.slice(0, 2), 16);
+  const b = Number.parseInt(hex8.slice(2, 4), 16);
+  const c = Number.parseInt(hex8.slice(4, 6), 16);
+  const d = Number.parseInt(hex8.slice(6, 8), 16);
+  return `${a}.${b}.${c}.${d}`;
 }
 
 function normalizeIPv6(addr: string): string | null {
