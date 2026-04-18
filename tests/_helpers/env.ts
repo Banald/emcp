@@ -16,6 +16,11 @@ export const DEFAULT_TEST_ENV: Readonly<Record<string, string>> = Object.freeze(
   RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
   SHUTDOWN_TIMEOUT_MS: '5000',
   SEARXNG_URL: 'http://localhost:8080',
+  // Low session cap so the per-key cap test (AUDIT M-1) can exercise the
+  // limit in a handful of requests. Other tests create at most 2 sessions
+  // per key, so this headroom is plenty for them.
+  MCP_MAX_SESSIONS_PER_KEY: '4',
+  MCP_MAX_SESSIONS_TOTAL: '100',
 });
 
 /**

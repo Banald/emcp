@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { z } from 'zod';
-import { parseCidrList, type ParsedCidr } from './core/client-ip.ts';
+import { type ParsedCidr, parseCidrList } from './core/client-ip.ts';
 import { ConfigError } from './lib/errors.ts';
 
 const nodeEnvSchema = z.enum(['development', 'production', 'test']);
@@ -55,6 +55,10 @@ const envSchema = z.object({
   MCP_SESSION_IDLE_MS: integer(60_000, 24 * 60 * 60 * 1000).default(30 * 60_000),
   MCP_SESSION_CLEANUP_INTERVAL_MS: integer(1_000, 10 * 60_000).default(60_000),
   MCP_TOOL_CALL_TIMEOUT_MS: integer(1_000, 10 * 60_000).default(30_000),
+  // Session cap (AUDIT M-1). Prevents one key from parking unbounded
+  // sessions and exhausting server memory. Global cap is a backstop.
+  MCP_MAX_SESSIONS_PER_KEY: integer(1, 10_000).default(32),
+  MCP_MAX_SESSIONS_TOTAL: integer(1, 1_000_000).default(10_000),
   // Pre-auth defences (AUDIT H-3). `PRE_AUTH_RATE_LIMIT_PER_MINUTE` caps
   // how fast *any* peer can burn through failed lookups; the bucket is
   // keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS` for XFF
@@ -86,6 +90,8 @@ export interface Config {
   readonly mcpSessionIdleMs: number;
   readonly mcpSessionCleanupIntervalMs: number;
   readonly mcpToolCallTimeoutMs: number;
+  readonly mcpMaxSessionsPerKey: number;
+  readonly mcpMaxSessionsTotal: number;
   readonly preAuthRateLimitPerMinute: number;
   readonly authNegCacheTtlSeconds: number;
   readonly trustedProxyCidrs: readonly ParsedCidr[];
@@ -134,6 +140,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     mcpSessionIdleMs: raw.MCP_SESSION_IDLE_MS,
     mcpSessionCleanupIntervalMs: raw.MCP_SESSION_CLEANUP_INTERVAL_MS,
     mcpToolCallTimeoutMs: raw.MCP_TOOL_CALL_TIMEOUT_MS,
+    mcpMaxSessionsPerKey: raw.MCP_MAX_SESSIONS_PER_KEY,
+    mcpMaxSessionsTotal: raw.MCP_MAX_SESSIONS_TOTAL,
     preAuthRateLimitPerMinute: raw.PRE_AUTH_RATE_LIMIT_PER_MINUTE,
     authNegCacheTtlSeconds: raw.AUTH_NEG_CACHE_TTL_SECONDS,
     trustedProxyCidrs,

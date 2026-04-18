@@ -1007,6 +1007,33 @@ describe('Stateful MCP sessions', () => {
     }
   });
 
+  it('refuses a new session past the per-key cap with RateLimitError (AUDIT M-1)', async () => {
+    // Default test env sets MCP_MAX_SESSIONS_PER_KEY=4. Create the cap,
+    // then assert the (cap+1)th initialize gets `-32029`.
+    const { httpServer: s, close } = await startServer();
+    try {
+      for (let i = 0; i < 4; i++) {
+        const res = await fetch(s, '/mcp', {
+          method: 'POST',
+          headers: stdHeaders,
+          body: initBody,
+        });
+        assert.equal(res.status, 200, `cap-fill ${i} failed: ${res.body}`);
+      }
+      const over = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(over.status, 429);
+      const body = JSON.parse(over.body);
+      assert.equal(body.error.code, -32029);
+      assert.match(body.error.message, /Too many sessions/);
+    } finally {
+      await close();
+    }
+  });
+
   it('handles per-tool rate limiting in session tools', async () => {
     const registry = makeRegistry([
       { name: 'limited', description: 'Rate-limited tool', rateLimit: { perMinute: 1 } },

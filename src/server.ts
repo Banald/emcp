@@ -466,6 +466,30 @@ async function handleMcp(
     return;
   }
 
+  // Session caps (AUDIT M-1). Global cap first (backstop), then per-key.
+  if (sessions.size >= config.mcpMaxSessionsTotal) {
+    log.warn({ size: sessions.size }, 'session creation refused: global cap');
+    res.setHeader('Retry-After', '60');
+    writeJsonRpcError(
+      res,
+      new TransientError('global session cap reached', 'Server at capacity, try again shortly.'),
+    );
+    return;
+  }
+  let perKeyCount = 0;
+  for (const s of sessions.values()) if (s.apiKeyId === apiKey.id) perKeyCount++;
+  if (perKeyCount >= config.mcpMaxSessionsPerKey) {
+    log.warn(
+      { api_key_prefix: apiKey.prefix, perKeyCount },
+      'session creation refused: per-key cap',
+    );
+    writeJsonRpcError(
+      res,
+      new RateLimitError('per-key session cap reached', 'Too many sessions for this key.'),
+    );
+    return;
+  }
+
   let body: Buffer;
   try {
     body = await readBody(req, config.mcpMaxBodyBytes);
