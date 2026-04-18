@@ -10,7 +10,8 @@ import {
 } from './registry.ts';
 import type { ProxyPool } from './types.ts';
 
-const stubDispatcher = (): Dispatcher => ({ close: () => Promise.resolve() }) as unknown as Dispatcher;
+const stubDispatcher = (): Dispatcher =>
+  ({ close: () => Promise.resolve() }) as unknown as Dispatcher;
 
 const baseCfg: PoolBuildConfig = Object.freeze({
   proxyUrls: Object.freeze(['http://p0.example.com:8080', 'http://p1.example.com:8080']),
@@ -22,11 +23,9 @@ const baseCfg: PoolBuildConfig = Object.freeze({
 describe('buildPoolEntries', () => {
   it('assigns sequential p<index> ids to each URL', () => {
     const factory = mock.fn(() => stubDispatcher());
-    const entries = buildPoolEntries(
-      ['http://a:80', 'http://b:80', 'http://c:80'],
-      500,
-      { factory },
-    );
+    const entries = buildPoolEntries(['http://a:80', 'http://b:80', 'http://c:80'], 500, {
+      factory,
+    });
     assert.deepEqual(
       entries.map((e) => e.id),
       ['p0', 'p1', 'p2'],
