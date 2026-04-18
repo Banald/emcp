@@ -99,7 +99,7 @@ cmd_logs()    { dc logs -f --tail 100 "$@"; }
 cmd_health() {
     require_home
     ( cd "$ECHO_HOME" && docker compose exec -T mcp-server \
-        node -e "fetch('http://127.0.0.1:3000/health').then(r=>r.text()).then(t=>{console.log(t);process.exit(r.ok?0:1)})" 2>&1 )
+        node -e "fetch('http://127.0.0.1:3000/health').then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1) })" 2>&1 )
 }
 
 cmd_migrate() {
