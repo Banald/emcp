@@ -358,7 +358,7 @@ copy_source_tree() {
     done
     for d in infra docker migrations; do
         if [ -d "$src/$d" ]; then
-            rm -rf "$dst/$d"
+            rm -rf "${dst:?}/$d"
             cp -r "$src/$d" "$dst/$d"
         fi
     done
@@ -856,7 +856,9 @@ phase_first_key() {
         log_info "skipped; create one later with: emcp key create --name \"<name>\""
         return 0
     fi
-    local name="${USER:-operator}@$(hostname -s 2>/dev/null || echo host)"
+    local host name
+    host="$(hostname -s 2>/dev/null || echo host)"
+    name="${USER:-operator}@${host}"
     prompt name "name for this key" "$name" validate_nonempty
 
     ( cd "$ECHO_HOME" && docker compose run --rm mcp-server \
