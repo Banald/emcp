@@ -202,6 +202,136 @@ describe('authenticate — success', () => {
   });
 });
 
+describe('authenticate — negative cache (AUDIT H-3)', () => {
+  type FakeRedis = {
+    get: ReturnType<typeof mock.fn>;
+    set: ReturnType<typeof mock.fn>;
+    del: ReturnType<typeof mock.fn>;
+  };
+
+  function makeFakeRedis(initial: Record<string, string> = {}): FakeRedis {
+    const store = new Map<string, string>(Object.entries(initial));
+    return {
+      get: mock.fn(async (k: string) => store.get(k) ?? null),
+      set: mock.fn(async (k: string, v: string) => {
+        store.set(k, v);
+        return 'OK';
+      }),
+      del: mock.fn(async (k: string) => (store.delete(k) ? 1 : 0)),
+    };
+  }
+
+  it('short-circuits to cached-miss when redis.get returns "1"', async () => {
+    const { repo, findByHash } = makeRepo(null);
+    const redis = makeFakeRedis();
+    const token = generateApiKey();
+    const hash = hashApiKey(token);
+    await redis.set(`auth:miss:${hash}`, '1');
+    // Reset the call count so we can count GET calls cleanly.
+    redis.set.mock.resetCalls();
+
+    const result = await authenticate(`Bearer ${token}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+    });
+    assert.equal(result.ok, false);
+    if (result.ok === false) {
+      assert.ok(result.error instanceof AuthInvalidCredentialsError);
+      assert.equal(result.error.publicMessage, 'Authentication failed.');
+    }
+    // Crucial: findByHash MUST NOT be called on cache hit.
+    assert.equal(findByHash.mock.callCount(), 0);
+    assert.equal(redis.get.mock.callCount(), 1);
+  });
+
+  it('populates the negative cache on DB miss', async () => {
+    const { repo } = makeRepo(null);
+    const redis = makeFakeRedis();
+    const token = generateApiKey();
+    const hash = hashApiKey(token);
+
+    const result = await authenticate(`Bearer ${token}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+      negCacheTtlSec: 45,
+    });
+    assert.equal(result.ok, false);
+    // Wait for the fire-and-forget write.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(redis.set.mock.callCount(), 1);
+    const args = redis.set.mock.calls[0]?.arguments;
+    assert.equal(args?.[0], `auth:miss:${hash}`);
+    assert.equal(args?.[1], '1');
+    assert.equal(args?.[2], 'EX');
+    assert.equal(args?.[3], 45);
+  });
+
+  it('second call with the same unknown token hits the cache (no second findByHash)', async () => {
+    const { repo, findByHash } = makeRepo(null);
+    const redis = makeFakeRedis();
+    const token = generateApiKey();
+
+    await authenticate(`Bearer ${token}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+    });
+    // Let the fire-and-forget set complete.
+    await new Promise((r) => setImmediate(r));
+
+    await authenticate(`Bearer ${token}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+    });
+
+    assert.equal(findByHash.mock.callCount(), 1, 'expected the second call to hit the cache');
+  });
+
+  it('falls back to DB on a Redis read error (degrades, does not 5xx)', async () => {
+    const { repo, findByHash } = makeRepo(null);
+    const redis = {
+      get: mock.fn(async () => {
+        throw new Error('redis down');
+      }),
+      set: mock.fn(async () => 'OK'),
+    };
+    const result = await authenticate(`Bearer ${generateApiKey()}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+    });
+    assert.equal(result.ok, false);
+    if (result.ok === false) {
+      assert.ok(result.error instanceof AuthInvalidCredentialsError);
+      // "unknown key" (not "unknown key (cached)") — the DB path ran.
+      assert.match(result.error.message, /^unknown key$/);
+    }
+    assert.equal(findByHash.mock.callCount(), 1);
+  });
+
+  it('tolerates a Redis set rejection without throwing', async () => {
+    const { repo } = makeRepo(null);
+    const redis = {
+      get: mock.fn(async () => null),
+      set: mock.fn(async () => {
+        throw new Error('redis write failed');
+      }),
+    };
+    const result = await authenticate(`Bearer ${generateApiKey()}`, {
+      repo,
+      redis: redis as unknown as import('ioredis').Redis,
+    });
+    assert.equal(result.ok, false);
+    // Flush the rejected promise.
+    await new Promise((r) => setImmediate(r));
+  });
+
+  it('accepts the legacy two-argument signature (repo only)', async () => {
+    const { repo, findByHash } = makeRepo(null);
+    const result = await authenticate(`Bearer ${generateApiKey()}`, repo);
+    assert.equal(result.ok, false);
+    assert.equal(findByHash.mock.callCount(), 1);
+  });
+});
+
 describe('authenticate — KEY_BODY_REGEX anchors', () => {
   it('accepts both mcp_live_ and mcp_test_ prefixes', async () => {
     const { repo: liveRepo, findByHash: liveFind } = makeRepo(null);

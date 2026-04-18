@@ -14,6 +14,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { config } from './config.ts';
 import { type AuthenticatedKey, authenticate } from './core/auth.ts';
+import { getClientIp } from './core/client-ip.ts';
 import { buildToolContext } from './core/context.ts';
 import { validateHeaders } from './core/headers.ts';
 import { metrics, register } from './core/metrics.ts';
@@ -310,9 +311,39 @@ async function handleMcp(
     return;
   }
 
-  // Step 2: Authenticate.
+  // Step 1b: Pre-auth per-IP rate limit (AUDIT H-3). Prevents a flood of
+  // unauthenticated requests from saturating Postgres via `findByHash`.
+  // Deliberately does NOT set `X-RateLimit-*` — those headers are
+  // documented as post-auth-only (SECURITY Rule 7).
+  const clientIp = getClientIp(req, config.trustedProxyCidrs);
+  const ipRl = await rateLimiter.check({
+    scope: `rl:ip:${clientIp}`,
+    limit: config.preAuthRateLimitPerMinute,
+    windowMs: 60_000,
+  });
+  if (!ipRl.allowed) {
+    metrics.rateLimitHitsTotal.inc({ scope: 'pre_auth_ip' });
+    log.warn({ client_ip: clientIp }, 'pre-auth rate limit exceeded');
+    res.setHeader('Retry-After', String(ipRl.retryAfterSec));
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32029, message: 'Too many requests' },
+        id: null,
+      }),
+    );
+    return;
+  }
+
+  // Step 2: Authenticate. Redis backs the negative-lookup cache that
+  // short-circuits repeat unknown-key attempts before they reach the DB.
   const authHeader = req.headers.authorization;
-  const authResult = await authenticate(authHeader, repo);
+  const authResult = await authenticate(authHeader, {
+    repo,
+    redis,
+    negCacheTtlSec: config.authNegCacheTtlSeconds,
+  });
 
   if (!authResult.ok) {
     const err = authResult.error;

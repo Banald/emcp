@@ -1,5 +1,7 @@
+import type { Redis } from 'ioredis';
 import type { Pool, PoolClient } from 'pg';
 import { config } from '../../config.ts';
+import { negCacheKey } from '../../core/auth.ts';
 import { logger } from '../../lib/logger.ts';
 import { query } from '../client.ts';
 
@@ -104,7 +106,7 @@ export class ApiKeyRepository {
     this.pool = pool;
   }
 
-  async create(input: CreateApiKeyInput): Promise<ApiKeyRecord> {
+  async create(input: CreateApiKeyInput, redis?: Redis): Promise<ApiKeyRecord> {
     const rateLimit = input.rateLimitPerMinute ?? config.rateLimitDefaultPerMinute;
     const allowNoOrigin = input.allowNoOrigin ?? false;
     const { rows } = await query<ApiKeyRow>(
@@ -116,6 +118,15 @@ export class ApiKeyRepository {
     );
     const row = rows[0];
     if (!row) throw new Error('api key create returned no row');
+    // Invalidate any stale negative-cache entry so a brand-new key that
+    // happens to match a previously-attempted lookup works on first use
+    // (AUDIT H-3). Write errors are swallowed — the cache has a short TTL
+    // and this is a correctness belt-and-braces.
+    if (redis) {
+      redis.del(negCacheKey(input.keyHash)).catch((err) => {
+        logger.warn({ err }, 'failed to clear negative cache on key create');
+      });
+    }
     return mapRow(row);
   }
 

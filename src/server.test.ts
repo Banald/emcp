@@ -469,9 +469,16 @@ describe('MCP endpoint auth and headers', () => {
   });
 
   it('returns 429 with Retry-After when rate limit exceeded', async () => {
+    // Deny only the post-auth per-key bucket; allow the pre-auth IP
+    // bucket so we reach the per-key limit the test is really verifying.
     const rateLimitedRedis = {
       ...makeRedis(),
-      slidingWindowRateLimit: mock.fn(async () => [0, 0, Date.now() - 5_000]),
+      slidingWindowRateLimit: mock.fn(async (key: string) => {
+        if (typeof key === 'string' && key.startsWith('rl:ip:')) {
+          return [1, 599, Date.now()];
+        }
+        return [0, 0, Date.now() - 5_000];
+      }),
     } as unknown as Redis;
 
     const result = await createServer({
@@ -500,6 +507,54 @@ describe('MCP endpoint auth and headers', () => {
       assert.equal(body.error.code, -32029);
     } finally {
       await result.close();
+    }
+  });
+
+  it('short-circuits to 429 on pre-auth IP rate limit without hitting the DB (AUDIT H-3)', async () => {
+    // Limiter denies the pre-auth IP bucket and would allow anything
+    // else, but `authenticate` must never run on this request.
+    const preAuthDeniedRedis = {
+      ...makeRedis(),
+      slidingWindowRateLimit: mock.fn(async (key: string) => {
+        if (typeof key === 'string' && key.startsWith('rl:ip:')) {
+          return [0, 0, Date.now() - 1_000];
+        }
+        return [1, 59, Date.now()];
+      }),
+    } as unknown as Redis;
+    const findByHash = mock.fn(async () => null);
+    const repo = makeRepo({ findByHash } as unknown as Partial<ApiKeyRepository>);
+    const { httpServer: s, close } = await (async () => {
+      const r = await createServer({
+        pool: makePool(),
+        redis: preAuthDeniedRedis,
+        repo,
+        registry: makeRegistry(),
+        logger: createLogger({ level: 'silent' }),
+      });
+      await new Promise<void>((resolve) => r.httpServer.listen(0, '127.0.0.1', () => resolve()));
+      return r;
+    })();
+    try {
+      const res = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+          authorization: 'Bearer mcp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      assert.equal(res.status, 429);
+      assert.ok(res.headers['retry-after'], 'expected Retry-After header');
+      // Pre-auth failures must NOT leak rate-limit metadata (SECURITY Rule 7).
+      assert.equal(res.headers['x-ratelimit-limit'], undefined);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error.code, -32029);
+      // findByHash is the DB call we are protecting — it must be skipped.
+      assert.equal(findByHash.mock.callCount(), 0);
+    } finally {
+      await close();
     }
   });
 

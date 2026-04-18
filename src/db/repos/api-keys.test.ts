@@ -101,6 +101,45 @@ describe('ApiKeyRepository.create', () => {
       (err: Error) => err.name === 'ConflictError',
     );
   });
+
+  it('clears the auth negative cache for the new keyHash (AUDIT H-3)', async () => {
+    const { pool } = makePool([makeRow({ key_hash: 'fresh-hash' })]);
+    const repo = new ApiKeyRepository(pool);
+    const redis = { del: mock.fn(async () => 1) };
+    await repo.create(
+      { keyPrefix: 'mcp_live_k7H', keyHash: 'fresh-hash', name: 'n' },
+      redis as unknown as import('ioredis').Redis,
+    );
+    // Give the fire-and-forget del a tick to flush.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(redis.del.mock.callCount(), 1);
+    const args = redis.del.mock.calls[0]?.arguments as readonly unknown[];
+    assert.equal(args?.[0], 'auth:miss:fresh-hash');
+  });
+
+  it('tolerates redis.del throwing when clearing the negative cache', async () => {
+    const { pool } = makePool([makeRow()]);
+    const repo = new ApiKeyRepository(pool);
+    const redis = {
+      del: mock.fn(async () => {
+        throw new Error('redis down');
+      }),
+    };
+    // Must not throw even though the cache invalidation rejects.
+    await repo.create(
+      { keyPrefix: 'p', keyHash: 'h', name: 'n' },
+      redis as unknown as import('ioredis').Redis,
+    );
+    await new Promise((r) => setImmediate(r));
+  });
+
+  it('does not call redis.del when no redis client is provided', async () => {
+    const { pool } = makePool([makeRow()]);
+    const repo = new ApiKeyRepository(pool);
+    // Should succeed with the original (single-arg) signature.
+    const rec = await repo.create({ keyPrefix: 'p', keyHash: 'h', name: 'n' });
+    assert.equal(rec.keyPrefix, 'mcp_live_k7H');
+  });
 });
 
 describe('ApiKeyRepository.findById / findByPrefix', () => {

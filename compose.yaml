@@ -103,6 +103,11 @@ services:
       API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
       LOG_LEVEL: ${LOG_LEVEL:-info}
       RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
+      # Pre-auth defences (AUDIT H-3). Bridge-network CIDRs are trusted so
+      # the Caddy container's X-Forwarded-For lands in the rate-limit key.
+      PRE_AUTH_RATE_LIMIT_PER_MINUTE: ${PRE_AUTH_RATE_LIMIT_PER_MINUTE:-600}
+      AUTH_NEG_CACHE_TTL_SECONDS: ${AUTH_NEG_CACHE_TTL_SECONDS:-60}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-30000}
     secrets:
       - postgres_password

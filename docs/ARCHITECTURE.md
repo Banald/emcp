@@ -243,6 +243,9 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `MCP_SESSION_IDLE_MS` | no | `1800000` | Idle window after which a stateful session is evicted. Range 1 min–24 h. Default 30 min. |
 | `MCP_SESSION_CLEANUP_INTERVAL_MS` | no | `60000` | How often the eviction sweep runs. Range 1 s–10 min. Default 1 min. |
 | `MCP_TOOL_CALL_TIMEOUT_MS` | no | `30000` | Per-tool-call abort timeout. Range 1 s–10 min. Default 30 s. |
+| `PRE_AUTH_RATE_LIMIT_PER_MINUTE` | no | `600` | Pre-auth cap keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS`). Prevents credential-spray traffic from saturating the auth DB lookup. |
+| `AUTH_NEG_CACHE_TTL_SECONDS` | no | `60` | TTL for the Redis negative-lookup cache that short-circuits unknown bearer tokens before Postgres. Range 1 s–1 h. Cleared automatically on `ApiKeyRepository.create`. |
+| `TRUSTED_PROXY_CIDRS` | no | `127.0.0.0/8,::1/128` | Comma-separated CIDRs whose `X-Forwarded-For` header is honoured when picking the rate-limit key. Compose sets the docker bridge CIDRs by default. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 
