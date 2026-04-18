@@ -43,7 +43,9 @@ services:
       start_period: 5s
 
   searxng:
-    image: searxng/searxng:latest
+    # Pinned per AUDIT L-1 (docs/ARCHITECTURE.md Version pinning policy).
+    # Bump this deliberately; do not revert to `:latest`.
+    image: searxng/searxng:2026.4.17-8579974f5
     restart: unless-stopped
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"

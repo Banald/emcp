@@ -162,6 +162,7 @@ This list is the source of truth. Adding to it requires explicit user approval p
 |--|--|
 | Node.js runtime | **Exact major: Node.js 24 LTS.** Pinned via `.nvmrc` (`24`) and `engines.node` in `package.json` (`>=24.0.0 <25.0.0`). CI uses the same. |
 | `@modelcontextprotocol/sdk` | **Tilde range: `~1.26.0`.** Patch updates only. Minor SDK updates can ship behavioral changes; bump deliberately and re-test. Migration to v2 is a deliberate project, not an automatic update. |
+| `searxng/searxng` Docker image | **Exact date-stamped tag (e.g. `2026.4.17-8579974f5`).** `:latest` is forbidden in `compose.yaml` — every `docker compose pull` must produce the same hash. Bump this tag deliberately when you upgrade. |
 | Other production deps | **Caret range: `^x.y.z`.** Standard semver. Lockfile pins exact versions. |
 | Dev deps | **Caret range.** Same policy. |
 | Lockfile | Always committed. CI uses `npm ci` (or `bun install --frozen-lockfile`) — never `npm install`. |
