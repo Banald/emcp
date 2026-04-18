@@ -54,4 +54,25 @@ NODE_EOF
     export DATABASE_URL
 fi
 
+# --- Assemble REDIS_URL from parts if not provided -------------------------
+# Mirrors the DATABASE_URL assembly above. The password is URL-encoded so
+# special characters from `openssl rand -base64` survive the trip through
+# ioredis's URL parser.
+if [ -z "${REDIS_URL:-}" ] && [ -n "${REDIS_HOST:-}" ]; then
+    REDIS_URL=$(node <<'NODE_EOF'
+const u = encodeURIComponent;
+const host = process.env.REDIS_HOST;
+const port = process.env.REDIS_PORT || '6379';
+const pw = process.env.REDIS_PASSWORD;
+if (!host) {
+    process.stderr.write('entrypoint: REDIS_HOST missing\n');
+    process.exit(1);
+}
+const auth = pw ? `:${u(pw)}@` : '';
+process.stdout.write(`redis://${auth}${host}:${port}`);
+NODE_EOF
+)
+    export REDIS_URL
+fi
+
 exec "$@"

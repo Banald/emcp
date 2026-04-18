@@ -272,7 +272,9 @@ See `secrets/README.md` for the inventory. Rotation procedure:
 2. `docker compose restart <affected-services>`.
 
 Rotating `api_key_hmac_secret.txt` invalidates every existing API key —
-coordinate a re-hash before rotating.
+coordinate a re-hash before rotating. Rotating `redis_password.txt` is a
+simple bounce (see `secrets/README.md`) — losing the rate-limit cache
+during the restart has no durability consequence.
 
 ### Graceful restarts
 

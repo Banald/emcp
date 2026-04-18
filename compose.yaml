@@ -25,9 +25,18 @@ services:
     restart: unless-stopped
     # Rate-limit cache is intentionally ephemeral (docs/ARCHITECTURE.md): no
     # RDB snapshotting, no AOF. Losing it has no durability consequence.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # `requirepass` is sourced from a Docker secret (AUDIT M-4) so the
+    # value never lands in compose output or shell history.
+    command:
+      - "sh"
+      - "-c"
+      - "redis-server --save '' --appendonly no --requirepass \"$$(cat /run/secrets/redis_password)\""
+    secrets:
+      - redis_password
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - "CMD-SHELL"
+        - "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping"
       interval: 5s
       timeout: 3s
       retries: 10
@@ -69,12 +78,15 @@ services:
       DATABASE_USER: ${POSTGRES_USER:-mcp}
       DATABASE_DB: ${POSTGRES_DB:-mcp}
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
       LOG_LEVEL: ${LOG_LEVEL:-info}
     secrets:
       - postgres_password
       - api_key_hmac_secret
+      - redis_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,7 +110,9 @@ services:
       DATABASE_DB: ${POSTGRES_DB:-mcp}
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       SEARXNG_URL: http://searxng:8080
       API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -112,6 +126,7 @@ services:
     secrets:
       - postgres_password
       - api_key_hmac_secret
+      - redis_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,7 +174,9 @@ services:
       DATABASE_DB: ${POSTGRES_DB:-mcp}
       DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       SEARXNG_URL: http://searxng:8080
       API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -168,6 +185,7 @@ services:
     secrets:
       - postgres_password
       - api_key_hmac_secret
+      - redis_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -207,3 +225,5 @@ secrets:
     file: ./secrets/postgres_password.txt
   api_key_hmac_secret:
     file: ./secrets/api_key_hmac_secret.txt
+  redis_password:
+    file: ./secrets/redis_password.txt

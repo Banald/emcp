@@ -13,6 +13,7 @@ at the repo root.
 |---|---|---|
 | `postgres_password.txt` | `openssl rand -base64 24` | postgres, migrate, mcp-server, mcp-worker |
 | `api_key_hmac_secret.txt` | `openssl rand -base64 32` | migrate, mcp-server, mcp-worker |
+| `redis_password.txt` | `openssl rand -base64 24` | redis, migrate, mcp-server, mcp-worker |
 
 Trailing newlines from shell redirection are tolerated — both the postgres
 image's entrypoint and Echo's entrypoint strip them.
@@ -23,6 +24,7 @@ image's entrypoint and Echo's entrypoint strip them.
 mkdir -p secrets
 openssl rand -base64 24 > secrets/postgres_password.txt
 openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
+openssl rand -base64 24 > secrets/redis_password.txt
 chmod 0644 secrets/*.txt
 ```
 
@@ -50,6 +52,17 @@ Rotating the Postgres password requires:
 1. `docker compose exec postgres psql -U "$POSTGRES_USER" -c "ALTER USER mcp WITH PASSWORD 'new-pw';"`
 2. Update `secrets/postgres_password.txt`.
 3. `docker compose restart mcp-server mcp-worker migrate`.
+
+### `redis_password.txt`
+
+Rotating the Redis password is a bounce:
+
+1. Replace the file contents.
+2. `docker compose restart redis mcp-server mcp-worker`.
+
+Losing the rate-limit cache mid-rotation is fine (the cache is
+intentionally ephemeral, `docs/ARCHITECTURE.md`); there is no
+multi-step rewrite required as with the HMAC pepper.
 
 ## Why aren't all secrets here?
 
