@@ -52,8 +52,19 @@ services:
       # The image's own entrypoint substitutes the `ultrasecretkey` placeholder
       # in settings.yml with this value at startup.
       SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET missing — set it in .env}
+      # Optional comma-separated proxy URLs the SearXNG engines rotate
+      # through. Unset → direct egress. See docs/ARCHITECTURE.md "Proxy
+      # egress" and infra/searxng/entrypoint.sh for the rendering logic.
+      SEARXNG_OUTGOING_PROXIES: ${SEARXNG_OUTGOING_PROXIES:-}
     volumes:
-      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./infra/searxng/settings.template.yml:/etc/searxng/settings.template.yml:ro
+      - ./infra/searxng/entrypoint.sh:/usr/local/bin/echo-searxng-entrypoint.sh:ro
+    # Chain through our wrapper entrypoint before the image's own. It
+    # renders the template (SEARXNG_OUTGOING_PROXIES → outgoing.proxies
+    # YAML block) and then execs /usr/local/searxng/dockerfiles/
+    # docker-entrypoint.sh so SEARXNG_SECRET substitution + signal
+    # handling still run upstream.
+    entrypoint: ["/bin/sh", "/usr/local/bin/echo-searxng-entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -125,6 +136,14 @@ services:
       AUTH_NEG_CACHE_TTL_SECONDS: ${AUTH_NEG_CACHE_TTL_SECONDS:-60}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-30000}
+      # Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
+      # Empty PROXY_URLS keeps the feature disabled — no ProxyAgents are
+      # created and every external fetch behaves as before.
+      PROXY_URLS: ${PROXY_URLS:-}
+      PROXY_ROTATION: ${PROXY_ROTATION:-round-robin}
+      PROXY_FAILURE_COOLDOWN_MS: ${PROXY_FAILURE_COOLDOWN_MS:-60000}
+      PROXY_MAX_RETRIES_PER_REQUEST: ${PROXY_MAX_RETRIES_PER_REQUEST:-3}
+      PROXY_CONNECT_TIMEOUT_MS: ${PROXY_CONNECT_TIMEOUT_MS:-10000}
     secrets:
       - postgres_password
       - api_key_hmac_secret
@@ -184,6 +203,15 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
       SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-60000}
+      # Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
+      # The fetch-news worker's RSS + article fetches route through the
+      # same pool the server uses; empty PROXY_URLS keeps the worker on
+      # direct egress.
+      PROXY_URLS: ${PROXY_URLS:-}
+      PROXY_ROTATION: ${PROXY_ROTATION:-round-robin}
+      PROXY_FAILURE_COOLDOWN_MS: ${PROXY_FAILURE_COOLDOWN_MS:-60000}
+      PROXY_MAX_RETRIES_PER_REQUEST: ${PROXY_MAX_RETRIES_PER_REQUEST:-3}
+      PROXY_CONNECT_TIMEOUT_MS: ${PROXY_CONNECT_TIMEOUT_MS:-10000}
     secrets:
       - postgres_password
       - api_key_hmac_secret

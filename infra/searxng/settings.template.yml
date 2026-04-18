@@ -7,6 +7,16 @@ use_default_settings:
       - qwant
       - startpage
 
+# --- Outgoing proxy rotation (Echo) ---
+# The SEARXNG_OUTGOING_PROXIES env var is expanded by
+# infra/searxng/entrypoint.sh at container start. Empty var → this
+# marker line is removed and SearXNG makes direct requests. Non-empty
+# → the marker is replaced with an `outgoing.proxies.all://` block,
+# rotating engine scrapers across every URL in the list (SearXNG
+# picks one per request). Keep the marker unchanged; the entrypoint
+# matches it literally.
+# SEARXNG_OUTGOING_PROXIES_MARKER
+
 general:
   instance_name: "Echo SearXNG"
 
