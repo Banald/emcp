@@ -543,6 +543,10 @@ async function handleMcp(
       { api_key_prefix: apiKey.prefix, perKeyCount },
       'session creation refused: per-key cap',
     );
+    // 60s mirrors the global-cap Retry-After below; SECURITY Rule 7
+    // requires Retry-After on every 429 (session cap is effectively a
+    // coarser rate limit).
+    res.setHeader('Retry-After', '60');
     writeJsonRpcError(
       res,
       new RateLimitError('per-key session cap reached', 'Too many sessions for this key.'),

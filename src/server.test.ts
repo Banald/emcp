@@ -1024,11 +1024,12 @@ describe('Stateful MCP sessions', () => {
   });
 
   it('refuses a new session past the per-key cap with RateLimitError (AUDIT M-1)', async () => {
-    // Default test env sets MCP_MAX_SESSIONS_PER_KEY=4. Create the cap,
-    // then assert the (cap+1)th initialize gets `-32029`.
+    // Default test env sets MCP_MAX_SESSIONS_PER_KEY=10. Create the cap,
+    // then assert the (cap+1)th initialize gets `-32029` with
+    // `Retry-After` per SECURITY Rule 7.
     const { httpServer: s, close } = await startServer();
     try {
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 10; i++) {
         const res = await fetch(s, '/mcp', {
           method: 'POST',
           headers: stdHeaders,
@@ -1042,6 +1043,7 @@ describe('Stateful MCP sessions', () => {
         body: initBody,
       });
       assert.equal(over.status, 429);
+      assert.ok(over.headers['retry-after'], 'expected Retry-After on session-cap 429');
       const body = JSON.parse(over.body);
       assert.equal(body.error.code, -32029);
       assert.match(body.error.message, /Too many sessions/);

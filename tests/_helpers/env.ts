@@ -17,9 +17,10 @@ export const DEFAULT_TEST_ENV: Readonly<Record<string, string>> = Object.freeze(
   SHUTDOWN_TIMEOUT_MS: '5000',
   SEARXNG_URL: 'http://localhost:8080',
   // Low session cap so the per-key cap test (AUDIT M-1) can exercise the
-  // limit in a handful of requests. Other tests create at most 2 sessions
-  // per key, so this headroom is plenty for them.
-  MCP_MAX_SESSIONS_PER_KEY: '4',
+  // limit in a handful of requests. `rate-limit-http.test.ts` pushes 7
+  // initialize POSTs through one key, so the cap has to sit above that
+  // (rate-limit test scenarios can't silently trip the session cap).
+  MCP_MAX_SESSIONS_PER_KEY: '10',
   MCP_MAX_SESSIONS_TOTAL: '100',
   // AUDIT L-5 — set explicitly so the server.test.ts assertion can
   // anchor on a known value independent of the Node default (300s).
