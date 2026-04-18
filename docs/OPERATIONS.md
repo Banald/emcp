@@ -316,6 +316,93 @@ docker compose restart mcp-worker   # 65s grace period (allows long cron handler
 The grace periods are configured via `stop_grace_period` in `compose.yaml`
 and mirror the PM2 `kill_timeout` values in `ecosystem.config.cjs`.
 
+## Outbound proxy rotation
+
+Echo can rotate external HTTP egress across a configurable pool of HTTP(S) proxies. When `PROXY_URLS` is empty (the default), every external fetch goes direct and the subsystem is effectively absent. When it's set, the server + worker processes pick a proxy per request, retry on connect failure, and cool down misbehaving proxies automatically.
+
+Subsystem deep-dive lives in `docs/ARCHITECTURE.md` ("Proxy egress") and `docs/SECURITY.md` Rule 13. This section is the operator runbook.
+
+### Turning the feature on
+
+The installer's `phase_proxy_wizard` is the happy path:
+
+```bash
+# Interactive: the wizard asks whether to enable, collects URLs, validates each.
+sudo bash install.sh                         # fresh install
+emcp config                                  # existing install
+
+# Non-interactive: CSV + rotation + SearXNG proxies all supplied.
+sudo bash install.sh --non-interactive \
+  --public-host echo.example.com --public-scheme https \
+  --allowed-origins https://echo.example.com \
+  --proxy-urls "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080" \
+  --proxy-rotation round-robin \
+  --searxng-proxies "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080"
+```
+
+To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/echo/.env` and clear `PROXY_URLS=` (and `SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
+
+Operator-facing prints mask the credentials (`http://***@host:port`). The raw `.env` file is written at `0600` and the credentials never appear in `docker compose logs`.
+
+### Knobs
+
+Set in `/opt/echo/.env`; compose rebuilds on `emcp restart`:
+
+| Variable | Default | Purpose |
+|--|--|--|
+| `PROXY_URLS` | empty | Comma-separated proxy pool. Empty disables everything. |
+| `PROXY_ROTATION` | `round-robin` | `round-robin` or `random`. |
+| `PROXY_FAILURE_COOLDOWN_MS` | `60000` | How long a failed proxy stays out of rotation (1 s – 1 h). |
+| `PROXY_MAX_RETRIES_PER_REQUEST` | `3` | Failover budget per request; clamped to pool size at runtime. |
+| `PROXY_CONNECT_TIMEOUT_MS` | `10000` | CONNECT handshake timeout (1 s – 60 s). |
+| `SEARXNG_OUTGOING_PROXIES` | empty | Proxies SearXNG engines rotate through. Independent of `PROXY_URLS`. |
+
+### Observing
+
+All counters live on the server's `/metrics` endpoint (loopback-only; scrape from inside the container):
+
+```bash
+docker compose exec mcp-server \
+  node -e "fetch('http://127.0.0.1:3000/metrics').then(r=>r.text()).then(console.log)" \
+  | grep -E '^proxy_'
+```
+
+Expected metrics:
+
+- `proxy_requests_total{proxy_id="p0",status="success"}` — running total of successful hops per proxy. Label `status` ∈ `success | connect_failure | upstream_failure | aborted`.
+- `proxy_request_duration_seconds{proxy_id="p0"}` — histogram of per-attempt latency.
+- `proxy_cooldowns_total{proxy_id="p0"}` — every time a proxy transitioned into cooldown.
+- `proxy_pool_healthy` — current rotation-eligible count. Drops below pool size when proxies are cooled down.
+
+The `proxy_id` label is the pool index (`p0`, `p1`, …); the URL is never labelled (cardinality + credentials).
+
+### Common scenarios
+
+**A proxy is consistently failing.** Check `proxy_cooldowns_total{proxy_id="pN"}` and the corresponding `proxy_requests_total{proxy_id="pN",status="connect_failure"}`. If one proxy dominates, take it out of the rotation by editing `PROXY_URLS` and running `emcp restart`. The worker's in-progress runs will complete on whatever the pool gave them; new runs pick up the trimmed list.
+
+**The whole upstream is slow.** Latency histograms rise for every proxy equally. `proxy_pool_healthy` stays at pool size. This is upstream (not proxy) trouble — escalate to the upstream provider.
+
+**Blacklist event.** Expect `proxy_requests_total{status="upstream_failure"}` to spike on one proxy as the upstream starts returning 407/502/429 through the CONNECT. The proxy enters cooldown for `PROXY_FAILURE_COOLDOWN_MS`; traffic shifts to the rest of the pool for that window. If the block is sticky (longer than the cooldown), operator intervention is expected: replace the blacklisted proxy in `.env`, `emcp restart`.
+
+**SearXNG can't reach upstreams.** `SEARXNG_OUTGOING_PROXIES` is rendered into `settings.yml` by `infra/searxng/entrypoint.sh` at container start. If the operator configures a bogus URL, SearXNG logs the rendering failure mode clearly:
+
+```bash
+docker compose logs searxng | head -5
+# [echo-searxng] proxies enabled: p1.example.com:8080,p2.example.com:8080
+docker compose exec searxng grep -A4 'outgoing:' /etc/searxng/settings.yml
+```
+
+Toggle SearXNG back to direct by setting `SEARXNG_OUTGOING_PROXIES=` and `emcp restart`.
+
+**Rotating credentials on a proxy.** Edit `PROXY_URLS` in `.env` (replace the `user:pass@` segment), `emcp restart`. The server + worker reload the pool at startup; no other step. Old `ProxyAgent` instances are closed via the shutdown registry on graceful restart.
+
+### Known limitations
+
+- **HTTP + HTTPS proxies only.** SOCKS5 is not supported in v1 (see `docs/SECURITY.md` Rule 13 for rationale).
+- **No per-tool proxy routing.** The pool is global; every tool and the fetch-news worker share the same rotation. If a specific tool should egress differently, that's a code change (introducing a secondary pool) and is out of scope for the current design.
+- **No health probing.** The pool learns about proxy failures lazily — from real requests. A freshly-down proxy won't be detected until the next request lands on it, at which point the cooldown path fires. If this turns into a problem in practice, a probing worker is a natural follow-up.
+- **Single-process rotation state.** Server and worker each own a pool instance. That's fine because their request streams are independent; the scale-out constraint is the same as the rest of the worker process (`instances: 1`).
+
 ## Backup considerations (deferred)
 
 Postgres backups, Redis persistence policy, log retention — these are deployment-environment concerns out of scope for this codebase. Document the chosen policy in your deployment runbook (separate repo). The application requires only:

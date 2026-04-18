@@ -61,6 +61,12 @@ The installer:
 - generates the three Docker secrets (`postgres_password.txt`,
   `redis_password.txt`, `api_key_hmac_secret.txt`)
 - walks you through `.env` with plain-English prompts
+- **optionally enables outbound proxy rotation** — if SearXNG's engines
+  or upstream APIs rate-limit you by IP, say yes to the proxy wizard
+  and paste a comma-separated list of `http://user:pass@host:port`
+  URLs. Server + worker + SearXNG all rotate across the list with
+  transparent failover. Full details in
+  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#outbound-proxy-rotation).
 - logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT)
 - brings the stack up and waits for health
 - detects common failures (port already in use, stale `pgdata` volume

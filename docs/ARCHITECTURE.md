@@ -251,8 +251,61 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `PRE_AUTH_RATE_LIMIT_PER_MINUTE` | no | `600` | Pre-auth cap keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS`). Prevents credential-spray traffic from saturating the auth DB lookup. |
 | `AUTH_NEG_CACHE_TTL_SECONDS` | no | `60` | TTL for the Redis negative-lookup cache that short-circuits unknown bearer tokens before Postgres. Range 1 s–1 h. Cleared automatically on `ApiKeyRepository.create`. |
 | `TRUSTED_PROXY_CIDRS` | no | `127.0.0.0/8,::1/128` | Comma-separated CIDRs whose `X-Forwarded-For` header is honoured when picking the rate-limit key. Compose sets the docker bridge CIDRs by default. |
+| `PROXY_URLS` | no | empty | Comma-separated outbound HTTP(S) proxy URLs (`http(s)://[user:pass@]host:port`). Empty keeps the feature disabled (every external fetch goes direct). See "Proxy egress" below. |
+| `PROXY_ROTATION` | no | `round-robin` | Selection strategy for the next proxy: `round-robin` or `random`. |
+| `PROXY_FAILURE_COOLDOWN_MS` | no | `60000` | How long a proxy stays out of rotation after a connect/upstream failure. Range 1 s – 1 h. |
+| `PROXY_MAX_RETRIES_PER_REQUEST` | no | `3` | Failover budget per request. Clamped to pool size at runtime. Range 1 – 10. |
+| `PROXY_CONNECT_TIMEOUT_MS` | no | `10000` | CONNECT handshake timeout when tunneling to a proxy. Range 1 s – 60 s. |
+| `SEARXNG_OUTGOING_PROXIES` | no | empty | Proxies SearXNG engines (Google, Brave, Bing, Qwant, Startpage) rotate through. Independent of `PROXY_URLS`. Empty = direct egress. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
+
+## Proxy egress
+
+Outbound HTTP from the MCP server and worker can optionally rotate across a configurable pool of HTTP(S) proxies. Motivation: SearXNG's engine scrapers and several public APIs (arXiv, Wikipedia, SCB, SMHI, Riksdagen) rate-limit or blacklist by source IP, so a single-IP deployment is a scaling liability. The proxy pool turns a blacklist event into a per-proxy recoverable condition rather than a per-deploy outage.
+
+```
+     ┌─────────────────┐                ┌──────────────────┐
+     │  tool / worker  │                │    mcp-server    │
+     │ arxiv-search,   │ fetchExternal()│  (or mcp-worker) │
+     │ fetch-url, …    ├──────┐         │  process         │
+     └─────────────────┘      │         └──────────────────┘
+                              ▼
+                     ┌──────────────────┐   pool empty?  direct fetch
+                     │  ProxyPool       ├────────────────▶  globalThis.fetch
+                     │  (round-robin /  │
+                     │   random +       │   pool active?
+                     │   cooldown)      ├─────┐
+                     └──────────────────┘     │
+                                              ▼
+                                     ┌──────────────────┐
+                                     │ undici.fetch +   │   connect_failure
+                                     │ ProxyAgent for   ├──────────────────▶ cooldown,
+                                     │ entry pN         │                    next proxy
+                                     └────────┬─────────┘
+                                              │ CONNECT tunnel
+                                              ▼
+                                     ┌──────────────────┐
+                                     │  HTTP(S) proxy   │
+                                     │  (operator-run)  │
+                                     └────────┬─────────┘
+                                              ▼
+                                     ┌──────────────────┐
+                                     │    upstream      │
+                                     │ (arxiv, wiki, …) │
+                                     └──────────────────┘
+```
+
+Design choices:
+
+- **`undici.ProxyAgent`** (runtime dep). Chosen over hand-rolling ~300 LOC of CONNECT + TLS over `node:http`. Battle-tested, already a transitive dep via the MCP SDK, and exposes the exact dispatcher contract fetch needs.
+- **Rotation is in-process and in-memory.** `createProxyPool` in `src/shared/net/proxy/pool.ts` owns the round-robin cursor, health state, and cooldown arithmetic. Single Node event loop → no locking required. Server and worker hold independent pool instances because they're separate processes; that's fine — each pool's job is to smooth out failures within its own request stream.
+- **Connect-level failures vs upstream failures.** Only `connect_failure` and `upstream_failure` (HTTP 407/502 on the proxy CONNECT itself) mark a proxy unhealthy. Aborts and upstream 4xx/5xx leave the proxy alone — those are the client's or the upstream's concern.
+- **Transparent failover.** `fetchExternal` retries on the next proxy up to `PROXY_MAX_RETRIES_PER_REQUEST` times. Only when every in-budget attempt fails does a `TransientError` surface, mapping to HTTP 503 / JSON-RPC -32013 / `Retry-After`.
+- **Internal services are never proxied.** Postgres, Redis, and SearXNG's internal compose URL (`http://searxng:8080`) go over the compose bridge network and stay direct. `web-search` keeps a raw `fetch()` call with an inline comment noting the carve-out; routing the compose-internal hop through an external proxy would create a traffic loop.
+- **SearXNG has its own proxy layer.** `SEARXNG_OUTGOING_PROXIES` feeds `infra/searxng/settings.template.yml` (rendered at container start by `infra/searxng/entrypoint.sh`) so the engine scrapers rotate independently of the Node-side pool. Operators typically set both to the same list, but the option is there to diverge.
+- **Metrics** (`/metrics`): `proxy_requests_total{proxy_id,status}`, `proxy_request_duration_seconds{proxy_id}`, `proxy_cooldowns_total{proxy_id}`, `proxy_pool_healthy` (gauge). `proxy_id` uses the pool-index form (`p0`, `p1`, …) — the full URL is never a label, keeping cardinality bounded and credentials out of the metrics endpoint.
+- **Credential redaction.** Every log line that mentions a proxy URL goes through `maskProxyUrl` in `src/shared/net/proxy/redact.ts` (`http://user:pass@h:p` → `http://***@h:p`). The install wizard and `emcp config` use the same helper on their confirmation prints. Startup `ConfigError` messages for malformed proxy URLs use generic wording so a typo in `.env` can't leak a secret to operational logs.
 
 ## Error hierarchy
 
