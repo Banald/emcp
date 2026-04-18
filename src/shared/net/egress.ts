@@ -1,8 +1,16 @@
+import { fetch as undiciFetch } from 'undici';
 import { config } from '../../config.ts';
 import { metrics as realMetrics } from '../../core/metrics.ts';
 import { TransientError } from '../../lib/errors.ts';
 import { getProxyPool } from './proxy/registry.ts';
 import type { ProxyOutcome, ProxyPool } from './proxy/types.ts';
+
+// Adapt undici's fetch (Response type) to the global fetch signature so
+// callers and tests can reason about one concrete return type. undici's
+// Response is structurally compatible with the global Response — the
+// only difference is a stricter dispatcher contract, which is exactly
+// what we need for ProxyAgent to work.
+const undiciFetchAsGlobal = undiciFetch as unknown as typeof fetch;
 
 export interface EgressMetrics {
   readonly requestsTotal: { inc(labels: { proxy_id: string; status: string }): void };
@@ -90,16 +98,26 @@ export async function fetchExternal(
   init: RequestInit = {},
   options: FetchExternalOptions = {},
 ): Promise<Response> {
-  const doFetch = options.fetcher ?? globalThis.fetch;
+  // Bypass path uses globalThis.fetch so existing tool tests that stub
+  // `mock.method(globalThis, 'fetch', ...)` continue to work unchanged.
+  const bypassFetch = options.fetcher ?? globalThis.fetch;
 
   if (options.bypassProxy === true) {
-    return doFetch(url, init);
+    return bypassFetch(url, init);
   }
 
   const pool = options.pool === undefined ? getProxyPool() : options.pool;
   if (pool === null || pool.size === 0) {
-    return doFetch(url, init);
+    return bypassFetch(url, init);
   }
+
+  // Proxied path uses undici's fetch so the ProxyAgent dispatcher is
+  // version-matched with the undici package we installed. Node's built-in
+  // fetch uses a bundled (older) undici copy whose internal dispatch API
+  // is incompatible with a ProxyAgent from the installed package.
+  // Callers that inject `options.fetcher` are trusted to use a matching
+  // fetch/dispatcher pair (integration tests + stubs).
+  const proxiedFetcher = options.fetcher ?? undiciFetchAsGlobal;
 
   const metrics = options.metrics ?? defaultEgressMetrics;
   const now = options.now ?? Date.now;
@@ -122,7 +140,7 @@ export async function fetchExternal(
       pool.healthSnapshot().find((h) => h.id === entry.id)?.cooldownUntil ?? null;
 
     try {
-      const response = await doFetch(url, {
+      const response = await proxiedFetcher(url, {
         ...init,
         // undici's Dispatcher is valid for fetch's `dispatcher` option on
         // Node 18+. The fetch Response type doesn't formally include it,
