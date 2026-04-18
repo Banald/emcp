@@ -4,6 +4,12 @@ import { TransientError } from '../lib/errors.ts';
 import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
+// NOTE: web-search hits the internal SearXNG container (config.searxngUrl
+// points at the compose bridge). Routing it through the external proxy
+// pool would create a traffic loop (proxy → internet → SearXNG). SearXNG
+// itself proxies its engine scrapers via SEARXNG_OUTGOING_PROXIES; see
+// infra/searxng/ and docs/ARCHITECTURE.md "Proxy egress".
+
 const SEARXNG_ENGINES = 'google,brave,bing,qwant,startpage';
 const FETCH_TIMEOUT_MS = 15_000;
 

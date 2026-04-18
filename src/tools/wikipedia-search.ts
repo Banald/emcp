@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TransientError } from '../lib/errors.ts';
+import { fetchExternal } from '../shared/net/egress.ts';
 import { USER_AGENT } from '../shared/net/user-agent.ts';
 import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tools/types.ts';
 
@@ -116,7 +117,7 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
 
     let response: Response;
     try {
-      response = await fetch(url.toString(), {
+      response = await fetchExternal(url.toString(), {
         signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]),
         headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
       });
