@@ -26,14 +26,22 @@ function isPrivateIPv4(addr: string): boolean {
   if (a === 0) return true;
   // 10.0.0.0/8
   if (a === 10) return true;
+  // 100.64.0.0/10 — CGNAT (RFC 6598)
+  if (a === 100 && b >= 64 && b <= 127) return true;
   // 127.0.0.0/8 — loopback
   if (a === 127) return true;
   // 169.254.0.0/16 — link-local
   if (a === 169 && b === 254) return true;
   // 172.16.0.0/12
   if (a === 172 && b >= 16 && b <= 31) return true;
+  // 192.0.0.0/24 — IETF protocol assignments (RFC 6890)
+  if (a === 192 && b === 0) return true;
   // 192.168.0.0/16
   if (a === 192 && b === 168) return true;
+  // 198.18.0.0/15 — benchmarking (RFC 2544)
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  // 224.0.0.0/4 (multicast) + 240.0.0.0/4 (reserved) + 255.255.255.255 (broadcast)
+  if (a >= 224) return true;
 
   return false;
 }
@@ -59,6 +67,24 @@ function isPrivateIPv6(addr: string): boolean {
     return isPrivateIPv4(extractIPv4FromHex(normalized.slice(24)));
   }
 
+  // 64:ff9b::/96 — NAT64 well-known prefix (RFC 6052). The trailing 32
+  // bits are an IPv4 address; reject private ones the same way as the
+  // mapped/translated forms above.
+  if (normalized.startsWith('0064ff9b0000000000000000')) {
+    return isPrivateIPv4(extractIPv4FromHex(normalized.slice(24)));
+  }
+
+  // 2002::/16 — 6to4. Bits 16–47 hold the embedded IPv4; reject if it is
+  // a private v4 (an attacker-controlled AAAA `2002:7f00:1::` would
+  // otherwise decode to 127.0.0.1 at the TCP layer).
+  if (normalized.startsWith('2002')) {
+    return isPrivateIPv4(extractIPv4FromHex(normalized.slice(4, 12)));
+  }
+
+  // 2001:db8::/32 — documentation (RFC 3849). Never routed; reject
+  // defensively to avoid surprising operator setups.
+  if (normalized.startsWith('20010db8')) return true;
+
   const firstNibble = Number.parseInt(normalized.charAt(0), 16);
 
   // fe80::/10 — link-local (first 10 bits: 1111111010)
@@ -72,6 +98,18 @@ function isPrivateIPv6(addr: string): boolean {
 
   // fc00::/7 — unique local (first 7 bits: 1111110)
   if (firstNibble === 0xf && (normalized[1] === 'c' || normalized[1] === 'd')) return true;
+
+  // fec0::/10 — deprecated site-local (RFC 3879). Defensive.
+  if (
+    normalized.startsWith('fec') ||
+    normalized.startsWith('fed') ||
+    normalized.startsWith('fee') ||
+    normalized.startsWith('fef')
+  )
+    return true;
+
+  // ff00::/8 — multicast
+  if (normalized.startsWith('ff')) return true;
 
   return false;
 }
