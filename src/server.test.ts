@@ -1023,6 +1023,58 @@ describe('Stateful MCP sessions', () => {
     }
   });
 
+  it('refuses a new session past the global cap with TransientError (AUDIT M-1)', async () => {
+    // Distinct api_key id per call so the per-key cap never fires —
+    // this exercises the global backstop (`MCP_MAX_SESSIONS_TOTAL=20`
+    // from DEFAULT_TEST_ENV).
+    let counter = 0;
+    const rotatingRepo = {
+      findByHash: mock.fn(async () => ({
+        id: `rotating-key-${counter++}`,
+        keyPrefix: `mcp_live_rot-${counter}`,
+        keyHash: 'fake-hash',
+        name: 'rotating-key',
+        status: 'active' as const,
+        rateLimitPerMinute: 60,
+        allowNoOrigin: true,
+        createdAt: new Date(),
+        lastUsedAt: null,
+        blacklistedAt: null,
+        deletedAt: null,
+        requestCount: 0n,
+        bytesIn: 0n,
+        bytesOut: 0n,
+        totalComputeMs: 0n,
+      })),
+      touchLastUsed: mock.fn(async () => {}),
+      recordUsage: mock.fn(async () => {}),
+    } as unknown as ApiKeyRepository;
+    const { httpServer: s, close } = await startServer({ repo: rotatingRepo });
+    try {
+      for (let i = 0; i < 20; i++) {
+        const res = await fetch(s, '/mcp', {
+          method: 'POST',
+          headers: stdHeaders,
+          body: initBody,
+        });
+        assert.equal(res.status, 200, `fill ${i} failed: ${res.body}`);
+      }
+      const over = await fetch(s, '/mcp', {
+        method: 'POST',
+        headers: stdHeaders,
+        body: initBody,
+      });
+      assert.equal(over.status, 503);
+      assert.ok(over.headers['retry-after'], 'expected Retry-After on global-cap 503');
+      const body = JSON.parse(over.body);
+      // TransientError → JSON-RPC -32013.
+      assert.equal(body.error.code, -32013);
+      assert.match(body.error.message, /capacity/i);
+    } finally {
+      await close();
+    }
+  });
+
   it('refuses a new session past the per-key cap with RateLimitError (AUDIT M-1)', async () => {
     // Default test env sets MCP_MAX_SESSIONS_PER_KEY=10. Create the cap,
     // then assert the (cap+1)th initialize gets `-32029` with

@@ -21,7 +21,10 @@ export const DEFAULT_TEST_ENV: Readonly<Record<string, string>> = Object.freeze(
   // initialize POSTs through one key, so the cap has to sit above that
   // (rate-limit test scenarios can't silently trip the session cap).
   MCP_MAX_SESSIONS_PER_KEY: '10',
-  MCP_MAX_SESSIONS_TOTAL: '100',
+  // Low enough that the global-cap test can reach it across distinct
+  // keys in a handful of requests, but high enough that no existing
+  // single-key test tripping its per-key cap (10) brushes up against it.
+  MCP_MAX_SESSIONS_TOTAL: '20',
   // AUDIT L-5 — set explicitly so the server.test.ts assertion can
   // anchor on a known value independent of the Node default (300s).
   HTTP_REQUEST_TIMEOUT_MS: '60000',
