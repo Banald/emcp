@@ -1034,11 +1034,11 @@ describe('Stateful MCP sessions', () => {
     }
   });
 
-  it('handles per-tool rate limiting in session tools', async () => {
+  it('returns 429 with X-RateLimit-* + Retry-After on per-tool rate limit (AUDIT L-3)', async () => {
     const registry = makeRegistry([
       { name: 'limited', description: 'Rate-limited tool', rateLimit: { perMinute: 1 } },
     ]);
-    // Mock: per-key rate limit always passes, per-tool always denied
+    // Per-key rate limit always passes, per-tool always denied.
     const redisWithRl = {
       ...makeRedis(),
       slidingWindowRateLimit: mock.fn(async (...args: unknown[]) => {
@@ -1049,22 +1049,18 @@ describe('Stateful MCP sessions', () => {
     } as unknown as Redis;
     const { httpServer: s, close } = await startServer({ registry, redis: redisWithRl });
     try {
-      // Initialize
       const initRes = await fetch(s, '/mcp', {
         method: 'POST',
         headers: stdHeaders,
         body: initBody,
       });
       const sessionId = initRes.headers['mcp-session-id'] as string;
-
-      // Send initialized notification
       await fetch(s, '/mcp', {
         method: 'POST',
         headers: { ...stdHeaders, 'mcp-session-id': sessionId },
         body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
       });
 
-      // Call the tool — per-tool rate limit will deny
       const callBody = JSON.stringify({
         jsonrpc: '2.0',
         id: 2,
@@ -1076,10 +1072,15 @@ describe('Stateful MCP sessions', () => {
         headers: { ...stdHeaders, 'mcp-session-id': sessionId },
         body: callBody,
       });
-      assert.equal(callRes.status, 200);
-      const parsed = parseResponse(callRes.body);
-      // The tool handler throws RateLimitError, which the MCP SDK wraps as a JSON-RPC error
-      assert.ok(parsed.result || parsed.error, 'expected response with rate limit error');
+      assert.equal(callRes.status, 429);
+      assert.ok(callRes.headers['retry-after'], 'expected Retry-After header');
+      assert.ok(callRes.headers['x-ratelimit-limit'], 'expected X-RateLimit-Limit header');
+      assert.equal(callRes.headers['x-ratelimit-remaining'], '0');
+      const body = JSON.parse(callRes.body);
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.error.code, -32029);
+      assert.match(body.error.message, /limited/);
+      assert.equal(body.id, 2);
     } finally {
       await close();
     }

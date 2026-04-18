@@ -408,6 +408,59 @@ async function handleMcp(
   // Step 5: Session routing.
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
+  // For POSTs, read + parse the body upfront so the per-tool rate limit
+  // (AUDIT L-3) can run at the HTTP layer — headers and `Retry-After`
+  // flow through unchanged, and the MCP SDK is never asked to process a
+  // request we've already decided to throttle.
+  let postBody: Buffer | null = null;
+  let postPayload: unknown = null;
+  if (method === 'POST') {
+    try {
+      postBody = await readBody(req, config.mcpMaxBodyBytes);
+    } catch {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Payload too large' }));
+      return;
+    }
+    postPayload = parseJsonRpcBody(res, postBody);
+    if (postPayload === null) return;
+
+    // Peek for `tools/call` and a configured per-tool rate limit.
+    const peek = postPayload as { id?: unknown; method?: unknown; params?: { name?: unknown } };
+    if (peek.method === 'tools/call' && typeof peek.params?.name === 'string') {
+      const toolName = peek.params.name;
+      const tool = registry.get(toolName);
+      if (tool?.rateLimit) {
+        const toolRl = await rateLimiter.check({
+          scope: `rl:tool:${apiKey.id}:${toolName}`,
+          limit: tool.rateLimit.perMinute,
+          windowMs: 60_000,
+        });
+        applyRateLimitHeaders(res, toolRl);
+        if (!toolRl.allowed) {
+          metrics.rateLimitHitsTotal.inc({ scope: 'per_tool' });
+          metrics.requestsTotal.inc({ tool: toolName, status: 'rate_limited' });
+          auditRateLimitHit({
+            keyId: apiKey.id,
+            keyPrefix: apiKey.prefix,
+            scope: 'per_tool',
+            tool: toolName,
+          });
+          res.setHeader('Retry-After', String(toolRl.retryAfterSec));
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32029, message: `rate limit exceeded for ${toolName}` },
+              id: peek.id ?? null,
+            }),
+          );
+          return;
+        }
+      }
+    }
+  }
+
   if (sessionId) {
     // --- Existing session ---
     const session = sessions.get(sessionId);
@@ -437,19 +490,8 @@ async function handleMcp(
       return;
     }
 
-    // POST with existing session.
-    let body: Buffer;
-    try {
-      body = await readBody(req, config.mcpMaxBodyBytes);
-    } catch {
-      res.writeHead(413, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Payload too large' }));
-      return;
-    }
-
-    const payload = parseJsonRpcBody(res, body);
-    if (payload === null) return;
-    await session.transport.handleRequest(req, res, payload);
+    // POST with existing session — body was read + parsed above.
+    await session.transport.handleRequest(req, res, postPayload);
     return;
   }
 
@@ -490,15 +532,6 @@ async function handleMcp(
     return;
   }
 
-  let body: Buffer;
-  try {
-    body = await readBody(req, config.mcpMaxBodyBytes);
-  } catch {
-    res.writeHead(413, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Payload too large' }));
-    return;
-  }
-
   let newSessionId: string | undefined;
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => {
@@ -517,20 +550,15 @@ async function handleMcp(
     pool,
     redis,
     log,
-    rateLimiter,
     registry,
     repo,
     shutdownSignal,
   });
 
-  const payload = parseJsonRpcBody(res, body);
-  if (payload === null) {
-    await mcpServer.close();
-    return;
-  }
-
+  // postPayload was parsed above (this branch requires method === 'POST'
+  // which readBody + parseJsonRpcBody already covered).
   await mcpServer.connect(transport);
-  await transport.handleRequest(req, res, payload);
+  await transport.handleRequest(req, res, postPayload);
 
   if (newSessionId) {
     sessions.set(newSessionId, {
@@ -554,13 +582,12 @@ function registerSessionTools(
     pool: Pool;
     redis: Redis;
     log: Logger;
-    rateLimiter: RateLimiter;
     registry: ToolRegistry;
     repo: ApiKeyRepository;
     shutdownSignal: AbortSignal;
   },
 ): void {
-  const { pool, redis, log, rateLimiter, registry, repo, shutdownSignal } = deps;
+  const { pool, redis, log, registry, repo, shutdownSignal } = deps;
 
   for (const tool of registry.list()) {
     mcpServer.registerTool(
@@ -576,37 +603,9 @@ function registerSessionTools(
         const requestBytes = JSON.stringify(args).length;
         const startMs = Date.now();
 
-        // Per-tool rate limiting: enforced at the tool layer, not HTTP layer.
-        if (tool.rateLimit) {
-          const toolRlResult = await rateLimiter.check({
-            scope: `rl:tool:${apiKey.id}:${tool.name}`,
-            limit: tool.rateLimit.perMinute,
-            windowMs: 60_000,
-          });
-          if (!toolRlResult.allowed) {
-            metrics.rateLimitHitsTotal.inc({ scope: 'per_tool' });
-            metrics.requestsTotal.inc({ tool: tool.name, status: 'rate_limited' });
-            auditRateLimitHit({
-              keyId: apiKey.id,
-              keyPrefix: apiKey.prefix,
-              scope: 'per_tool',
-              tool: tool.name,
-            });
-            auditToolCall({
-              keyId: apiKey.id,
-              keyPrefix: apiKey.prefix,
-              tool: tool.name,
-              outcome: 'error:rate_limit',
-              durationMs: Date.now() - startMs,
-              bytesIn: requestBytes,
-              bytesOut: 0,
-            });
-            throw new RateLimitError(
-              `per-tool rate limit exceeded for ${tool.name}`,
-              `Rate limit exceeded for ${tool.name}. Retry in ${toolRlResult.retryAfterSec}s.`,
-            );
-          }
-        }
+        // Per-tool rate limiting now lives at the HTTP layer (AUDIT L-3)
+        // so `X-RateLimit-*` and `Retry-After` are attached to the 429.
+        // This handler runs only on requests that passed that gate.
 
         const requestId = randomUUID();
         const timer = metrics.requestDuration.startTimer({ tool: tool.name });
