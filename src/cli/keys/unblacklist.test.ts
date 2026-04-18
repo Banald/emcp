@@ -17,18 +17,18 @@ describe('keys unblacklist', () => {
   });
 
   it('returns 1 when the key is not found', async () => {
-    const findByPrefix = mockFindByPrefix(null);
-    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(null);
+    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     const code = await run(['mcp_live_zzz', '--yes'], deps);
     assert.equal(code, 1);
     assert.match(stderrText(), /not found/);
   });
 
   it('returns 2 when the key is not currently blacklisted', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ status: 'active' }));
+    const findByPrefixUnique = mockFindByPrefix(makeRecord({ status: 'active' }));
     const unblacklist = mockVoidById();
     const { deps, stderrText } = makeCapturedDeps({
-      repo: { findByPrefix, unblacklist },
+      repo: { findByPrefixUnique, unblacklist },
     });
     const code = await run(['mcp_live_abc', '--yes'], deps);
     assert.equal(code, 2);
@@ -37,10 +37,10 @@ describe('keys unblacklist', () => {
   });
 
   it('refuses to unblacklist a deleted key', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ status: 'deleted' }));
+    const findByPrefixUnique = mockFindByPrefix(makeRecord({ status: 'deleted' }));
     const unblacklist = mockVoidById();
     const { deps, stderrText } = makeCapturedDeps({
-      repo: { findByPrefix, unblacklist },
+      repo: { findByPrefixUnique, unblacklist },
     });
     const code = await run(['mcp_live_abc', '--yes'], deps);
     assert.equal(code, 2);
@@ -49,10 +49,10 @@ describe('keys unblacklist', () => {
   });
 
   it('prompts and aborts when user declines', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ status: 'blacklisted' }));
+    const findByPrefixUnique = mockFindByPrefix(makeRecord({ status: 'blacklisted' }));
     const unblacklist = mockVoidById();
     const { deps, stdoutText } = makeCapturedDeps({
-      repo: { findByPrefix, unblacklist },
+      repo: { findByPrefixUnique, unblacklist },
       stdin: '\n',
     });
     const code = await run(['mcp_live_abc'], deps);
@@ -63,10 +63,12 @@ describe('keys unblacklist', () => {
   });
 
   it('mutates and audits on --yes', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ id: 'key-id-1', status: 'blacklisted' }));
+    const findByPrefixUnique = mockFindByPrefix(
+      makeRecord({ id: 'key-id-1', status: 'blacklisted' }),
+    );
     const unblacklist = mockVoidById();
     const { deps, logs, stdoutText } = makeCapturedDeps({
-      repo: { findByPrefix, unblacklist },
+      repo: { findByPrefixUnique, unblacklist },
     });
     const code = await run(['mcp_live_abc', '--yes'], deps);
     assert.equal(code, 0);
@@ -78,10 +80,12 @@ describe('keys unblacklist', () => {
   });
 
   it('mutates and audits when user confirms via prompt', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ id: 'key-id-2', status: 'blacklisted' }));
+    const findByPrefixUnique = mockFindByPrefix(
+      makeRecord({ id: 'key-id-2', status: 'blacklisted' }),
+    );
     const unblacklist = mockVoidById();
     const { deps } = makeCapturedDeps({
-      repo: { findByPrefix, unblacklist },
+      repo: { findByPrefixUnique, unblacklist },
       stdin: 'y\n',
     });
     const code = await run(['mcp_live_abc'], deps);

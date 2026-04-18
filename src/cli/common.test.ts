@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { Readable, Writable } from 'node:stream';
 import { describe, it, mock } from 'node:test';
 import type { Logger } from 'pino';
-import type { ApiKeyRepository } from '../db/repos/api-keys.ts';
+import type { ApiKeyRecord, ApiKeyRepository } from '../db/repos/api-keys.ts';
+import { ConflictError } from '../lib/errors.ts';
 import { audit, type CliDeps, confirm, findKey, isUuid, safeParse, writeLine } from './common.ts';
 
 function capturedWritable(): { stream: Writable; text(): string } {
@@ -35,22 +36,65 @@ describe('isUuid', () => {
 });
 
 describe('findKey', () => {
-  it('routes to findById when given a UUID', async () => {
-    const findById = mock.fn(async () => null);
-    const findByPrefix = mock.fn(async () => null);
-    const repo = { findById, findByPrefix } as unknown as ApiKeyRepository;
-    await findKey(repo, '7c4f8b1d-0000-4000-8000-000000000000');
+  const fakeRecord = { id: '7c4f8b1d-0000-4000-8000-000000000000' } as ApiKeyRecord;
+
+  it('routes to findById when given a UUID and returns the record', async () => {
+    const findById = mock.fn(async () => fakeRecord);
+    const findByPrefixUnique = mock.fn(async () => null);
+    const repo = { findById, findByPrefixUnique } as unknown as ApiKeyRepository;
+    const result = await findKey(repo, '7c4f8b1d-0000-4000-8000-000000000000');
     assert.equal(findById.mock.callCount(), 1);
-    assert.equal(findByPrefix.mock.callCount(), 0);
+    assert.equal(findByPrefixUnique.mock.callCount(), 0);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.record.id, fakeRecord.id);
   });
 
-  it('routes to findByPrefix when given a prefix', async () => {
+  it('returns not-found when a UUID is not in the DB', async () => {
     const findById = mock.fn(async () => null);
-    const findByPrefix = mock.fn(async () => null);
-    const repo = { findById, findByPrefix } as unknown as ApiKeyRepository;
-    await findKey(repo, 'mcp_live_abc');
+    const findByPrefixUnique = mock.fn(async () => null);
+    const repo = { findById, findByPrefixUnique } as unknown as ApiKeyRepository;
+    const result = await findKey(repo, '7c4f8b1d-0000-4000-8000-000000000001');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reason, 'not-found');
+      assert.match(result.message, /not found/);
+    }
+  });
+
+  it('routes to findByPrefixUnique when given a prefix (AUDIT L-4)', async () => {
+    const findById = mock.fn(async () => null);
+    const findByPrefixUnique = mock.fn(async () => fakeRecord);
+    const repo = { findById, findByPrefixUnique } as unknown as ApiKeyRepository;
+    const result = await findKey(repo, 'mcp_live_abc');
     assert.equal(findById.mock.callCount(), 0);
-    assert.equal(findByPrefix.mock.callCount(), 1);
+    assert.equal(findByPrefixUnique.mock.callCount(), 1);
+    assert.equal(result.ok, true);
+  });
+
+  it('returns ambiguous when findByPrefixUnique throws ConflictError', async () => {
+    const findById = mock.fn(async () => null);
+    const findByPrefixUnique = mock.fn(async () => {
+      throw new ConflictError(
+        'prefix "mcp_live_abc" matched 2 keys; use the UUID instead',
+        'Ambiguous prefix; use the UUID instead.',
+      );
+    });
+    const repo = { findById, findByPrefixUnique } as unknown as ApiKeyRepository;
+    const result = await findKey(repo, 'mcp_live_abc');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.reason, 'ambiguous');
+      assert.match(result.message, /matched 2 keys/);
+    }
+  });
+
+  it('rethrows non-Conflict errors from the repo', async () => {
+    const findById = mock.fn(async () => null);
+    const findByPrefixUnique = mock.fn(async () => {
+      throw new Error('DB exploded');
+    });
+    const repo = { findById, findByPrefixUnique } as unknown as ApiKeyRepository;
+    await assert.rejects(() => findKey(repo, 'mcp_live_abc'), /DB exploded/);
   });
 });
 

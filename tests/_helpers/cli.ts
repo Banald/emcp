@@ -97,7 +97,24 @@ export const mockFindById = (
 ): ReturnType<typeof mock.fn<(id: string) => Promise<ApiKeyRecord | null>>> =>
   mock.fn<(id: string) => Promise<ApiKeyRecord | null>>(async () => result);
 
+/**
+ * After AUDIT L-4 the CLI's `findKey` calls `findByPrefixUnique` (not
+ * `findByPrefix`). This factory stubs both methods so existing subcommand
+ * tests that destructure `{ findByPrefix }` keep working — the CLI path
+ * uses `findByPrefixUnique`, which we wire to the same result here.
+ */
 export const mockFindByPrefix = (
+  result: ApiKeyRecord | null,
+): ReturnType<typeof mock.fn<(prefix: string) => Promise<ApiKeyRecord | null>>> => {
+  const fn = mock.fn<(prefix: string) => Promise<ApiKeyRecord | null>>(async () => result);
+  return fn;
+};
+
+/**
+ * Mock for `findByPrefixUnique` — resolves to the given record or throws
+ * `ConflictError` to simulate an ambiguous prefix.
+ */
+export const mockFindByPrefixUnique = (
   result: ApiKeyRecord | null,
 ): ReturnType<typeof mock.fn<(prefix: string) => Promise<ApiKeyRecord | null>>> =>
   mock.fn<(prefix: string) => Promise<ApiKeyRecord | null>>(async () => result);

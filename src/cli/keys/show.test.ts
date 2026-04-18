@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import {
   makeCapturedDeps,
   makeRecord,
   mockFindById,
   mockFindByPrefix,
 } from '../../../tests/_helpers/cli.ts';
+import { ConflictError } from '../../lib/errors.ts';
 import { run } from './show.ts';
 
 describe('keys show', () => {
@@ -24,40 +25,40 @@ describe('keys show', () => {
         requestCount: 42n,
       }),
     );
-    const findByPrefix = mockFindByPrefix(null);
-    const { deps, stdoutText } = makeCapturedDeps({ repo: { findById, findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(null);
+    const { deps, stdoutText } = makeCapturedDeps({ repo: { findById, findByPrefixUnique } });
     const code = await run(['7c4f8b1d-0000-4000-8000-000000000000'], deps);
     assert.equal(code, 0);
     assert.equal(findById.mock.callCount(), 1);
-    assert.equal(findByPrefix.mock.callCount(), 0);
+    assert.equal(findByPrefixUnique.mock.callCount(), 0);
     const out = stdoutText();
     assert.match(out, /ID:\s+7c4f8b1d-0000-4000-8000-000000000000/);
     assert.match(out, /Requests:\s+42/);
     assert.match(out, /Last used:\s+2026-02-01T00:00:00\.000Z/);
   });
 
-  it('uses findByPrefix when the argument is not a UUID', async () => {
+  it('uses findByPrefixUnique when the argument is not a UUID', async () => {
     const findById = mockFindById(null);
-    const findByPrefix = mockFindByPrefix(makeRecord());
-    const { deps } = makeCapturedDeps({ repo: { findById, findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(makeRecord());
+    const { deps } = makeCapturedDeps({ repo: { findById, findByPrefixUnique } });
     const code = await run(['mcp_live_abc'], deps);
     assert.equal(code, 0);
     assert.equal(findById.mock.callCount(), 0);
-    assert.equal(findByPrefix.mock.callCount(), 1);
-    assert.deepEqual(findByPrefix.mock.calls[0]?.arguments, ['mcp_live_abc']);
+    assert.equal(findByPrefixUnique.mock.callCount(), 1);
+    assert.deepEqual(findByPrefixUnique.mock.calls[0]?.arguments, ['mcp_live_abc']);
   });
 
   it('returns 1 (not found) when the repo returns null', async () => {
-    const findByPrefix = mockFindByPrefix(null);
-    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(null);
+    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     const code = await run(['mcp_live_zzz'], deps);
     assert.equal(code, 1);
     assert.match(stderrText(), /not found: mcp_live_zzz/);
   });
 
   it('prints never/no for absent timestamps', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord());
-    const { deps, stdoutText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(makeRecord());
+    const { deps, stdoutText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     await run(['mcp_live_abc'], deps);
     const out = stdoutText();
     assert.match(out, /Last used:\s+\(never\)/);
@@ -66,14 +67,14 @@ describe('keys show', () => {
   });
 
   it('prints ISO timestamps when present', async () => {
-    const findByPrefix = mockFindByPrefix(
+    const findByPrefixUnique = mockFindByPrefix(
       makeRecord({
         blacklistedAt: new Date('2026-03-01T00:00:00Z'),
         deletedAt: new Date('2026-04-01T00:00:00Z'),
         status: 'deleted',
       }),
     );
-    const { deps, stdoutText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const { deps, stdoutText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     await run(['mcp_live_abc'], deps);
     const out = stdoutText();
     assert.match(out, /Blacklisted:\s+2026-03-01T00:00:00\.000Z/);
@@ -85,5 +86,18 @@ describe('keys show', () => {
     const code = await run(['--bogus', 'x'], deps);
     assert.equal(code, 2);
     assert.match(stderrText(), /Unknown option|unknown/i);
+  });
+
+  it('returns 2 (validation) when the prefix is ambiguous (AUDIT L-4)', async () => {
+    const findByPrefixUnique = mock.fn(async () => {
+      throw new ConflictError(
+        'prefix "mcp_live_colld" matched 2 keys; use the UUID instead',
+        'Ambiguous prefix; use the UUID instead.',
+      );
+    });
+    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
+    const code = await run(['mcp_live_colld'], deps);
+    assert.equal(code, 2);
+    assert.match(stderrText(), /matched 2 keys/);
   });
 });

@@ -128,7 +128,7 @@ describe('verifyApiKey', () => {
 describe('extractKeyPrefix', () => {
   it('returns the first 12 characters', () => {
     const key = 'mcp_live_k7Hj9mNqR2xYpL4wVbD8cE1fA3gT6iU0sK5nO9rW_Q';
-    assert.equal(extractKeyPrefix(key), 'mcp_live_k7H');
+    assert.equal(extractKeyPrefix(key), key.slice(0, KEY_PREFIX_LENGTH));
     assert.equal(extractKeyPrefix(key).length, KEY_PREFIX_LENGTH);
   });
 
@@ -138,6 +138,10 @@ describe('extractKeyPrefix', () => {
 
   it('prefixes of generated keys are deterministic for the same body', () => {
     const key = generateApiKey();
-    assert.equal(extractKeyPrefix(key), key.slice(0, 12));
+    assert.equal(extractKeyPrefix(key), key.slice(0, KEY_PREFIX_LENGTH));
+  });
+
+  it('widens to 16 chars so the random tail gives ~42 bits of disambiguation (AUDIT L-4)', () => {
+    assert.equal(KEY_PREFIX_LENGTH, 16);
   });
 });

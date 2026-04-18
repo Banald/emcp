@@ -2,6 +2,7 @@ import type { Redis } from 'ioredis';
 import type { Pool, PoolClient } from 'pg';
 import { config } from '../../config.ts';
 import { negCacheKey } from '../../core/auth.ts';
+import { ConflictError } from '../../lib/errors.ts';
 import { logger } from '../../lib/logger.ts';
 import { query } from '../client.ts';
 
@@ -146,6 +147,28 @@ export class ApiKeyRepository {
       [prefix],
       this.pool,
     );
+    const row = rows[0];
+    return row ? mapRow(row) : null;
+  }
+
+  /**
+   * Like `findByPrefix`, but throws `ConflictError` if more than one row
+   * matches (AUDIT L-4). Used by the CLI's `<id-or-prefix>` resolution so
+   * operators never mutate the wrong key when an old short prefix happens
+   * to collide with a newer 16-char one.
+   */
+  async findByPrefixUnique(prefix: string): Promise<ApiKeyRecord | null> {
+    const { rows } = await query<ApiKeyRow>(
+      `SELECT ${SELECT_COLUMNS} FROM api_keys WHERE key_prefix = $1`,
+      [prefix],
+      this.pool,
+    );
+    if (rows.length > 1) {
+      throw new ConflictError(
+        `prefix "${prefix}" matched ${rows.length} keys; use the UUID instead`,
+        'Ambiguous prefix; use the UUID instead.',
+      );
+    }
     const row = rows[0];
     return row ? mapRow(row) : null;
   }

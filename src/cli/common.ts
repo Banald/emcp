@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 import type { Logger } from 'pino';
 import type { ApiKeyRecord, ApiKeyRepository } from '../db/repos/api-keys.ts';
+import { ConflictError } from '../lib/errors.ts';
 
 export interface CliDeps {
   repo: ApiKeyRepository;
@@ -27,12 +28,34 @@ export function isUuid(value: string): boolean {
   return UUID_RE.test(value);
 }
 
-export async function findKey(
-  repo: ApiKeyRepository,
-  idOrPrefix: string,
-): Promise<ApiKeyRecord | null> {
-  if (isUuid(idOrPrefix)) return repo.findById(idOrPrefix);
-  return repo.findByPrefix(idOrPrefix);
+/**
+ * Discriminated result of resolving an `<id-or-prefix>` CLI argument.
+ * `reason: 'ambiguous'` surfaces prefix collisions (AUDIT L-4) so the
+ * operator can pick the UUID rather than silently mutating the wrong
+ * key.
+ */
+export type FindKeyResult =
+  | { ok: true; record: ApiKeyRecord }
+  | { ok: false; reason: 'not-found' | 'ambiguous'; message: string };
+
+export async function findKey(repo: ApiKeyRepository, idOrPrefix: string): Promise<FindKeyResult> {
+  if (isUuid(idOrPrefix)) {
+    const record = await repo.findById(idOrPrefix);
+    return record
+      ? { ok: true, record }
+      : { ok: false, reason: 'not-found', message: `not found: ${idOrPrefix}` };
+  }
+  try {
+    const record = await repo.findByPrefixUnique(idOrPrefix);
+    return record
+      ? { ok: true, record }
+      : { ok: false, reason: 'not-found', message: `not found: ${idOrPrefix}` };
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return { ok: false, reason: 'ambiguous', message: err.message };
+    }
+    throw err;
+  }
 }
 
 export async function confirm(deps: CliDeps, prompt: string): Promise<boolean> {

@@ -17,18 +17,18 @@ describe('keys delete', () => {
   });
 
   it('returns 1 when the key is not found', async () => {
-    const findByPrefix = mockFindByPrefix(null);
-    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(null);
+    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     const code = await run(['mcp_live_zzz', '--yes'], deps);
     assert.equal(code, 1);
     assert.match(stderrText(), /not found/);
   });
 
   it('shows an extra-prominent warning banner and aborts on refusal', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord());
+    const findByPrefixUnique = mockFindByPrefix(makeRecord());
     const softDelete = mockVoidById();
     const { deps, stdoutText } = makeCapturedDeps({
-      repo: { findByPrefix, softDelete },
+      repo: { findByPrefixUnique, softDelete },
       stdin: 'no\n',
     });
     const code = await run(['mcp_live_abc'], deps);
@@ -41,10 +41,10 @@ describe('keys delete', () => {
   });
 
   it('only mutates when user types y/yes', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ id: 'key-id-1' }));
+    const findByPrefixUnique = mockFindByPrefix(makeRecord({ id: 'key-id-1' }));
     const softDelete = mockVoidById();
     const { deps, stdoutText, logs } = makeCapturedDeps({
-      repo: { findByPrefix, softDelete },
+      repo: { findByPrefixUnique, softDelete },
       stdin: 'yes\n',
     });
     const code = await run(['mcp_live_abc'], deps);
@@ -57,10 +57,10 @@ describe('keys delete', () => {
   });
 
   it('--yes skips the confirmation prompt entirely', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord());
+    const findByPrefixUnique = mockFindByPrefix(makeRecord());
     const softDelete = mockVoidById();
     const { deps, stdoutText } = makeCapturedDeps({
-      repo: { findByPrefix, softDelete },
+      repo: { findByPrefixUnique, softDelete },
     });
     const code = await run(['mcp_live_abc', '--yes'], deps);
     assert.equal(code, 0);

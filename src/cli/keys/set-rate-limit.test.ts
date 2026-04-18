@@ -36,18 +36,20 @@ describe('keys set-rate-limit', () => {
   });
 
   it('returns 1 when the key is not found', async () => {
-    const findByPrefix = mockFindByPrefix(null);
-    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefix } });
+    const findByPrefixUnique = mockFindByPrefix(null);
+    const { deps, stderrText } = makeCapturedDeps({ repo: { findByPrefixUnique } });
     const code = await run(['mcp_live_zzz', '120'], deps);
     assert.equal(code, 1);
     assert.match(stderrText(), /not found/);
   });
 
   it('updates, prints confirmation, and audits on success', async () => {
-    const findByPrefix = mockFindByPrefix(makeRecord({ id: 'key-id-1', rateLimitPerMinute: 60 }));
+    const findByPrefixUnique = mockFindByPrefix(
+      makeRecord({ id: 'key-id-1', rateLimitPerMinute: 60 }),
+    );
     const setRateLimit = mockSetRateLimit();
     const { deps, stdoutText, logs } = makeCapturedDeps({
-      repo: { findByPrefix, setRateLimit },
+      repo: { findByPrefixUnique, setRateLimit },
     });
     const code = await run(['mcp_live_abc', '180'], deps);
     assert.equal(code, 0);

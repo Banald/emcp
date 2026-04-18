@@ -32,11 +32,12 @@ export const run: SubcommandRun = async (args, deps: CliDeps) => {
     return EXIT_VALIDATION;
   }
 
-  const record = await findKey(deps.repo, target);
-  if (record === null) {
-    writeLine(deps.stderr, `not found: ${target}`);
-    return EXIT_NOT_FOUND;
+  const result = await findKey(deps.repo, target);
+  if (!result.ok) {
+    writeLine(deps.stderr, result.message);
+    return result.reason === 'not-found' ? EXIT_NOT_FOUND : EXIT_VALIDATION;
   }
+  const record = result.record;
 
   if (record.status !== 'blacklisted') {
     writeLine(deps.stderr, `error: key ${record.keyPrefix} is ${record.status}, not blacklisted`);

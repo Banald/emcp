@@ -172,6 +172,33 @@ describe('ApiKeyRepository.findById / findByPrefix', () => {
     const rec = await repo.findByPrefix('mcp_live_aaa');
     assert.equal(rec?.keyPrefix, 'mcp_live_aaa');
   });
+
+  it('findByPrefixUnique returns the mapped record for a single hit', async () => {
+    const { pool, calls } = makePool([makeRow({ key_prefix: 'mcp_live_solo' })]);
+    const repo = new ApiKeyRepository(pool);
+    const rec = await repo.findByPrefixUnique('mcp_live_solo');
+    // No LIMIT 1 — we need to see ambiguity.
+    assert.ok(!/LIMIT\s+1/.test(calls[0]?.sql ?? ''));
+    assert.equal(rec?.keyPrefix, 'mcp_live_solo');
+  });
+
+  it('findByPrefixUnique returns null on miss', async () => {
+    const { pool } = makePool([]);
+    const repo = new ApiKeyRepository(pool);
+    assert.equal(await repo.findByPrefixUnique('mcp_live_xxx'), null);
+  });
+
+  it('findByPrefixUnique throws ConflictError when multiple rows match (AUDIT L-4)', async () => {
+    const { pool } = makePool([
+      makeRow({ id: 'row-1', key_prefix: 'mcp_live_ambig' }),
+      makeRow({ id: 'row-2', key_prefix: 'mcp_live_ambig' }),
+    ]);
+    const repo = new ApiKeyRepository(pool);
+    await assert.rejects(
+      repo.findByPrefixUnique('mcp_live_ambig'),
+      (err: Error) => err.name === 'ConflictError' && /matched 2 keys/.test(err.message),
+    );
+  });
 });
 
 describe('ApiKeyRepository.findByHash', () => {
