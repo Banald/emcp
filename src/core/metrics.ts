@@ -66,4 +66,33 @@ export const metrics = {
     buckets: [0.01, 0.1, 0.5, 1, 5, 30, 60, 300, 900, 3600],
     registers: [register],
   }),
+
+  // Outbound proxy egress metrics (docs/ARCHITECTURE.md "Proxy egress").
+  // `proxy_id` labels use the pool-index form ("p0", "p1", ...) that the
+  // pool itself emits; the proxy URL is NEVER a label because it may
+  // carry credentials and would explode cardinality.
+  proxyRequestsTotal: new Counter({
+    name: 'proxy_requests_total',
+    help: 'Outbound egress attempts per proxy, labelled by outcome',
+    labelNames: ['proxy_id', 'status'] as const,
+    registers: [register],
+  }),
+  proxyRequestDuration: new Histogram({
+    name: 'proxy_request_duration_seconds',
+    help: 'End-to-end duration of proxied fetchExternal() calls',
+    labelNames: ['proxy_id'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30],
+    registers: [register],
+  }),
+  proxyCooldownsTotal: new Counter({
+    name: 'proxy_cooldowns_total',
+    help: 'Number of times a proxy entered cooldown due to consecutive failures',
+    labelNames: ['proxy_id'] as const,
+    registers: [register],
+  }),
+  proxyPoolHealthy: new Gauge({
+    name: 'proxy_pool_healthy',
+    help: 'Number of proxies currently eligible for rotation (not cooled down)',
+    registers: [register],
+  }),
 };

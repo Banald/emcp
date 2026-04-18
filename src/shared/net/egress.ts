@@ -1,7 +1,15 @@
 import { config } from '../../config.ts';
+import { metrics as realMetrics } from '../../core/metrics.ts';
 import { TransientError } from '../../lib/errors.ts';
 import { getProxyPool } from './proxy/registry.ts';
 import type { ProxyOutcome, ProxyPool } from './proxy/types.ts';
+
+export interface EgressMetrics {
+  readonly requestsTotal: { inc(labels: { proxy_id: string; status: string }): void };
+  readonly requestDuration: { observe(labels: { proxy_id: string }, value: number): void };
+  readonly cooldownsTotal: { inc(labels: { proxy_id: string }): void };
+  readonly poolHealthy: { set(value: number): void };
+}
 
 /**
  * `fetchExternal` — the single egress chokepoint for outbound HTTP from
@@ -64,7 +72,18 @@ export interface FetchExternalOptions {
    * Injectable fetch function for tests. Defaults to globalThis.fetch.
    */
   readonly fetcher?: typeof fetch;
+  /** Injectable metrics for tests. Defaults to the shared prom-client registry. */
+  readonly metrics?: EgressMetrics;
+  /** Test seam: override Date.now for deterministic duration assertions. */
+  readonly now?: () => number;
 }
+
+const defaultEgressMetrics: EgressMetrics = {
+  requestsTotal: realMetrics.proxyRequestsTotal,
+  requestDuration: realMetrics.proxyRequestDuration,
+  cooldownsTotal: realMetrics.proxyCooldownsTotal,
+  poolHealthy: realMetrics.proxyPoolHealthy,
+};
 
 export async function fetchExternal(
   url: string,
@@ -82,6 +101,8 @@ export async function fetchExternal(
     return doFetch(url, init);
   }
 
+  const metrics = options.metrics ?? defaultEgressMetrics;
+  const now = options.now ?? Date.now;
   const maxAttempts = Math.min(config.proxyMaxRetriesPerRequest, pool.size);
   const attempted = new Set<string>();
   let lastError: unknown;
@@ -89,12 +110,16 @@ export async function fetchExternal(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const entry = pool.next();
     if (entry === null) break;
-    // If the pool keeps handing us the same entry (single healthy
-    // proxy), don't burn the whole retry budget on it — bail early.
-    if (attempted.has(entry.id) && attempted.size < pool.size) {
-      // try once more; pool may rotate on next call
-    }
     attempted.add(entry.id);
+    const startedAt = now();
+
+    // Snapshot the proxy's cooldown state before the report() call so we
+    // can tell whether this particular failure *triggered* a cooldown
+    // (vs. reporting another failure during an existing one). The
+    // cooldown counter fires only on the transition null→scheduled or a
+    // forward shift, not on every failure.
+    const beforeCooldown =
+      pool.healthSnapshot().find((h) => h.id === entry.id)?.cooldownUntil ?? null;
 
     try {
       const response = await doFetch(url, {
@@ -105,10 +130,19 @@ export async function fetchExternal(
         ...({ dispatcher: entry.dispatcher } as Record<string, unknown>),
       });
       pool.report(entry.id, 'success');
+      recordOutcome(metrics, entry.id, 'success', startedAt, now);
+      metrics.poolHealthy.set(pool.healthyCount());
       return response;
     } catch (err) {
       const outcome = classifyError(err, init.signal);
       pool.report(entry.id, outcome);
+      recordOutcome(metrics, entry.id, outcome, startedAt, now);
+      const afterCooldown =
+        pool.healthSnapshot().find((h) => h.id === entry.id)?.cooldownUntil ?? null;
+      if (hasNewCooldown(beforeCooldown, afterCooldown, now())) {
+        metrics.cooldownsTotal.inc({ proxy_id: entry.id });
+      }
+      metrics.poolHealthy.set(pool.healthyCount());
       lastError = err;
       if (outcome === 'aborted') throw err;
       // connect_failure or upstream_failure → try the next proxy.
@@ -119,6 +153,25 @@ export async function fetchExternal(
     `all ${attempted.size} proxy attempt(s) exhausted for ${safeUrlLabel(url)}: ${errMessage(lastError)}`,
     'External service is temporarily unavailable. Please try again.',
   );
+}
+
+function recordOutcome(
+  metrics: EgressMetrics,
+  proxyId: string,
+  outcome: ProxyOutcome,
+  startedAt: number,
+  now: () => number,
+): void {
+  metrics.requestsTotal.inc({ proxy_id: proxyId, status: outcome });
+  const durationSeconds = Math.max(0, (now() - startedAt) / 1000);
+  metrics.requestDuration.observe({ proxy_id: proxyId }, durationSeconds);
+}
+
+function hasNewCooldown(before: number | null, after: number | null, nowMs: number): boolean {
+  if (after === null) return false;
+  if (after <= nowMs) return false;
+  if (before === null) return true;
+  return after > before;
 }
 
 export function classifyError(err: unknown, signal: AbortSignal | null | undefined): ProxyOutcome {

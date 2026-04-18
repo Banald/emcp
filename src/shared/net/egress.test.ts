@@ -256,6 +256,120 @@ describe('fetchExternal', () => {
     });
   });
 
+  describe('metrics emission', () => {
+    const makeMetrics = () => {
+      const requests: Array<{ proxy_id: string; status: string }> = [];
+      const durations: Array<{ labels: { proxy_id: string }; value: number }> = [];
+      const cooldowns: Array<{ proxy_id: string }> = [];
+      const healthy: number[] = [];
+      return {
+        metrics: {
+          requestsTotal: {
+            inc: (labels: { proxy_id: string; status: string }) => requests.push(labels),
+          },
+          requestDuration: {
+            observe: (labels: { proxy_id: string }, value: number) =>
+              durations.push({ labels, value }),
+          },
+          cooldownsTotal: {
+            inc: (labels: { proxy_id: string }) => cooldowns.push(labels),
+          },
+          poolHealthy: { set: (value: number) => healthy.push(value) },
+        },
+        requests,
+        durations,
+        cooldowns,
+        healthy,
+      };
+    };
+
+    it('records a success row + duration + healthy-gauge on a 200', async () => {
+      const { pool } = makePool([entry('p0')]);
+      const fetcher = mock.fn<typeof fetch>(async () => new Response('ok'));
+      let tick = 1_000_000;
+      const rec = makeMetrics();
+      await fetchExternal(
+        'https://api.example.com/x',
+        {},
+        {
+          pool,
+          fetcher,
+          metrics: rec.metrics,
+          now: () => (tick += 50),
+        },
+      );
+      assert.deepEqual(rec.requests, [{ proxy_id: 'p0', status: 'success' }]);
+      assert.equal(rec.durations.length, 1);
+      assert.equal(rec.durations[0]?.labels.proxy_id, 'p0');
+      assert.ok((rec.durations[0]?.value ?? 0) >= 0);
+      assert.deepEqual(rec.healthy, [1]);
+      assert.equal(rec.cooldowns.length, 0);
+    });
+
+    it('emits a cooldown counter on the failure that triggers it (not on every failure)', async () => {
+      const { pool } = makePool([entry('p0'), entry('p1')]);
+      const fetcher = mock.fn<typeof fetch>(async () => {
+        throw connectErr('ECONNREFUSED');
+      });
+      const rec = makeMetrics();
+      await assert.rejects(
+        () =>
+          fetchExternal('https://api.example.com/x', {}, { pool, fetcher, metrics: rec.metrics }),
+        TransientError,
+      );
+      // makePool uses a hand-rolled stub that doesn't actually cool
+      // proxies down (healthSnapshot always returns cooldownUntil=null),
+      // so hasNewCooldown returns false. The production pool's cooldown
+      // path is tested in src/shared/net/proxy/pool.test.ts. The
+      // important assertion here is that requestsTotal increments with
+      // the failure label for every attempt. With pool.size=2 and
+      // PROXY_MAX_RETRIES_PER_REQUEST=3 (test-env default), the budget
+      // is clamped to min(3, 2) = 2.
+      assert.equal(rec.cooldowns.length, 0);
+      const failures = rec.requests.filter((r) => r.status === 'connect_failure');
+      assert.equal(failures.length, 2);
+    });
+
+    it('emits a cooldown counter when the pool actually schedules one', async () => {
+      // Use a real createProxyPool here so the cooldown transition fires
+      // as it would in production. Two proxies; the first fails and
+      // transitions to cooldown.
+      const { createProxyPool } = await import('./proxy/pool.ts');
+      const stub = (id: string) => ({
+        id,
+        url: `http://${id}:80`,
+        dispatcher: { close: () => Promise.resolve() } as unknown as import('undici').Dispatcher,
+      });
+      const pool = createProxyPool([stub('p0'), stub('p1')], {
+        strategy: 'round-robin',
+        failureCooldownMs: 5_000,
+      });
+      let call = 0;
+      const fetcher = mock.fn<typeof fetch>(async () => {
+        call++;
+        if (call === 1) throw connectErr('ECONNREFUSED');
+        return new Response('ok');
+      });
+      const rec = makeMetrics();
+      await fetchExternal('https://api.example.com/x', {}, { pool, fetcher, metrics: rec.metrics });
+      assert.deepEqual(rec.cooldowns, [{ proxy_id: 'p0' }]);
+    });
+
+    it('never labels a metric with a proxy URL (cardinality safety)', async () => {
+      const { pool } = makePool([entry('p0')]);
+      const fetcher = mock.fn<typeof fetch>(async () => new Response('ok'));
+      const rec = makeMetrics();
+      await fetchExternal('https://api.example.com/x', {}, { pool, fetcher, metrics: rec.metrics });
+      for (const r of rec.requests) {
+        assert.doesNotMatch(r.proxy_id, /^https?:/);
+        assert.doesNotMatch(r.proxy_id, /@/);
+      }
+      for (const d of rec.durations) {
+        assert.doesNotMatch(d.labels.proxy_id, /^https?:/);
+      }
+    });
+  });
+
   describe('error message safety', () => {
     it('does not leak the full URL (incl. query + credentials) into TransientError', async () => {
       const { pool } = makePool([entry('p0')]);
