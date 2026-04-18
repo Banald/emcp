@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { z } from 'zod';
+import { __setDefaultPinnedFetcherForTesting } from '../shared/net/http.ts';
 import type { ToolContext } from '../shared/tools/types.ts';
 import tool from './fetch-url.ts';
 
@@ -41,12 +42,15 @@ const redirectResponse = (location: string | null, status = 301): Response => {
 const textOf = (result: Awaited<ReturnType<typeof tool.handler>>): string =>
   (result.content[0] as { type: 'text'; text: string }).text;
 
-// Queue-based fetch mock so redirect chains can return different responses per call.
+// Queue-based fetcher stub so redirect chains can return different responses per call.
+// Drives the pinned-fetch seam rather than globalThis.fetch — after H-2 the
+// production flow uses `node:https.request` under `createPinnedFetcher`, so
+// mocking global fetch no longer intercepts anything.
 const queueFetch = (
   responses: Array<Response | (() => Response) | (() => Promise<Response>)>,
 ): void => {
   let i = 0;
-  mock.method(globalThis, 'fetch', async () => {
+  __setDefaultPinnedFetcherForTesting(async () => {
     const entry = responses[i++];
     if (entry === undefined)
       throw new Error(`fetch called ${i} times but only ${responses.length} responses queued`);
@@ -57,10 +61,12 @@ const queueFetch = (
 describe('fetch-url tool', () => {
   beforeEach(() => {
     mock.reset();
+    __setDefaultPinnedFetcherForTesting(null);
   });
 
   afterEach(() => {
     mock.reset();
+    __setDefaultPinnedFetcherForTesting(null);
   });
 
   describe('metadata', () => {
@@ -519,7 +525,7 @@ describe('fetch-url tool', () => {
 
   describe('failure modes always return isError and never throw', () => {
     it('returns isError on a generic network failure', async () => {
-      mock.method(globalThis, 'fetch', async () => {
+      __setDefaultPinnedFetcherForTesting(async () => {
         throw new TypeError('fetch failed');
       });
 
@@ -533,7 +539,7 @@ describe('fetch-url tool', () => {
     });
 
     it('returns isError on a TimeoutError from AbortSignal', async () => {
-      mock.method(globalThis, 'fetch', async () => {
+      __setDefaultPinnedFetcherForTesting(async () => {
         throw new DOMException('signal timed out', 'TimeoutError');
       });
 
@@ -547,7 +553,7 @@ describe('fetch-url tool', () => {
     });
 
     it('returns isError on an AbortError', async () => {
-      mock.method(globalThis, 'fetch', async () => {
+      __setDefaultPinnedFetcherForTesting(async () => {
         throw new DOMException('aborted', 'AbortError');
       });
 
@@ -561,7 +567,8 @@ describe('fetch-url tool', () => {
     });
 
     it('returns isError for a hostname that resolves to a private address (SSRF)', async () => {
-      // localhost resolves to 127.0.0.1 / ::1 — assertPublicHostname rejects it.
+      // Uses the real default pinned fetcher (no override) so its dns.lookup
+      // runs on 'localhost' and rejects it via isPrivateAddress.
       const result = await tool.handler(
         { url: 'http://localhost/secret', max_length: 50_000 },
         makeCtx(),
@@ -572,7 +579,7 @@ describe('fetch-url tool', () => {
     });
 
     it('logs a warning on failure', async () => {
-      mock.method(globalThis, 'fetch', async () => {
+      __setDefaultPinnedFetcherForTesting(async () => {
         throw new Error('boom');
       });
       const ctx = makeCtx();

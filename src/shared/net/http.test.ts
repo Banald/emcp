@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { describe, it, mock } from 'node:test';
+import { ValidationError } from '../../lib/errors.ts';
 import {
   type AssertPublicHost,
+  createPinnedFetcher,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_REDIRECTS,
   DEFAULT_TIMEOUT_MS,
+  type DnsResolver,
   type Fetcher,
   fetchSafe,
+  type NodeRequester,
+  type PinnedFetcher,
 } from './http.ts';
 import { USER_AGENT } from './user-agent.ts';
 
@@ -225,5 +230,188 @@ describe('fetchSafe', () => {
     assert.equal(DEFAULT_MAX_BYTES, 2 * 1024 * 1024);
     assert.equal(DEFAULT_MAX_REDIRECTS, 5);
     assert.equal(DEFAULT_TIMEOUT_MS, 20_000);
+  });
+
+  it('uses the pinnedFetcher seam when no fetcher is provided', async () => {
+    // Covers the production code path where DNS pinning is required and
+    // the caller has not passed a mock fetcher.
+    const pinnedFetcher = mock.fn<PinnedFetcher>(async () => makeResponse('via-pinned'));
+    const result = await fetchSafe('https://example.com/', { pinnedFetcher });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.toString('utf-8'), 'via-pinned');
+    assert.equal(pinnedFetcher.mock.callCount(), 1);
+    const [calledUrl, calledInit] = pinnedFetcher.mock.calls[0].arguments;
+    assert.equal(calledUrl.hostname, 'example.com');
+    assert.equal(calledInit.method, 'GET');
+    assert.equal(calledInit.headers['User-Agent'], USER_AGENT);
+  });
+
+  it('surfaces a pinned-fetcher ValidationError verbatim', async () => {
+    const pinnedFetcher: PinnedFetcher = async (url) => {
+      throw new ValidationError(
+        `hostname ${url.hostname} resolves to a non-public address`,
+        'URLs resolving to internal addresses are not allowed.',
+      );
+    };
+    await assert.rejects(
+      () => fetchSafe('https://private.invalid/', { pinnedFetcher }),
+      (err: Error) => err instanceof ValidationError && /non-public address/.test(err.message),
+    );
+  });
+
+  it('maps a pinned-fetcher TimeoutError', async () => {
+    const pinnedFetcher: PinnedFetcher = async () => {
+      const err = new Error('timed out');
+      err.name = 'TimeoutError';
+      throw err;
+    };
+    await assert.rejects(
+      () => fetchSafe('https://example.com/', { pinnedFetcher, timeoutMs: 2000 }),
+      /timed out after 2000ms/,
+    );
+  });
+});
+
+describe('createPinnedFetcher', () => {
+  const publicRecord = { address: '93.184.216.34', family: 4 } as const;
+  const privateRecord = { address: '127.0.0.1', family: 4 } as const;
+
+  it('looks up once, validates every address, pins the connect to the first', async () => {
+    const resolver = mock.fn<DnsResolver>(async () => [publicRecord]);
+    const request = mock.fn<NodeRequester>(async () => makeResponse('ok'));
+    const pinned = createPinnedFetcher({ resolver, request });
+    const ctrl = new AbortController();
+    const res = await pinned(new URL('https://example.com/x'), {
+      method: 'GET',
+      headers: { 'User-Agent': USER_AGENT },
+      signal: ctrl.signal,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(resolver.mock.callCount(), 1);
+    assert.equal(request.mock.callCount(), 1);
+    const [_url, _init, pinnedLookup] = request.mock.calls[0].arguments;
+    await new Promise<void>((resolve) => {
+      pinnedLookup('example.com', { family: 0 }, (err, address, family) => {
+        assert.equal(err, null);
+        assert.equal(address, publicRecord.address);
+        assert.equal(family, publicRecord.family);
+        resolve();
+      });
+    });
+  });
+
+  it('rejects before any connect when a resolver yields a private address', async () => {
+    const resolver = mock.fn<DnsResolver>(async () => [privateRecord]);
+    const request = mock.fn<NodeRequester>(async () => {
+      throw new Error('should not reach here');
+    });
+    const pinned = createPinnedFetcher({ resolver, request });
+    await assert.rejects(
+      () =>
+        pinned(new URL('https://rebind.example/'), {
+          method: 'GET',
+          headers: {},
+          signal: new AbortController().signal,
+        }),
+      (err: Error) => err instanceof ValidationError && /non-public address/.test(err.message),
+    );
+    assert.equal(request.mock.callCount(), 0);
+  });
+
+  it('rejects if ANY resolved address is private (mixed list)', async () => {
+    const resolver = mock.fn<DnsResolver>(async () => [publicRecord, privateRecord]);
+    const request = mock.fn<NodeRequester>(async () => {
+      throw new Error('should not reach here');
+    });
+    const pinned = createPinnedFetcher({ resolver, request });
+    await assert.rejects(
+      () =>
+        pinned(new URL('https://half-bad.example/'), {
+          method: 'GET',
+          headers: {},
+          signal: new AbortController().signal,
+        }),
+      (err: Error) => err instanceof ValidationError,
+    );
+    assert.equal(request.mock.callCount(), 0);
+  });
+
+  it('rejects when the resolver returns no addresses', async () => {
+    const resolver = mock.fn<DnsResolver>(async () => []);
+    const request = mock.fn<NodeRequester>(async () => makeResponse('ok'));
+    const pinned = createPinnedFetcher({ resolver, request });
+    await assert.rejects(
+      () =>
+        pinned(new URL('https://nxdomain.invalid/'), {
+          method: 'GET',
+          headers: {},
+          signal: new AbortController().signal,
+        }),
+      (err: Error) => err instanceof ValidationError && /no addresses/.test(err.message),
+    );
+    assert.equal(request.mock.callCount(), 0);
+  });
+
+  it('retries with the next IP on ECONNREFUSED (happy-eyeballs substitute)', async () => {
+    const ipA = { address: '203.0.113.1', family: 4 } as const;
+    const ipB = { address: '203.0.113.2', family: 4 } as const;
+    const resolver = mock.fn<DnsResolver>(async () => [ipA, ipB]);
+    const request = mock.fn<NodeRequester>(async (_url, _init, pinnedLookup) => {
+      // Inspect the pinned lookup to determine which IP is being tried.
+      let pinnedIp = '';
+      await new Promise<void>((resolve) => {
+        pinnedLookup('x', { family: 0 }, (_err, addr) => {
+          pinnedIp = typeof addr === 'string' ? addr : '';
+          resolve();
+        });
+      });
+      if (pinnedIp === ipA.address) {
+        const err = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+        throw err;
+      }
+      return makeResponse('second-ok');
+    });
+    const pinned = createPinnedFetcher({ resolver, request });
+    const res = await pinned(new URL('https://two-ips.example/'), {
+      method: 'GET',
+      headers: {},
+      signal: new AbortController().signal,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'second-ok');
+    assert.equal(request.mock.callCount(), 2);
+  });
+
+  it('does not retry on non-connect errors', async () => {
+    const resolver = mock.fn<DnsResolver>(async () => [publicRecord, publicRecord]);
+    const request = mock.fn<NodeRequester>(async () => {
+      throw new Error('TLS handshake failed');
+    });
+    const pinned = createPinnedFetcher({ resolver, request });
+    await assert.rejects(
+      () =>
+        pinned(new URL('https://tls-broken.example/'), {
+          method: 'GET',
+          headers: {},
+          signal: new AbortController().signal,
+        }),
+      /TLS handshake failed/,
+    );
+    assert.equal(request.mock.callCount(), 1);
+  });
+
+  it('uses the default private-address check unless overridden', async () => {
+    // Sanity: passing an explicit isPrivate override that allows everything
+    // bypasses the built-in rejection of 127.0.0.1.
+    const resolver = mock.fn<DnsResolver>(async () => [privateRecord]);
+    const request = mock.fn<NodeRequester>(async () => makeResponse('allowed'));
+    const pinned = createPinnedFetcher({ resolver, request, isPrivate: () => false });
+    const res = await pinned(new URL('https://override.example/'), {
+      method: 'GET',
+      headers: {},
+      signal: new AbortController().signal,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(request.mock.callCount(), 1);
   });
 });
