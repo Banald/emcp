@@ -315,4 +315,126 @@ describe('loadConfig', () => {
       }, TypeError);
     });
   });
+
+  describe('PROXY_* egress rotation', () => {
+    it('defaults to empty pool + round-robin + standard timings', () => {
+      const config = loadConfig(validEnv());
+      assert.deepEqual([...config.proxyUrls], []);
+      assert.equal(config.proxyRotation, 'round-robin');
+      assert.equal(config.proxyFailureCooldownMs, 60_000);
+      assert.equal(config.proxyMaxRetriesPerRequest, 3);
+      assert.equal(config.proxyConnectTimeoutMs, 10_000);
+    });
+
+    it('parses a multi-entry PROXY_URLS list', () => {
+      const env = {
+        ...validEnv(),
+        PROXY_URLS: 'http://u:p@proxy1.example.com:8080,https://q:r@proxy2.example.com:8443',
+      };
+      const config = loadConfig(env);
+      assert.deepEqual(
+        [...config.proxyUrls],
+        ['http://u:p@proxy1.example.com:8080', 'https://q:r@proxy2.example.com:8443'],
+      );
+    });
+
+    it('trims whitespace and drops empty entries in PROXY_URLS', () => {
+      const env = {
+        ...validEnv(),
+        PROXY_URLS: '  http://h1:80 , , http://h2:81  ',
+      };
+      const config = loadConfig(env);
+      assert.deepEqual([...config.proxyUrls], ['http://h1:80', 'http://h2:81']);
+    });
+
+    it('freezes proxyUrls against mutation', () => {
+      const env = { ...validEnv(), PROXY_URLS: 'http://h1:80' };
+      const config = loadConfig(env);
+      assert.throws(() => {
+        (config.proxyUrls as string[]).push('http://h2:80');
+      }, TypeError);
+    });
+
+    it('rejects a proxy URL with an unsupported scheme', () => {
+      const env = { ...validEnv(), PROXY_URLS: 'socks5://proxy.example.com:1080' };
+      assert.throws(
+        () => loadConfig(env),
+        (err: unknown) =>
+          err instanceof ConfigError && /http: or https:/.test((err as Error).message),
+      );
+    });
+
+    it('rejects a proxy URL that is not parseable', () => {
+      const env = { ...validEnv(), PROXY_URLS: 'not a url' };
+      assert.throws(
+        () => loadConfig(env),
+        (err: unknown) => err instanceof ConfigError && /cannot parse/.test((err as Error).message),
+      );
+    });
+
+    it('accepts a proxy URL without an explicit port (uses scheme default)', () => {
+      // WHATWG URL leaves `.port === ''` for scheme defaults. undici's
+      // ProxyAgent handles 80/443 correctly; rejecting would surprise
+      // operators who supplied `http://proxy.example.com`.
+      const env = { ...validEnv(), PROXY_URLS: 'http://proxy.example.com' };
+      const config = loadConfig(env);
+      assert.deepEqual([...config.proxyUrls], ['http://proxy.example.com']);
+    });
+
+    it('rejects a proxy URL with a port out of range (malformed fails parse)', () => {
+      // Port > 65535 fails `new URL()` itself; message surfaces as "cannot parse".
+      const env = { ...validEnv(), PROXY_URLS: 'http://h:99999' };
+      assert.throws(
+        () => loadConfig(env),
+        (err: unknown) => err instanceof ConfigError && /cannot parse/.test((err as Error).message),
+      );
+    });
+
+    it('never echoes the raw proxy URL in the ConfigError message (no credential leak)', () => {
+      // The refinement messages are crafted to describe the defect
+      // generically. If a future change accidentally interpolates the
+      // URL back into a message, this test will catch the regression.
+      const env = {
+        ...validEnv(),
+        PROXY_URLS: 'http://alice:topsecret@h:0',
+      };
+      try {
+        loadConfig(env);
+        assert.fail('expected ConfigError');
+      } catch (err) {
+        assert.ok(err instanceof ConfigError);
+        assert.doesNotMatch((err as Error).message, /topsecret/);
+        assert.doesNotMatch((err as Error).message, /alice/);
+      }
+    });
+
+    it('accepts PROXY_ROTATION=random', () => {
+      const env = { ...validEnv(), PROXY_ROTATION: 'random' };
+      assert.equal(loadConfig(env).proxyRotation, 'random');
+    });
+
+    it('rejects an unknown PROXY_ROTATION value', () => {
+      const env = { ...validEnv(), PROXY_ROTATION: 'weighted' };
+      assert.throws(() => loadConfig(env), ConfigError);
+    });
+
+    it('rejects PROXY_FAILURE_COOLDOWN_MS below the 1s floor', () => {
+      const env = { ...validEnv(), PROXY_FAILURE_COOLDOWN_MS: '500' };
+      assert.throws(() => loadConfig(env), ConfigError);
+    });
+
+    it('rejects PROXY_MAX_RETRIES_PER_REQUEST outside 1..10', () => {
+      const over = { ...validEnv(), PROXY_MAX_RETRIES_PER_REQUEST: '20' };
+      const under = { ...validEnv(), PROXY_MAX_RETRIES_PER_REQUEST: '0' };
+      assert.throws(() => loadConfig(over), ConfigError);
+      assert.throws(() => loadConfig(under), ConfigError);
+    });
+
+    it('rejects PROXY_CONNECT_TIMEOUT_MS outside 1s..60s', () => {
+      const over = { ...validEnv(), PROXY_CONNECT_TIMEOUT_MS: '120000' };
+      const under = { ...validEnv(), PROXY_CONNECT_TIMEOUT_MS: '500' };
+      assert.throws(() => loadConfig(over), ConfigError);
+      assert.throws(() => loadConfig(under), ConfigError);
+    });
+  });
 });

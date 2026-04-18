@@ -22,6 +22,64 @@ const csv = z
   )
   .refine((list) => list.length > 0, 'must contain at least one non-empty value');
 
+// Optional CSV: empty/absent input → empty array; non-empty input is split
+// and trimmed identically to `csv`. Used for feature-flag style env vars
+// (PROXY_URLS, SEARXNG_OUTGOING_PROXIES) where the natural default is
+// "feature disabled".
+const optionalCsv = z
+  .string()
+  .default('')
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+
+const proxyRotationSchema = z.enum(['round-robin', 'random']);
+
+// Validates a single proxy URL: http(s) only, must have host and port,
+// userinfo optional. Refinements run on the parsed URL so edge cases
+// (port = 0, empty host after `://`) fail loudly at startup rather than
+// at the first request.
+const proxyUrlCsv = optionalCsv.superRefine((list, ctx) => {
+  for (const raw of list) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        message: `invalid proxy URL (cannot parse)`,
+      });
+      continue;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      ctx.addIssue({
+        code: 'custom',
+        message: `proxy URL must use http: or https: (got "${url.protocol}")`,
+      });
+    }
+    if (url.hostname === '') {
+      ctx.addIssue({ code: 'custom', message: 'proxy URL is missing a hostname' });
+    }
+    // WHATWG URL sets `.port` to '' for scheme-default ports
+    // (http:80, https:443), so we can't insist on a non-empty value —
+    // those URLs are legitimate. When a port IS present, validate its
+    // range; malformed ports (e.g. `http://h:99999`) fail `new URL()`
+    // above and never reach this branch.
+    if (url.port !== '') {
+      const n = Number.parseInt(url.port, 10);
+      if (!Number.isFinite(n) || n < 1 || n > 65535) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `proxy URL port out of range (got "${url.port}")`,
+        });
+      }
+    }
+  }
+});
+
 const base64Secret = z
   .string()
   .min(1)
@@ -72,10 +130,20 @@ const envSchema = z.object({
   PRE_AUTH_RATE_LIMIT_PER_MINUTE: integer(1).default(600),
   AUTH_NEG_CACHE_TTL_SECONDS: integer(1, 3600).default(60),
   TRUSTED_PROXY_CIDRS: z.string().min(1).default('127.0.0.0/8,::1/128'),
+  // Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
+  // Empty PROXY_URLS keeps the feature disabled — no ProxyAgents are
+  // created, no dispatcher is threaded through global fetch, and every
+  // external call behaves exactly as it did pre-feature.
+  PROXY_URLS: proxyUrlCsv,
+  PROXY_ROTATION: proxyRotationSchema.default('round-robin'),
+  PROXY_FAILURE_COOLDOWN_MS: integer(1_000, 3_600_000).default(60_000),
+  PROXY_MAX_RETRIES_PER_REQUEST: integer(1, 10).default(3),
+  PROXY_CONNECT_TIMEOUT_MS: integer(1_000, 60_000).default(10_000),
 });
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
+export type ProxyRotation = z.infer<typeof proxyRotationSchema>;
 
 export interface Config {
   readonly nodeEnv: NodeEnv;
@@ -101,6 +169,11 @@ export interface Config {
   readonly preAuthRateLimitPerMinute: number;
   readonly authNegCacheTtlSeconds: number;
   readonly trustedProxyCidrs: readonly ParsedCidr[];
+  readonly proxyUrls: readonly string[];
+  readonly proxyRotation: ProxyRotation;
+  readonly proxyFailureCooldownMs: number;
+  readonly proxyMaxRetriesPerRequest: number;
+  readonly proxyConnectTimeoutMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -152,6 +225,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     preAuthRateLimitPerMinute: raw.PRE_AUTH_RATE_LIMIT_PER_MINUTE,
     authNegCacheTtlSeconds: raw.AUTH_NEG_CACHE_TTL_SECONDS,
     trustedProxyCidrs,
+    proxyUrls: Object.freeze([...raw.PROXY_URLS]),
+    proxyRotation: raw.PROXY_ROTATION,
+    proxyFailureCooldownMs: raw.PROXY_FAILURE_COOLDOWN_MS,
+    proxyMaxRetriesPerRequest: raw.PROXY_MAX_RETRIES_PER_REQUEST,
+    proxyConnectTimeoutMs: raw.PROXY_CONNECT_TIMEOUT_MS,
   };
   return Object.freeze(resolved);
 }
