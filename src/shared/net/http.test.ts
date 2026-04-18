@@ -415,3 +415,158 @@ describe('createPinnedFetcher', () => {
     assert.equal(request.mock.callCount(), 1);
   });
 });
+
+describe('fetchSafe proxy: "auto"', () => {
+  // Build a fake pool whose size is non-zero; fetchSafe only cares about
+  // `size` on the ProxyPool interface to decide whether the proxy path
+  // is active. Routing itself goes through the `proxiedFetch` seam.
+  const fakePool = (size: number) =>
+    ({
+      size,
+      strategy: 'round-robin',
+      next: () => null,
+      report: () => {},
+      healthSnapshot: () => [],
+      healthyCount: () => size,
+      close: () => Promise.resolve(),
+    }) as unknown as import('./proxy/types.ts').ProxyPool;
+
+  it('stays on the pinned path when pool is null', async () => {
+    const pinnedFetcher = mock.fn(async () =>
+      makeResponse('pinned', { headers: { 'content-type': 'text/plain' } }),
+    );
+    const proxiedFetch = mock.fn(async () => makeResponse('proxied'));
+    await fetchSafe('https://example.com/', {
+      proxyPool: null,
+      pinnedFetcher,
+      proxiedFetch,
+    });
+    assert.equal(pinnedFetcher.mock.callCount(), 1);
+    assert.equal(proxiedFetch.mock.callCount(), 0);
+  });
+
+  it('stays on the pinned path when pool size is 0', async () => {
+    const pinnedFetcher = mock.fn(async () => makeResponse('pinned'));
+    const proxiedFetch = mock.fn(async () => makeResponse('proxied'));
+    await fetchSafe('https://example.com/', {
+      proxyPool: fakePool(0),
+      pinnedFetcher,
+      proxiedFetch,
+    });
+    assert.equal(pinnedFetcher.mock.callCount(), 1);
+    assert.equal(proxiedFetch.mock.callCount(), 0);
+  });
+
+  it('uses the proxied path when pool size > 0, calling the SSRF guard first', async () => {
+    const pinnedFetcher = mock.fn(async () => makeResponse('pinned'));
+    const proxiedFetch = mock.fn(async () =>
+      makeResponse('proxied', { headers: { 'content-type': 'text/plain' } }),
+    );
+    const guard = mock.fn<AssertPublicHost>(async () => {});
+    const result = await fetchSafe('https://example.com/path', {
+      proxyPool: fakePool(2),
+      proxiedFetch,
+      pinnedFetcher,
+      assertPublicHost: guard,
+    });
+    assert.equal(proxiedFetch.mock.callCount(), 1);
+    assert.equal(pinnedFetcher.mock.callCount(), 0);
+    // Guard ran on the target hostname before the proxied connect.
+    assert.equal(guard.mock.callCount(), 1);
+    assert.equal(guard.mock.calls[0].arguments[0], 'example.com');
+    assert.equal(result.body.toString('utf-8'), 'proxied');
+  });
+
+  it('re-runs the SSRF guard on each redirect hop in proxied mode', async () => {
+    const guard = mock.fn<AssertPublicHost>(async () => {});
+    let call = 0;
+    const proxiedFetch = mock.fn(async () => {
+      call++;
+      return call === 1 ? redirectResponse('https://final.example.com/dest') : makeResponse('ok');
+    });
+    await fetchSafe('https://start.example.com/', {
+      proxyPool: fakePool(1),
+      proxiedFetch,
+      assertPublicHost: guard,
+    });
+    assert.deepEqual(
+      guard.mock.calls.map((c) => c.arguments[0]),
+      ['start.example.com', 'final.example.com'],
+    );
+  });
+
+  it('forces the pinned path when proxy: "off" even with a non-empty pool', async () => {
+    const pinnedFetcher = mock.fn(async () => makeResponse('pinned'));
+    const proxiedFetch = mock.fn(async () => makeResponse('proxied'));
+    await fetchSafe('https://example.com/', {
+      proxy: 'off',
+      proxyPool: fakePool(3),
+      pinnedFetcher,
+      proxiedFetch,
+    });
+    assert.equal(pinnedFetcher.mock.callCount(), 1);
+    assert.equal(proxiedFetch.mock.callCount(), 0);
+  });
+
+  it('passes through an injected `fetcher` even when a pool is available (test-seam precedence)', async () => {
+    const injected = mock.fn<Fetcher>(async () => makeResponse('injected'));
+    const proxiedFetch = mock.fn(async () => makeResponse('proxied'));
+    await fetchSafe('https://example.com/', {
+      fetcher: injected,
+      assertPublicHost: allowHost,
+      proxyPool: fakePool(5),
+      proxiedFetch,
+    });
+    assert.equal(injected.mock.callCount(), 1);
+    assert.equal(proxiedFetch.mock.callCount(), 0);
+  });
+
+  it('lets TransientError from proxiedFetch bubble unchanged', async () => {
+    const proxiedFetch = mock.fn(async () => {
+      throw new (await import('../../lib/errors.ts')).TransientError(
+        'pool exhausted',
+        'External service is temporarily unavailable. Please try again.',
+      );
+    });
+    await assert.rejects(
+      () =>
+        fetchSafe('https://example.com/', {
+          proxyPool: fakePool(2),
+          proxiedFetch,
+        }),
+      (err: unknown) =>
+        err instanceof Error && err.name === 'TransientError' && /pool exhausted/.test(err.message),
+    );
+  });
+
+  it('lets ValidationError from the SSRF guard bubble unchanged in proxied mode', async () => {
+    const guard = mock.fn<AssertPublicHost>(async () => {
+      throw new ValidationError('blocked', 'URLs resolving to internal addresses are not allowed.');
+    });
+    const proxiedFetch = mock.fn(async () => makeResponse('ok'));
+    await assert.rejects(
+      () =>
+        fetchSafe('https://private.local/', {
+          proxyPool: fakePool(1),
+          proxiedFetch,
+          assertPublicHost: guard,
+        }),
+      ValidationError,
+    );
+    assert.equal(proxiedFetch.mock.callCount(), 0);
+  });
+
+  it('maps generic proxied-fetch errors through the standard error wrapper', async () => {
+    const proxiedFetch = mock.fn(async () => {
+      throw new Error('boom');
+    });
+    await assert.rejects(
+      () =>
+        fetchSafe('https://example.com/', {
+          proxyPool: fakePool(1),
+          proxiedFetch,
+        }),
+      /network error: boom/,
+    );
+  });
+});

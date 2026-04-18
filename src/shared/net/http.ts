@@ -4,7 +4,10 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { LookupFunction } from 'node:net';
 import { Readable } from 'node:stream';
-import { ValidationError } from '../../lib/errors.ts';
+import { TransientError, ValidationError } from '../../lib/errors.ts';
+import { fetchExternal } from './egress.ts';
+import { getProxyPool } from './proxy/registry.ts';
+import type { ProxyPool } from './proxy/types.ts';
 import { assertPublicHostname, isPrivateAddress } from './ssrf.ts';
 import { USER_AGENT } from './user-agent.ts';
 
@@ -48,6 +51,18 @@ export interface FetchSafeOptions {
   /** Extra request headers. User-Agent is always set by `fetchSafe`; other headers merge on top. */
   readonly headers?: Record<string, string>;
   /**
+   * Proxy routing policy. `'auto'` (default): when the egress proxy pool
+   * is non-empty, the connect step is delegated to `fetchExternal` and
+   * the DNS-pinning path is bypassed (can't pre-pin across CONNECT).
+   * SSRF guards still run on every hop's target hostname. `'off'` forces
+   * the direct path even when a pool is configured — reserved for
+   * diagnostics / probes against the proxy itself.
+   *
+   * The DNS-rebinding TOCTOU window lost in proxy mode is an inherent
+   * property of CONNECT tunneling; see docs/SECURITY.md Rule 13.
+   */
+  readonly proxy?: 'auto' | 'off';
+  /**
    * Test seam: override the network call with a mock. When set, the SSRF
    * guard is invoked *separately* before every hop via `assertPublicHost`.
    * When unset, the pinned flow below runs instead — one DNS lookup whose
@@ -59,6 +74,13 @@ export interface FetchSafeOptions {
   readonly assertPublicHost?: AssertPublicHost;
   /** Test seam: override the pinned flow. Only consulted when `fetcher` is NOT set. */
   readonly pinnedFetcher?: PinnedFetcher;
+  /** Test seam: inject a proxy pool (overrides the module singleton). */
+  readonly proxyPool?: ProxyPool | null;
+  /**
+   * Test seam: override the function that routes through the proxy pool.
+   * Defaults to `fetchExternal`. Called with absolute URL + RequestInit.
+   */
+  readonly proxiedFetch?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 export interface FetchSafeResult {
@@ -203,6 +225,19 @@ export async function fetchSafe(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  // `proxy: 'auto'` (default) engages the pool when it is non-empty.
+  // `proxy: 'off'` forces direct/pinned even when a pool is configured.
+  // When a caller has injected an explicit `fetcher` (test seam), proxy
+  // mode is skipped — test fetchers already control egress directly.
+  const proxyMode = options.proxy ?? 'auto';
+  const pool =
+    fetcher === undefined && proxyMode === 'auto'
+      ? options.proxyPool !== undefined
+        ? options.proxyPool
+        : getProxyPool()
+      : null;
+  const proxyActive = pool !== null && pool.size > 0;
+  const proxiedFetch = options.proxiedFetch ?? fetchExternal;
 
   const combinedSignal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
@@ -243,6 +278,28 @@ export async function fetchSafe(
           headers,
         });
       } catch (err) {
+        throw mapFetchError(err, timeoutMs);
+      }
+    } else if (proxyActive) {
+      // Proxied path: SSRF guard runs on the target hostname so the
+      // client-side DNS check still rejects private addresses. The
+      // actual connect goes via fetchExternal -> undici ProxyAgent,
+      // which can't pre-pin DNS across the CONNECT tunnel — that
+      // TOCTOU trade-off is documented in docs/SECURITY.md Rule 13.
+      await guard(current.hostname);
+      try {
+        response = await proxiedFetch(current.toString(), {
+          method: 'GET',
+          redirect: 'manual',
+          signal: combinedSignal,
+          headers,
+        });
+      } catch (err) {
+        // fetchExternal itself throws TransientError when the whole
+        // pool is exhausted; that already has a sensible public
+        // message. Let it + ValidationError bubble unchanged.
+        if (err instanceof ValidationError) throw err;
+        if (err instanceof TransientError) throw err;
         throw mapFetchError(err, timeoutMs);
       }
     } else {
