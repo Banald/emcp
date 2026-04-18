@@ -59,6 +59,11 @@ const envSchema = z.object({
   // sessions and exhausting server memory. Global cap is a backstop.
   MCP_MAX_SESSIONS_PER_KEY: integer(1, 10_000).default(32),
   MCP_MAX_SESSIONS_TOTAL: integer(1, 1_000_000).default(10_000),
+  // Request-receipt timeout (AUDIT L-5). Node's default is 300s, which
+  // lets slowloris-style attackers hold sockets open for 5 minutes per
+  // request. Applies to headers+body only — SSE streams are unaffected
+  // because their response phase sits outside this budget.
+  HTTP_REQUEST_TIMEOUT_MS: integer(10_000, 300_000).default(60_000),
   // Pre-auth defences (AUDIT H-3). `PRE_AUTH_RATE_LIMIT_PER_MINUTE` caps
   // how fast *any* peer can burn through failed lookups; the bucket is
   // keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS` for XFF
@@ -92,6 +97,7 @@ export interface Config {
   readonly mcpToolCallTimeoutMs: number;
   readonly mcpMaxSessionsPerKey: number;
   readonly mcpMaxSessionsTotal: number;
+  readonly httpRequestTimeoutMs: number;
   readonly preAuthRateLimitPerMinute: number;
   readonly authNegCacheTtlSeconds: number;
   readonly trustedProxyCidrs: readonly ParsedCidr[];
@@ -142,6 +148,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     mcpToolCallTimeoutMs: raw.MCP_TOOL_CALL_TIMEOUT_MS,
     mcpMaxSessionsPerKey: raw.MCP_MAX_SESSIONS_PER_KEY,
     mcpMaxSessionsTotal: raw.MCP_MAX_SESSIONS_TOTAL,
+    httpRequestTimeoutMs: raw.HTTP_REQUEST_TIMEOUT_MS,
     preAuthRateLimitPerMinute: raw.PRE_AUTH_RATE_LIMIT_PER_MINUTE,
     authNegCacheTtlSeconds: raw.AUTH_NEG_CACHE_TTL_SECONDS,
     trustedProxyCidrs,

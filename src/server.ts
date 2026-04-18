@@ -126,6 +126,24 @@ export async function createServer(
     }
   });
 
+  // Tighten the request-receipt budget (AUDIT L-5). Node defaults to 300s
+  // — a slow-loris attacker could hold sockets open that long. Applies
+  // only to the request phase (headers + body); SSE streams fire after
+  // that phase ends and so are unaffected. `headersTimeout`,
+  // `keepAliveTimeout`, and `maxRequestsPerSocket` stay at their Node
+  // defaults (60s / 5s / unlimited) — tuning them has a worse
+  // risk/benefit trade for this workload.
+  httpServer.requestTimeout = config.httpRequestTimeoutMs;
+  // Default checking interval is 30s, which means a timed-out request
+  // can linger up to `requestTimeout + 30s` before being closed. Cap
+  // the lag at ~5s (or a quarter of the timeout, whichever is smaller)
+  // so enforcement tracks the configured budget closely. The type
+  // assertion is because `connectionsCheckingInterval` was added in
+  // Node 17.12 but is not yet reflected in `@types/node` at the
+  // version we're pinned to.
+  (httpServer as Server & { connectionsCheckingInterval: number }).connectionsCheckingInterval =
+    Math.max(1000, Math.min(5000, Math.floor(config.httpRequestTimeoutMs / 4)));
+
   const close = async () => {
     clearInterval(cleanupInterval);
     const promises: Promise<void>[] = [];

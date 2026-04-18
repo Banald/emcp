@@ -246,6 +246,7 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `MCP_TOOL_CALL_TIMEOUT_MS` | no | `30000` | Per-tool-call abort timeout. Range 1 s–10 min. Default 30 s. |
 | `MCP_MAX_SESSIONS_PER_KEY` | no | `32` | Concurrent stateful sessions per API key. Over-cap initialises get `RateLimitError` (`-32029`). Range 1–10000. |
 | `MCP_MAX_SESSIONS_TOTAL` | no | `10000` | Process-wide session backstop. Over-cap initialises get a `TransientError` (`-32013`, 503) with `Retry-After: 60`. |
+| `HTTP_REQUEST_TIMEOUT_MS` | no | `60000` | HTTP request-receipt timeout (headers + body). Range 10 s–5 min. Applies to the request phase only; SSE response streams are unaffected. |
 | `PRE_AUTH_RATE_LIMIT_PER_MINUTE` | no | `600` | Pre-auth cap keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS`). Prevents credential-spray traffic from saturating the auth DB lookup. |
 | `AUTH_NEG_CACHE_TTL_SECONDS` | no | `60` | TTL for the Redis negative-lookup cache that short-circuits unknown bearer tokens before Postgres. Range 1 s–1 h. Cleared automatically on `ApiKeyRepository.create`. |
 | `TRUSTED_PROXY_CIDRS` | no | `127.0.0.0/8,::1/128` | Comma-separated CIDRs whose `X-Forwarded-For` header is honoured when picking the rate-limit key. Compose sets the docker bridge CIDRs by default. |

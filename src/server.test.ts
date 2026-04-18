@@ -278,6 +278,22 @@ describe('HTTP server', () => {
       assert.equal(res.status, 404);
     });
   });
+
+  // AUDIT L-5 — the test env sets HTTP_REQUEST_TIMEOUT_MS=60000 by
+  // default (see tests/_helpers/env.ts). Node's out-of-the-box default
+  // is 300_000, so this assertion proves the knob is wired end-to-end
+  // from env → config → httpServer.
+  describe('request-receipt timeout (AUDIT L-5)', () => {
+    it('applies HTTP_REQUEST_TIMEOUT_MS to httpServer.requestTimeout', () => {
+      // 60_000 matches `HTTP_REQUEST_TIMEOUT_MS` from DEFAULT_TEST_ENV.
+      // Node's default is 300_000 — if we ever stop applying the config
+      // this would silently revert.
+      assert.equal(server.requestTimeout, 60_000);
+      const interval = (server as Server & { connectionsCheckingInterval: number })
+        .connectionsCheckingInterval;
+      assert.ok(interval <= 5_000, `expected tightened checking interval, got ${interval}`);
+    });
+  });
 });
 
 describe('MCP endpoint auth and headers', () => {
