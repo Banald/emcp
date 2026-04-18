@@ -21,6 +21,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  scripts:
+    # Static checks for scripts/install.sh and scripts/emcp. Fast (<30s),
+    # runs in parallel with `ci` so shell issues surface without waiting on
+    # the full test suite. shellcheck + bash -n are pre-installed on
+    # ubuntu-latest.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: shellcheck -S warning scripts/install.sh scripts/emcp scripts/install.test.sh
+      - name: bash -n + smoke tests
+        run: bash scripts/install.test.sh
+
   ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15

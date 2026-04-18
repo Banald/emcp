@@ -38,17 +38,109 @@ See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 - `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `migrations/` — SQL migrations.
 
-## Deploy with Docker Compose
+## Quick install
 
-The preferred deployment path. One Dockerfile, one compose file, the whole
-stack (Postgres, Redis, SearXNG, Caddy, server, worker) comes up together.
+The fastest way to run Echo on a Linux host with Docker:
 
-### Prerequisites
+```bash
+curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh | sudo bash
+```
 
-- Docker 24+ with Compose v2
-- Ports 80 and 443 available on the host (or override via `HTTP_PORT` / `HTTPS_PORT`)
+Or, to inspect before running (recommended):
 
-### Steps
+```bash
+curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh -o install.sh
+less install.sh
+sudo bash install.sh
+```
+
+The installer:
+
+- checks prerequisites (Docker 24+, Compose v2, daemon running, free disk)
+- downloads the matched-release source tarball into `/opt/echo`
+- generates the three Docker secrets (`postgres_password.txt`,
+  `redis_password.txt`, `api_key_hmac_secret.txt`)
+- walks you through `.env` with plain-English prompts
+- logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT)
+- brings the stack up and waits for health
+- detects common failures (port already in use, stale `pgdata` volume
+  with mismatched password) and offers a remediation
+- installs the `emcp` command at `/usr/local/bin/emcp` for day-2 ops
+- creates your first API key (optional, interactive)
+
+Non-interactive install (for CI / automation):
+
+```bash
+sudo GHCR_TOKEN="$PAT" bash install.sh \
+  --non-interactive \
+  --public-host echo.example.com --public-scheme https \
+  --allowed-origins https://echo.example.com \
+  --skip-first-key
+```
+
+See `scripts/install.sh --help` for all flags.
+
+### Day-2 commands: `emcp`
+
+Once installed, drive the stack with `emcp` from anywhere — no `cd` into
+the compose directory, no long `docker compose run …` recitations:
+
+```bash
+emcp status                               # show container status
+emcp logs                                 # tail all services
+emcp logs mcp-server                      # tail one
+emcp key create --name "my-client"        # issue an API key
+emcp key list
+emcp key delete <id-or-prefix>
+emcp migrate                              # apply pending migrations
+emcp restart                              # restart the stack
+emcp update                               # pull latest image tag, recreate
+emcp update v0.12.0                       # pin a specific tag
+emcp down                                 # stop (preserves data)
+emcp config                               # re-run the env wizard
+emcp uninstall                            # stop + remove everything (destroys data)
+emcp help                                 # full command list
+```
+
+`emcp key …` is a transparent passthrough to the bundled
+[`keys.ts` CLI](./docs/OPERATIONS.md#api-key-management-cli) — any
+subcommand documented there works, including `show`, `blacklist`,
+`unblacklist`, and `set-rate-limit`.
+
+### TLS
+
+Controlled by `PUBLIC_SCHEME` in `.env` (default `https`). The installer
+sets this for you; you can change it later with `emcp config` or by
+editing `/opt/echo/.env` directly and running `emcp restart`.
+
+**HTTPS mode (`PUBLIC_SCHEME=https`, default).** Caddy picks a strategy
+based on `PUBLIC_HOST`:
+
+- `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
+  Trust once with `caddy trust` if you want browsers to stop warning.
+- A real public hostname → Let's Encrypt. Requires DNS A/AAAA pointing at
+  the host and ports 80/443 reachable from the internet.
+- An internal-only hostname (e.g. `host.corp.local`) needs `tls internal`
+  in `infra/caddy/Caddyfile.https` — Let's Encrypt can't validate it.
+
+**HTTP mode (`PUBLIC_SCHEME=http`).** Caddy serves plaintext on port 80
+with TLS fully disabled. Intended for deployments on trusted internal
+networks. Caveats:
+
+- Bearer tokens on `/mcp` travel in the clear — anyone on-path can read
+  them. Do not use across untrusted networks.
+- Update `ALLOWED_ORIGINS` to include the `http://` origin clients will
+  send.
+
+Switching modes is a restart, not a rebuild: `emcp config` → pick the new
+scheme, or edit `/opt/echo/.env` and `emcp restart`.
+
+## Advanced / manual deploy
+
+The installer above is a thin wrapper around `docker compose`. If you
+prefer to drive compose yourself — forking, iterating on the image
+locally, or placing the install in a non-standard path — here's the
+manual recipe:
 
 ```bash
 git clone https://github.com/Banald/echo.git
@@ -62,6 +154,7 @@ cp .env.example .env
 # 2. Create Docker secrets
 mkdir -p secrets
 openssl rand -base64 24 > secrets/postgres_password.txt
+openssl rand -base64 24 > secrets/redis_password.txt
 openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
 # 0644 (not 0600): Compose `secrets:` bind-mounts these files into the
 # container with host permissions preserved, and the non-root container
@@ -91,7 +184,8 @@ docker compose logs -f mcp-server mcp-worker
 ```
 
 Migrations run automatically via a one-shot `migrate` service on every
-`docker compose up`. To apply pending migrations without touching the rest:
+`docker compose up`. To apply pending migrations without touching the
+rest:
 
 ```bash
 docker compose run --rm migrate
@@ -99,15 +193,16 @@ docker compose run --rm migrate
 
 ### Pinning a specific version
 
-By default compose pulls `ghcr.io/banald/echo:latest`. To pin a release tag
-(recommended for production), set in `.env`:
+By default compose pulls `ghcr.io/banald/echo:latest`. To pin a release
+tag (recommended for production), set in `.env`:
 
 ```
 ECHO_IMAGE_TAG=v0.5.1
 ECHO_PULL_POLICY=always
 ```
 
-Then `docker compose pull && docker compose up -d` to refresh.
+Then `docker compose pull && docker compose up -d` to refresh. If the
+`emcp` CLI is installed, `emcp update v0.5.1` does the same.
 
 ### Building from source instead of pulling
 
@@ -120,35 +215,6 @@ ECHO_PULL_POLICY=build
 
 in `.env`. First `up -d` will build the image from the working tree.
 
-### TLS
-
-Controlled by `PUBLIC_SCHEME` in `.env` (default `https`).
-
-**HTTPS mode (`PUBLIC_SCHEME=https`, default).** Caddy picks a strategy based
-on `PUBLIC_HOST`:
-
-- `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
-  Trust once with `caddy trust` if you want browsers to stop warning.
-- A real public hostname → Let's Encrypt. Requires DNS A/AAAA pointing at the
-  host and ports 80/443 reachable from the internet.
-- An internal-only hostname (e.g. `host.corp.local`) needs `tls internal` in
-  `infra/caddy/Caddyfile.https` — Let's Encrypt can't validate it.
-
-**HTTP mode (`PUBLIC_SCHEME=http`).** Caddy serves plaintext on port 80 with
-TLS fully disabled. Intended for deployments on trusted internal networks
-where installing Caddy's internal CA on every client is impractical and
-Let's Encrypt isn't reachable. Caveats:
-
-- Bearer tokens on `/mcp` travel in the clear — anyone on-path can read them.
-  Do not use across untrusted networks.
-- Update `ALLOWED_ORIGINS` to include the `http://` origin clients will send.
-- Host port 443 is still published by compose but nothing listens on it
-  inside the container; connections are refused. Benign, but set
-  `HTTPS_PORT=` to an unused value if it collides with something else.
-
-Switching modes is a restart, not a rebuild: edit `.env`, then
-`docker compose up -d` picks up the new Caddyfile mount.
-
 ### Required infrastructure
 
 All provisioned by the compose stack — no external dependencies. If you
@@ -156,9 +222,10 @@ need your own DB or Redis, switch to the bare-metal path below.
 
 ### Network
 
-The server binds `0.0.0.0:3000` inside its container but is only reachable
-through Caddy (no other service publishes ports). `/health` and `/metrics`
-remain loopback-only at the app layer, so Caddy forwards them nowhere.
+The server binds `0.0.0.0:3000` inside its container but is only
+reachable through Caddy (no other service publishes ports). `/health`
+and `/metrics` remain loopback-only at the app layer, so Caddy forwards
+them nowhere.
 
 ## Deploy from source (bare-metal, no Docker)
 

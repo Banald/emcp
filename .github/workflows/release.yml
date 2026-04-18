@@ -236,6 +236,15 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Stamp installer version
+        # Rewrite the placeholder ECHO_INSTALLER_VERSION in scripts/install.sh
+        # to the concrete tag. The scripts/install.test.sh smoke test asserts
+        # this line's format, so changes here must stay compatible.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          sed -i "s|^ECHO_INSTALLER_VERSION=.*|ECHO_INSTALLER_VERSION=\"${TAG}\"|" scripts/install.sh
+          grep '^ECHO_INSTALLER_VERSION=' scripts/install.sh
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -250,6 +259,19 @@ jobs:
           fi
           NOTES_FILE=$(mktemp)
           cat > "$NOTES_FILE" <<EOF
+          ## Install with one command
+
+          \`\`\`bash
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${TAG}/install.sh | sudo bash
+          \`\`\`
+
+          The installer pulls this release's image, generates secrets,
+          walks you through the \`.env\` interactively, and installs the
+          \`emcp\` CLI at \`/usr/local/bin/emcp\` for day-2 ops (\`emcp up\`,
+          \`emcp logs\`, \`emcp key create --name "..."\`, etc.).
+
+          See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md#quick-install) for details.
+
           ## Container image
 
           \`\`\`
@@ -261,11 +283,15 @@ jobs:
           \`\`\`
           ${IMAGE}@${DIGEST}
           \`\`\`
-
-          See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md#deploy-with-docker-compose) for deployment instructions.
           EOF
           gh release create "$TAG" \
             --title "Echo $TAG" \
             --notes-file "$NOTES_FILE" \
             --generate-notes \
             $PRERELEASE_FLAG
+      - name: Attach installer + CLI as release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG" scripts/install.sh scripts/emcp --clobber

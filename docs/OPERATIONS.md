@@ -2,6 +2,36 @@
 
 This document covers operational tasks: managing API keys, running migrations, graceful shutdown, and observability endpoints. Read it when modifying CLI tooling, the migration system, the shutdown sequence, or `/health` / `/metrics`.
 
+## The `emcp` command (preferred entry point)
+
+Hosts provisioned by `scripts/install.sh` have `/usr/local/bin/emcp`, a
+thin wrapper around `docker compose` in the install directory (default
+`/opt/echo`). Every operation in this document can be driven through it,
+and `emcp key …` is a full passthrough to the `keys.ts` subcommands
+documented below. The raw `docker compose run …` forms remain supported
+and are the escape hatch when the wrapper doesn't fit.
+
+| Task | `emcp` form | Equivalent raw form |
+|--|--|--|
+| Start the stack | `emcp up` | `docker compose up -d` |
+| Stop the stack | `emcp down` | `docker compose down` |
+| Restart | `emcp restart [svc…]` | `docker compose restart [svc…]` |
+| Status | `emcp status` / `emcp ps` | `docker compose ps` |
+| Logs | `emcp logs [svc…]` | `docker compose logs -f [svc…]` |
+| Health probe | `emcp health` | `docker compose exec mcp-server node -e 'fetch("http://127.0.0.1:3000/health")…'` |
+| Apply migrations | `emcp migrate` | `docker compose run --rm migrate` |
+| Migration status | `emcp migrate status` | `docker compose run --rm migrate node dist/db/migrate.js status` |
+| Roll back N | `emcp migrate down 1` | `docker compose run --rm migrate node dist/db/migrate.js down 1` |
+| Create API key | `emcp key create --name "..."` | `docker compose run --rm mcp-server node dist/cli/keys.js create --name "..."` |
+| List API keys | `emcp key list` | `docker compose run --rm mcp-server node dist/cli/keys.js list` |
+| Pull new image | `emcp update [tag]` | edit `ECHO_IMAGE_TAG` in `.env`, `docker compose pull && docker compose up -d` |
+| Re-run env wizard | `emcp config` | edit `.env` by hand, `docker compose up -d` |
+| Uninstall | `emcp uninstall` | `docker compose down -v && rm -rf /opt/echo` |
+
+`emcp` resolves the install directory from `/etc/echo/config` (written by
+`install.sh`) and falls back to `/opt/echo`. Override per-invocation with
+`ECHO_HOME=/alt/path emcp …`.
+
 ## API key management (CLI)
 
 API keys are managed via a CLI script at `src/cli/keys.ts`, run with `node --env-file=.env src/cli/keys.ts <command>`. There is **no admin HTTP endpoint** — managing keys requires shell access to the host. This eliminates an entire class of attack surface.
