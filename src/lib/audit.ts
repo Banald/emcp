@@ -1,5 +1,6 @@
 import { type Logger as PinoLogger, pino } from 'pino';
 import { config } from '../config.ts';
+import { REDACT_PATHS } from './logger.ts';
 
 /**
  * Audit stream. Separate from the operational logger so retention,
@@ -11,7 +12,29 @@ import { config } from '../config.ts';
  * All emit helpers are explicitly typed to enforce an allowlist of
  * fields — a future tool handler cannot leak stray data into this
  * stream because the public surface only accepts the documented shape.
+ *
+ * Redact config is a superset of the operational logger's (SECURITY
+ * Rule 12 / AUDIT L-2): the CLI's `audit(logger, event, msg, context)`
+ * accepts an untyped bag of fields, so a future caller could drop a
+ * raw bearer in by accident. Redact paths here include the operational
+ * set plus audit-specific credential-ish keys (`api_key`, `raw_key`,
+ * `bearer`, `authorization`) so a slip never produces a cleartext
+ * record.
  */
+
+// Audit-only paths on top of the operational ones. Kept narrow — any
+// wildcard here has to fire on every audit record.
+const AUDIT_EXTRA_REDACT_PATHS: readonly string[] = Object.freeze([
+  '*.api_key',
+  '*.raw_key',
+  '*.bearer',
+  '*.authorization',
+]);
+
+export const AUDIT_REDACT_PATHS: readonly string[] = Object.freeze([
+  ...REDACT_PATHS,
+  ...AUDIT_EXTRA_REDACT_PATHS,
+]);
 
 function buildAuditLogger(): PinoLogger {
   return pino({
@@ -22,6 +45,10 @@ function buildAuditLogger(): PinoLogger {
     level: config.logLevel === 'silent' ? 'silent' : 'info',
     base: { stream: 'audit' },
     formatters: { level: (label) => ({ level: label }) },
+    redact: {
+      paths: [...AUDIT_REDACT_PATHS],
+      censor: '[REDACTED]',
+    },
   });
 }
 

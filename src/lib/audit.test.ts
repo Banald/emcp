@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-import { auditAuthFail, auditLogger, auditRateLimitHit, auditToolCall } from './audit.ts';
+import { pino } from 'pino';
+import {
+  AUDIT_REDACT_PATHS,
+  auditAuthFail,
+  auditLogger,
+  auditRateLimitHit,
+  auditToolCall,
+} from './audit.ts';
 
 describe('auditLogger', () => {
   let infoMock: ReturnType<typeof mock.method>;
@@ -95,5 +102,75 @@ describe('auditLogger', () => {
       tool: 'fetch-url',
     });
     assert.equal(lastCall().payload.tool, 'fetch-url');
+  });
+});
+
+describe('audit redaction (AUDIT L-2)', () => {
+  // Build a standalone pino logger configured with the exported redact
+  // set and capture its serialized output, so we're asserting on the
+  // real Pino redaction rather than a mocked info method.
+  function captureEmit(context: Record<string, unknown>): string {
+    const chunks: string[] = [];
+    const logger = pino(
+      {
+        level: 'info',
+        redact: {
+          paths: [...AUDIT_REDACT_PATHS],
+          censor: '[REDACTED]',
+        },
+      },
+      { write: (chunk: string) => chunks.push(chunk) },
+    );
+    logger.info(context, 'audit test');
+    return chunks.join('');
+  }
+
+  it('redacts operational paths (authorization, cookie, x-api-key, password, secret, token)', () => {
+    const out = captureEmit({
+      req: {
+        headers: {
+          authorization: 'Bearer leak',
+          cookie: 'session=leak',
+          'x-api-key': 'leak',
+        },
+      },
+      nested: {
+        apiKey: 'leak',
+        password: 'leak',
+        secret: 'leak',
+        token: 'leak',
+        hmacSecret: 'leak',
+      },
+    });
+    assert.ok(!/Bearer leak/.test(out), 'authorization must be redacted');
+    assert.ok(!/session=leak/.test(out), 'cookie must be redacted');
+    // Every mention of the literal "leak" should be gone from the payload.
+    assert.equal(out.match(/leak/g), null);
+    assert.ok(/\[REDACTED]/.test(out));
+  });
+
+  it('redacts audit-specific wildcard fields (api_key, raw_key, bearer, authorization)', () => {
+    const out = captureEmit({
+      ctx: {
+        api_key: 'mcp_live_should_never_appear',
+        raw_key: 'raw_should_never_appear',
+        bearer: 'bearer_should_never_appear',
+        authorization: 'Bearer should_never_appear',
+      },
+    });
+    assert.ok(
+      !/mcp_live_should_never_appear|raw_should_never_appear|bearer_should_never_appear|should_never_appear/.test(
+        out,
+      ),
+      'audit-only paths must be redacted',
+    );
+    assert.ok(/\[REDACTED]/.test(out));
+  });
+
+  it('preserves non-sensitive audit fields verbatim', () => {
+    const out = captureEmit({ event: 'tool.call', tool: 'web-search', outcome: 'success' });
+    assert.match(out, /"event":"tool.call"/);
+    assert.match(out, /"tool":"web-search"/);
+    assert.match(out, /"outcome":"success"/);
   });
 });
