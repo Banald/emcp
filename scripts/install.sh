@@ -37,6 +37,13 @@
 #     --uninstall              see also `emcp uninstall`.
 #     --force                  skip confirmation prompts (destructive ops
 #                              still re-prompt for safety).
+#     --proxy-urls <csv>       rotating-proxy pool (http/https URLs, CSV).
+#                              Empty CSV or --no-proxy disables routing.
+#     --proxy-rotation <mode>  round-robin (default) | random
+#     --searxng-proxies <csv>  proxies SearXNG engines use. Empty = direct.
+#                              Defaults to the same list as --proxy-urls.
+#     --no-proxy               explicitly opt out of the proxy wizard
+#                              (useful in --non-interactive runs).
 #     -h, --help
 # ---------------------------------------------------------------------------
 
@@ -79,6 +86,15 @@ RECONFIGURE=0
 FROM_LOCAL=""
 UNINSTALL=0
 FORCE=0
+# Proxy wizard inputs. Empty means "not yet answered"; after the wizard
+# runs, PROXY_URLS/SEARXNG_OUTGOING_PROXIES hold the final CSV (possibly
+# empty), PROXY_ROTATION holds the strategy. NO_PROXY_FLAG=1 short-
+# circuits the prompt in --non-interactive mode.
+PROXY_URLS=""
+PROXY_ROTATION=""
+SEARXNG_OUTGOING_PROXIES=""
+SEARXNG_OUTGOING_PROXIES_SET=0  # 1 when the flag or existing env set it
+NO_PROXY_FLAG=0
 
 # Filled during the run
 ECHO_HOME=""
@@ -110,7 +126,10 @@ die() { log_error "$*"; exit 1; }
 # --- Arg parsing -----------------------------------------------------------
 
 usage() {
-    sed -n '3,38p' "$0"
+    # Prints the header comment block (lines 3..end-of-block). The range
+    # grew when the proxy-wizard flags were added; the end line is the
+    # "# -----..." divider that closes the block at top of file.
+    sed -n '3,47p' "$0"
     exit "${1:-0}"
 }
 
@@ -135,6 +154,13 @@ parse_args() {
             --from-local)       FROM_LOCAL="$2"; shift 2 ;;
             --uninstall)        UNINSTALL=1; shift ;;
             --force)            FORCE=1; shift ;;
+            --proxy-urls)       PROXY_URLS="$2"; shift 2 ;;
+            --proxy-rotation)   PROXY_ROTATION="$2"; shift 2 ;;
+            --searxng-proxies)
+                SEARXNG_OUTGOING_PROXIES="$2"
+                SEARXNG_OUTGOING_PROXIES_SET=1
+                shift 2 ;;
+            --no-proxy)         NO_PROXY_FLAG=1; shift ;;
             -h|--help)          usage 0 ;;
             *) die "unknown flag: $1 (try --help)" ;;
         esac
@@ -468,11 +494,91 @@ load_existing_env_defaults() {
             POSTGRES_USER)     [ -z "$POSTGRES_USER" ]    && POSTGRES_USER="$(dequote "$v")" ;;
             POSTGRES_DB)       [ -z "$POSTGRES_DB" ]      && POSTGRES_DB="$(dequote "$v")" ;;
             SEARXNG_SECRET)    SEARXNG_SECRET_EXISTING="$(dequote "$v")" ;;
+            PROXY_URLS)        [ -z "$PROXY_URLS" ]       && PROXY_URLS="$(dequote "$v")" ;;
+            PROXY_ROTATION)    [ -z "$PROXY_ROTATION" ]   && PROXY_ROTATION="$(dequote "$v")" ;;
+            SEARXNG_OUTGOING_PROXIES)
+                if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                    SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
+                    SEARXNG_OUTGOING_PROXIES_SET=1
+                fi ;;
         esac
     done < <(grep -E '^[A-Z_]+=' "$f" || true)
 }
 
 dequote() { local s="$1"; s="${s%\"}"; s="${s#\"}"; printf '%s' "$s"; }
+
+# Mask the user:pass segment of a proxy URL for echo-back. Mirrors
+# maskProxyUrl in src/shared/net/proxy/redact.ts so the CLI and the
+# runtime speak the same language about redaction.
+mask_proxy_url() {
+    local url="$1"
+    # sed -E: replace `scheme://...@` with `scheme://***@`. Leaves
+    # credential-less URLs untouched.
+    printf '%s' "$url" | sed -E 's|^([A-Za-z][A-Za-z0-9+.-]*://)[^@/?#]*@|\1***@|'
+}
+
+mask_proxy_url_csv() {
+    local csv="$1"
+    local out=""
+    local old_ifs="$IFS"
+    IFS=','
+    # shellcheck disable=SC2086
+    set -- $csv
+    IFS="$old_ifs"
+    for raw in "$@"; do
+        local trimmed
+        trimmed="$(printf '%s' "$raw" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        [ -z "$trimmed" ] && continue
+        if [ -z "$out" ]; then
+            out="$(mask_proxy_url "$trimmed")"
+        else
+            out="${out},$(mask_proxy_url "$trimmed")"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+# Validate a single proxy URL: http:// or https:// scheme, non-empty
+# host, optional user:pass. Returns 0 on success, 1 (with a log_warn)
+# on failure. Echoes no credentials — only the host:port portion.
+validate_proxy_url() {
+    local url="$1"
+    case "$url" in
+        http://*|https://*) : ;;
+        *) log_warn "proxy URL must start with http:// or https://"; return 1 ;;
+    esac
+    # Strip the scheme, then strip userinfo if present to get "host[:port]/path".
+    local after_scheme host_part
+    after_scheme="${url#*://}"
+    host_part="${after_scheme#*@}"
+    # If `#*@` didn't strip anything (no @ in URL), host_part == after_scheme.
+    # Pull just the host:port fragment (up to first /, ?, or #).
+    host_part="${host_part%%/*}"
+    host_part="${host_part%%\?*}"
+    host_part="${host_part%%#*}"
+    if [ -z "$host_part" ]; then
+        log_warn "proxy URL has no host: $(mask_proxy_url "$url")"
+        return 1
+    fi
+    return 0
+}
+
+# Validate every URL in a CSV. Returns 0 only when every token parses.
+validate_proxy_csv() {
+    local csv="$1"
+    local old_ifs="$IFS"
+    IFS=','
+    # shellcheck disable=SC2086
+    set -- $csv
+    IFS="$old_ifs"
+    for raw in "$@"; do
+        local trimmed
+        trimmed="$(printf '%s' "$raw" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        [ -z "$trimmed" ] && continue
+        validate_proxy_url "$trimmed" || return 1
+    done
+    return 0
+}
 
 write_env_file() {
     local searxng_secret="$1"
@@ -496,6 +602,7 @@ POSTGRES_DB=${POSTGRES_DB}
 
 # --- SearXNG ---
 SEARXNG_SECRET=${searxng_secret}
+SEARXNG_OUTGOING_PROXIES=${SEARXNG_OUTGOING_PROXIES}
 
 # --- Caddy / TLS ---
 PUBLIC_SCHEME=${PUBLIC_SCHEME}
@@ -511,7 +618,135 @@ ECHO_PULL_POLICY=always
 DATABASE_POOL_MAX=10
 RATE_LIMIT_DEFAULT_PER_MINUTE=60
 SHUTDOWN_TIMEOUT_MS=30000
+
+# --- Outbound proxy rotation (optional) ---
+# PROXY_URLS is a comma-separated list of http(s) proxy URLs the
+# mcp-server + mcp-worker processes rotate across for every external
+# fetch. Empty = feature disabled. See docs/ARCHITECTURE.md "Proxy
+# egress" for the full semantics.
+PROXY_URLS=${PROXY_URLS}
+PROXY_ROTATION=${PROXY_ROTATION:-round-robin}
+PROXY_FAILURE_COOLDOWN_MS=60000
+PROXY_MAX_RETRIES_PER_REQUEST=3
+PROXY_CONNECT_TIMEOUT_MS=10000
 EOF
+}
+
+# --- Proxy wizard ----------------------------------------------------------
+
+phase_proxy_wizard() {
+    log_step "Optional: outbound proxy rotation"
+
+    # Flag short-circuits: --no-proxy or explicit --proxy-urls="" mean
+    # "don't enable proxies". An existing PROXY_URLS value is treated as
+    # the default answer in re-runs.
+    if [ "$NO_PROXY_FLAG" -eq 1 ]; then
+        PROXY_URLS=""
+        PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
+        # Only clear SEARXNG_OUTGOING_PROXIES if the operator didn't
+        # explicitly supply --searxng-proxies — that flag is allowed to
+        # diverge from the server-side pool.
+        if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+            SEARXNG_OUTGOING_PROXIES=""
+        fi
+        log_info "proxy rotation disabled (--no-proxy)"
+        return 0
+    fi
+
+    # If PROXY_URLS is non-empty already (from a flag or existing .env),
+    # skip the yes/no prompt. The operator has already chosen.
+    local skip_prompt=0
+    if [ -n "$PROXY_URLS" ]; then
+        skip_prompt=1
+    fi
+
+    if [ "$skip_prompt" -eq 0 ]; then
+        if [ "$NON_INTERACTIVE" -eq 1 ]; then
+            # --non-interactive with no --proxy-urls and no existing
+            # value → feature stays off. The operator can always re-run
+            # with --proxy-urls later.
+            PROXY_URLS=""
+            PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
+            if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                SEARXNG_OUTGOING_PROXIES=""
+            fi
+            log_info "proxy rotation not configured (--non-interactive without --proxy-urls)"
+            return 0
+        fi
+        if ! prompt_yesno "Route outbound HTTP through rotating proxies? Useful when SearXNG engines or upstream APIs rate-limit by IP." n; then
+            PROXY_URLS=""
+            PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
+            if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                SEARXNG_OUTGOING_PROXIES=""
+            fi
+            log_info "proxy rotation skipped"
+            return 0
+        fi
+    fi
+
+    # Collect + validate PROXY_URLS.
+    while true; do
+        local current="$PROXY_URLS"
+        # Prompt explicitly so the confirm line shows a masked default.
+        if [ -n "$current" ]; then
+            if ! prompt_yesno "Keep existing proxy list ($(mask_proxy_url_csv "$current"))?" y; then
+                current=""
+            fi
+        fi
+        if [ -z "$current" ]; then
+            if [ "$NON_INTERACTIVE" -eq 1 ]; then
+                die "--non-interactive: --proxy-urls is required when the wizard would otherwise prompt"
+            fi
+            read -r -p "${C_CYAN}?${C_RESET} Comma-separated proxy URLs (http://user:pass@host:port,...): " current
+        fi
+        if [ -z "$current" ]; then
+            log_warn "proxy URL list cannot be empty when the feature is enabled"
+            continue
+        fi
+        if validate_proxy_csv "$current"; then
+            PROXY_URLS="$current"
+            break
+        fi
+    done
+    log_info "proxies configured: $(mask_proxy_url_csv "$PROXY_URLS")"
+
+    # Rotation strategy.
+    local default_rotation="${PROXY_ROTATION:-round-robin}"
+    PROXY_ROTATION=""
+    prompt PROXY_ROTATION "Rotation strategy (round-robin | random)" "$default_rotation" validate_rotation
+
+    # SearXNG proxies: default to the same list so the common "rotate
+    # everything" case is a single prompt. Offer the operator a chance
+    # to use a different list (or leave SearXNG on direct).
+    if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+        if [ "$NON_INTERACTIVE" -eq 1 ]; then
+            SEARXNG_OUTGOING_PROXIES="$PROXY_URLS"
+        elif prompt_yesno "Use the same proxies for SearXNG's engine scrapers?" y; then
+            SEARXNG_OUTGOING_PROXIES="$PROXY_URLS"
+        else
+            local searxng_input=""
+            read -r -p "${C_CYAN}?${C_RESET} SearXNG proxy URLs (blank = direct egress): " searxng_input
+            if [ -n "$searxng_input" ] && ! validate_proxy_csv "$searxng_input"; then
+                log_warn "invalid SearXNG proxy list; falling back to direct egress"
+                SEARXNG_OUTGOING_PROXIES=""
+            else
+                SEARXNG_OUTGOING_PROXIES="$searxng_input"
+            fi
+        fi
+        SEARXNG_OUTGOING_PROXIES_SET=1
+    fi
+    if [ -n "$SEARXNG_OUTGOING_PROXIES" ]; then
+        log_info "SearXNG proxies: $(mask_proxy_url_csv "$SEARXNG_OUTGOING_PROXIES")"
+    else
+        log_info "SearXNG engines will egress directly (no proxy)"
+    fi
+}
+
+validate_rotation() {
+    case "$1" in
+        round-robin|random) return 0 ;;
+        *) log_warn "rotation must be 'round-robin' or 'random'"; return 1 ;;
+    esac
 }
 
 # --- Port utilities --------------------------------------------------------
@@ -935,6 +1170,7 @@ phase_reconfigure() {
     [ -f "$ECHO_HOME/compose.yaml" ] || die "no existing install at $ECHO_HOME (run install.sh first)"
     log_step "Reconfigure $ECHO_HOME/.env"
     phase_env_wizard
+    phase_proxy_wizard
     log_info "restarting stack to pick up new .env"
     ( cd "$ECHO_HOME" && docker compose up -d ) || die "docker compose up failed"
     wait_for_healthy && log_ok "stack healthy" || phase_postflight_detection
@@ -960,6 +1196,7 @@ main() {
     phase_fetch_source
     phase_generate_secrets
     phase_env_wizard
+    phase_proxy_wizard
     phase_ghcr_login
     phase_compose_up
     phase_postflight_detection

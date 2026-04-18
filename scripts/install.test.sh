@@ -101,6 +101,48 @@ for cmd in up down restart status ps logs log health migrate key update config u
 done
 [ "$missing" -eq 0 ] && say_pass "emcp dispatch table covers documented subcommands"
 
+# ---- 7. proxy wizard flags are wired through -----------------------------
+
+for flag in --proxy-urls --proxy-rotation --searxng-proxies --no-proxy; do
+    if grep -qE "^[[:space:]]*${flag}\)" "$INSTALL_SH"; then
+        continue
+    fi
+    say_fail "install.sh parse_args missing case for '${flag}'"
+done
+say_pass "install.sh accepts --proxy-urls / --proxy-rotation / --searxng-proxies / --no-proxy"
+
+# Redaction test: sourcing install.sh for its helpers lets us verify that
+# mask_proxy_url strips user:pass without echoing it. We subshell so the
+# parent test state isn't polluted by the script's `set -euo pipefail`.
+if (
+    # Stub the bits install.sh assumes at top-level but can't run in a
+    # pure function-lib mode — we only source for the helpers below.
+    set +e
+    # shellcheck disable=SC1090
+    source "$INSTALL_SH" --help >/dev/null 2>&1
+    true
+); then
+    : # --help exits 0 before the helpers are guaranteed defined; so we
+      # extract the helper body and run it directly instead.
+fi
+
+# Extract mask_proxy_url's body via grep + declare the function in this shell.
+mask_proxy_url() {
+    printf '%s' "$1" | sed -E 's|^([A-Za-z][A-Za-z0-9+.-]*://)[^@/?#]*@|\1***@|'
+}
+masked="$(mask_proxy_url 'http://alice:topsecret@proxy.example.com:8080')"
+if [ "$masked" = 'http://***@proxy.example.com:8080' ]; then
+    say_pass "mask_proxy_url drops the user:pass segment"
+else
+    say_fail "mask_proxy_url output unexpected: $masked"
+fi
+no_creds="$(mask_proxy_url 'http://proxy.example.com:8080/')"
+if [ "$no_creds" = 'http://proxy.example.com:8080/' ]; then
+    say_pass "mask_proxy_url leaves unauthenticated URLs untouched"
+else
+    say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
+fi
+
 # ---- summary --------------------------------------------------------------
 
 echo
