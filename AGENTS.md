@@ -140,6 +140,6 @@ Stop and ask the user. This codebase prefers a 30-second clarifying question ove
 
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`.
 - One logical change per commit. Tests in the same commit as the code they cover.
-- Do not reference the build plan phase, use feat if applicable: `feat(auth): implement HMAC key hashing`.
+- Prefer a scope when it clarifies the change: `feat(auth): implement HMAC key hashing`.
 - If you deviated from a `docs/` convention, explain why in the body.
 - Never include co-authored by Claude or reveal that you are an AI in the commits.
