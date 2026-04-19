@@ -162,7 +162,22 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. port-conflict guard when caddy holds the port (C3) ----------------
+# ---- 8. preflight gates: compose version + arch (H1, H2) ------------------
+
+if grep -qE 'docker compose version --short' "$INSTALL_SH" \
+   && grep -qE 'needs >= 2\.17' "$INSTALL_SH"; then
+    say_pass "preflight gates on docker compose >= 2.17 (H1)"
+else
+    say_fail "preflight missing compose >= 2.17 gate (H1)"
+fi
+if grep -qE 'uname -m' "$INSTALL_SH" \
+   && grep -qE 'x86_64\|amd64' "$INSTALL_SH"; then
+    say_pass "preflight warns on non-amd64 host (H2)"
+else
+    say_fail "preflight missing arch check (H2)"
+fi
+
+# ---- 9. port-conflict guard when caddy holds the port (C3) ----------------
 
 if grep -qE '^caddy_holds_port\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines caddy_holds_port helper (C3)"

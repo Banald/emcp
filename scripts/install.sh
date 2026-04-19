@@ -354,11 +354,39 @@ phase_preflight() {
         exit 1
     fi
 
+    # compose.yaml uses `service_completed_successfully` (compose v2.17+).
+    # Older versions fail with a cryptic YAML validation error at `up` time.
+    local compose_ver maj min
+    compose_ver="$(docker compose version --short 2>/dev/null | sed 's/^v//')"
+    if [ -z "$compose_ver" ]; then
+        compose_ver="$(docker compose version 2>/dev/null \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+    fi
+    if [ -n "$compose_ver" ]; then
+        IFS=. read -r maj min _ <<< "$compose_ver"
+        if [ "${maj:-0}" -lt 2 ] \
+           || { [ "${maj:-0}" -eq 2 ] && [ "${min:-0}" -lt 17 ]; }; then
+            die "docker compose $compose_ver is too old — eMCP needs >= 2.17 (service_completed_successfully). Upgrade: https://docs.docker.com/compose/install/"
+        fi
+    else
+        log_warn "could not determine docker compose version; assuming it's recent enough"
+    fi
+
     if ! docker info >/dev/null 2>&1; then
         log_error "cannot reach the Docker daemon."
         log_error "start it with: systemctl enable --now docker"
         exit 1
     fi
+
+    # H2: CI publishes linux/amd64 only. Other arches silently fail at pull
+    # or run time with `exec format error`. Warn so the operator can set
+    # EMCP_PULL_POLICY=build in .env (compose builds from the Dockerfile).
+    local arch; arch="$(uname -m)"
+    case "$arch" in
+        x86_64|amd64) : ;;
+        *)
+            log_warn "host arch is ${arch}; eMCP images publish linux/amd64 only. Set EMCP_PULL_POLICY=build in .env after the wizard if you want to rebuild from source." ;;
+    esac
 
     for bin in openssl curl tar sed awk; do
         command -v "$bin" >/dev/null 2>&1 || die "missing required binary: $bin"
