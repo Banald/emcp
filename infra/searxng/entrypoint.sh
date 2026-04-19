@@ -81,5 +81,17 @@ else
 fi
 
 # Chain to the upstream SearXNG entrypoint, which handles SEARXNG_SECRET
-# substitution, signal forwarding, and exec-ing the uwsgi server.
-exec /usr/local/searxng/dockerfiles/docker-entrypoint.sh "$@"
+# substitution, signal forwarding, and exec-ing the uwsgi server. The
+# upstream image flattened `dockerfiles/docker-entrypoint.sh` into a
+# top-level `entrypoint.sh` somewhere around the 2026.x series — try the
+# new path first and fall back to the legacy path so older pinned tags
+# still work.
+for candidate in \
+    /usr/local/searxng/entrypoint.sh \
+    /usr/local/searxng/dockerfiles/docker-entrypoint.sh; do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
+echo "[emcp-searxng] upstream entrypoint not found — image layout changed again?" >&2
+exit 1
