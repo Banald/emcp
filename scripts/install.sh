@@ -1248,6 +1248,71 @@ retry_compose_up() {
     return 0
 }
 
+# --- Smoke test -----------------------------------------------------------
+
+# POST /mcp with a bogus Authorization bearer via loopback — using
+# curl --resolve so the Host header matches EMCP_PUBLIC_HOST. A healthy
+# stack returns HTTP 401 (AuthRequiredError) from the auth middleware:
+# that's the "auth is actually running" signal. Anything else is a
+# misconfiguration or a warming state. Always warning-only — never blocks
+# the install on a "new deploy, Let's Encrypt not ready" scenario.
+phase_smoke_test() {
+    log_step "Smoke test: verify auth middleware on /mcp"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        log_warn "curl missing; skipping smoke test"
+        return 0
+    fi
+
+    local scheme="${EMCP_PUBLIC_SCHEME:-https}"
+    local host="${EMCP_PUBLIC_HOST:-localhost}"
+    local port
+    if [ "$scheme" = "https" ]; then
+        port="${EMCP_HTTPS_PORT:-443}"
+    else
+        port="${EMCP_HTTP_PORT:-80}"
+    fi
+    local url="${scheme}://${host}:${port}/mcp"
+
+    local -a curl_args=(
+        --max-time 5
+        --silent
+        --output /dev/null
+        --write-out '%{http_code}'
+        --resolve "${host}:${port}:127.0.0.1"
+        -H 'Content-Type: application/json'
+        -H 'Authorization: Bearer smoketest-not-a-real-key'
+        -X POST
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"emcp-installer-smoke","version":"1"}}}'
+    )
+    [ "$scheme" = "https" ] && curl_args+=(-k)
+
+    local rc=0 code
+    code="$(curl "${curl_args[@]}" "$url" 2>/dev/null)" || rc=$?
+
+    case "${rc}:${code}" in
+        0:401)
+            log_ok "/mcp returned 401 for a bogus key — auth middleware is active" ;;
+        0:403)
+            log_warn "/mcp returned 403 — check EMCP_ALLOWED_ORIGINS and EMCP_PUBLIC_HOST match the client's expected values" ;;
+        0:429)
+            log_warn "/mcp returned 429 — pre-auth rate limit fired on a smoke test; inspect EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE" ;;
+        0:2??|0:204)
+            log_warn "/mcp returned ${code} — a bogus key should not succeed. Auth layer may not be active" ;;
+        0:5??)
+            log_warn "/mcp returned ${code} — server error before the auth check. See: emcp logs mcp-server" ;;
+        0:*)
+            log_warn "/mcp returned unexpected HTTP ${code:-<empty>}" ;;
+        6:*|7:*|28:*)
+            log_warn "could not reach $url (curl exit $rc); the stack may still be warming up" ;;
+        35:*|60:*|77:*)
+            log_warn "TLS handshake failed at $url (curl exit $rc); Let's Encrypt may not be ready yet — retry 'emcp health' in 60s" ;;
+        *)
+            log_warn "smoke test inconclusive: curl exit $rc, HTTP ${code:-<empty>}" ;;
+    esac
+    return 0
+}
+
 # --- Install emcp CLI ------------------------------------------------------
 
 phase_install_emcp() {
@@ -1401,7 +1466,12 @@ phase_reconfigure() {
     log_info "restarting stack to pick up new .env"
     run_and_log "docker compose up -d (reconfigure)" compose_cd up -d \
         || die "docker compose up failed"
-    wait_for_healthy && log_ok "stack healthy" || phase_postflight_detection
+    if wait_for_healthy; then
+        log_ok "stack healthy"
+    else
+        phase_postflight_detection
+    fi
+    phase_smoke_test
 }
 
 # --- Main ------------------------------------------------------------------
@@ -1458,6 +1528,7 @@ main() {
     phase_ghcr_login
     phase_compose_up
     phase_postflight_detection
+    phase_smoke_test
     phase_install_emcp
     phase_first_key
     phase_summary

@@ -162,7 +162,27 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. health wait progress + jq fallback (H3, L1) -----------------------
+# ---- 8. smoke test after compose up (H4) ----------------------------------
+
+if grep -qE '^phase_smoke_test\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines phase_smoke_test (H4)"
+else
+    say_fail "install.sh missing phase_smoke_test (H4)"
+fi
+if grep -qE 'curl_args\+=.*-k' "$INSTALL_SH" \
+   && grep -qE -- '--resolve "\$\{host\}:\$\{port\}:127\.0\.0\.1"' "$INSTALL_SH"; then
+    say_pass "phase_smoke_test uses curl --resolve + -k for HTTPS (H4)"
+else
+    say_fail "phase_smoke_test curl args missing --resolve or -k (H4)"
+fi
+# Main + reconfigure both call it.
+if grep -cE '^[[:space:]]*phase_smoke_test$' "$INSTALL_SH" | awk '{exit ($1 >= 2) ? 0 : 1}'; then
+    say_pass "phase_smoke_test wired into both main and reconfigure (H4)"
+else
+    say_fail "phase_smoke_test only wired into one entry point (H4)"
+fi
+
+# ---- 9. health wait progress + jq fallback (H3, L1) -----------------------
 
 if grep -qE 'still waiting \(elapsed' "$INSTALL_SH"; then
     say_pass "wait_for_healthy emits progress snapshot (H3)"
