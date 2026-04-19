@@ -11,11 +11,18 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpServer, request as httpRequest, type Server } from 'node:http';
 import { connect as tcpConnect } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { TransientError } from '../../src/lib/errors.ts';
-import { fetchExternal } from '../../src/shared/net/egress.ts';
-import { fetchSafe } from '../../src/shared/net/http.ts';
-import { buildPoolFromConfig } from '../../src/shared/net/proxy/registry.ts';
+// Type-only imports from src/ are erased, so they don't trigger the
+// config load at module-init time. The runtime handles below are
+// filled in during before() — see the comment there for the rationale.
 import type { ProxyPool } from '../../src/shared/net/proxy/types.ts';
+import { buildTestEnv } from '../_helpers/env.ts';
+
+// Lazy handles for src/ modules. Populated by before() after the test
+// env is forcibly applied; see the note at the before() call site.
+let TransientError: typeof import('../../src/lib/errors.ts').TransientError;
+let fetchExternal: typeof import('../../src/shared/net/egress.ts').fetchExternal;
+let fetchSafe: typeof import('../../src/shared/net/http.ts').fetchSafe;
+let buildPoolFromConfig: typeof import('../../src/shared/net/proxy/registry.ts').buildPoolFromConfig;
 
 interface StubProxy {
   readonly server: Server;
@@ -130,6 +137,19 @@ describe('proxy egress lifecycle', { timeout: 30_000 }, () => {
   let upstream: Awaited<ReturnType<typeof createStubUpstream>>;
 
   before(async () => {
+    // The CI integration env sets `PORT=0` (and `DATABASE_URL`,
+    // `REDIS_URL`) as deliberate placeholders that every integration
+    // test overrides before loading any src/ module — src/config.ts
+    // rejects PORT=0 at Zod validation time. Object.assign-ing the
+    // full DEFAULT_TEST_ENV overwrites each key unconditionally so the
+    // dynamic imports below see a config-valid environment. Matches
+    // the pattern in tests/integration/{http-timeouts,shutdown,worker}
+    // .test.ts.
+    Object.assign(process.env, buildTestEnv());
+    ({ TransientError } = await import('../../src/lib/errors.ts'));
+    ({ fetchExternal } = await import('../../src/shared/net/egress.ts'));
+    ({ fetchSafe } = await import('../../src/shared/net/http.ts'));
+    ({ buildPoolFromConfig } = await import('../../src/shared/net/proxy/registry.ts'));
     proxyA = await createStubProxy();
     proxyB = await createStubProxy();
     upstream = await createStubUpstream();
