@@ -538,7 +538,6 @@ phase_env_wizard() {
     [ -n "$searxng_secret" ] || searxng_secret="$(openssl rand -hex 32)"
 
     write_env_file "$searxng_secret"
-    chmod 0600 "$EMCP_HOME/.env"
     log_ok ".env written to $EMCP_HOME/.env (0600)"
 }
 
@@ -644,13 +643,72 @@ validate_proxy_csv() {
     return 0
 }
 
+# Keys the wizard owns in the .env block. Anything else present in an
+# existing .env is preserved verbatim under "# --- Preserved user overrides
+# ---" so `emcp config` and upgrades don't silently drop operator-added
+# tunables like EMCP_MCP_MAX_BODY_BYTES or EMCP_TRUSTED_PROXY_CIDRS.
+EMCP_MANAGED_ENV_KEYS=(
+    NODE_ENV
+    EMCP_LOG_LEVEL
+    EMCP_PUBLIC_HOST
+    EMCP_ALLOWED_ORIGINS
+    EMCP_POSTGRES_USER
+    EMCP_POSTGRES_DB
+    EMCP_SEARXNG_SECRET
+    EMCP_SEARXNG_OUTGOING_PROXIES
+    EMCP_PUBLIC_SCHEME
+    EMCP_HTTP_PORT
+    EMCP_HTTPS_PORT
+    EMCP_GHCR_OWNER
+    EMCP_IMAGE_TAG
+    EMCP_PULL_POLICY
+    EMCP_DATABASE_POOL_MAX
+    EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE
+    EMCP_SHUTDOWN_TIMEOUT_MS
+    EMCP_PROXY_URLS
+    EMCP_PROXY_ROTATION
+    EMCP_PROXY_FAILURE_COOLDOWN_MS
+    EMCP_PROXY_MAX_RETRIES_PER_REQUEST
+    EMCP_PROXY_CONNECT_TIMEOUT_MS
+)
+
+# Append every KEY=VALUE line from $src whose KEY is NOT in
+# EMCP_MANAGED_ENV_KEYS to $out. Comments and blank lines are dropped
+# because the new managed block has its own commentary.
+preserve_overrides() {
+    local src="$1" out="$2"
+    [ -f "$src" ] || return 0
+    local pat
+    pat="$(IFS='|'; printf '%s' "^(${EMCP_MANAGED_ENV_KEYS[*]})=")"
+    awk -v pat="$pat" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^[A-Za-z_][A-Za-z0-9_]*=/ { if ($0 !~ pat) print $0 }
+    ' "$src" >> "$out"
+}
+
 write_env_file() {
     local searxng_secret="$1"
     local f="$EMCP_HOME/.env"
-    cat > "$f" <<EOF
+    local ts backup="" tmp preserved
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+
+    # Back up the existing .env before we touch it. Atomic rename at the
+    # end means any operator edit between now and the mv is irrelevant —
+    # but the timestamped backup preserves hand-tuned overrides if the
+    # preserve_overrides awk misses them (e.g. non-standard key names).
+    if [ -f "$f" ]; then
+        backup="$f.bak.$ts"
+        cp -a "$f" "$backup"
+        log_info "backed up existing .env → $(basename "$backup")"
+    fi
+
+    tmp="$(mktemp "$EMCP_HOME/.env.new.XXXX")"
+    cat > "$tmp" <<EOF
 # Managed by eMCP installer ($EMCP_INSTALLER_VERSION) — edit freely and run
 # \`emcp restart\` to apply. Re-running the installer uses these values as
-# defaults, so manual edits survive an upgrade.
+# defaults, so manual edits survive an upgrade. Any keys not listed here
+# are preserved in the section below this one, in the order they appeared
+# in the previous .env.
 
 # --- Runtime ---
 NODE_ENV=production
@@ -694,6 +752,23 @@ EMCP_PROXY_FAILURE_COOLDOWN_MS=60000
 EMCP_PROXY_MAX_RETRIES_PER_REQUEST=3
 EMCP_PROXY_CONNECT_TIMEOUT_MS=10000
 EOF
+
+    # Append preserved lines from the old .env, if any.
+    preserved="$(mktemp)"
+    if [ -n "$backup" ]; then
+        preserve_overrides "$backup" "$preserved"
+    fi
+    if [ -s "$preserved" ]; then
+        printf '\n# --- Preserved user overrides ---\n' >> "$tmp"
+        cat "$preserved" >> "$tmp"
+        log_info "preserved $(wc -l < "$preserved" | tr -d ' ') user-added env line(s)"
+    fi
+    rm -f "$preserved"
+
+    # chmod before rename so there's no gap where a reader could grab a
+    # permissive tmp file.
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$f"
 }
 
 # --- Proxy wizard ----------------------------------------------------------

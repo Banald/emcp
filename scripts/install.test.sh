@@ -162,7 +162,67 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. tty_read routes prompts through /dev/tty (C1) ---------------------
+# ---- 8. .env preservation on rewrite (C2) ---------------------------------
+
+if grep -qE '^EMCP_MANAGED_ENV_KEYS=\(' "$INSTALL_SH"; then
+    say_pass "install.sh declares EMCP_MANAGED_ENV_KEYS (C2)"
+else
+    say_fail "install.sh missing EMCP_MANAGED_ENV_KEYS (C2)"
+fi
+if grep -qE '^preserve_overrides\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines preserve_overrides helper (C2)"
+else
+    say_fail "install.sh missing preserve_overrides (C2)"
+fi
+if grep -qE 'Preserved user overrides' "$INSTALL_SH"; then
+    say_pass "install.sh writes a 'Preserved user overrides' section header (C2)"
+else
+    say_fail "install.sh missing 'Preserved user overrides' section (C2)"
+fi
+if grep -qE 'backup="\$f\.bak\.\$ts"' "$INSTALL_SH" \
+   || grep -qE '\.env\.bak\.' "$INSTALL_SH"; then
+    say_pass "install.sh creates a timestamped .env backup (C2)"
+else
+    say_fail "install.sh does not back up .env before rewrite (C2)"
+fi
+
+# Exercise preserve_overrides in isolation: source the function body via
+# grep+eval on the known preservation pattern. Fast, offline, no side
+# effects outside $(mktemp).
+t_src="$(mktemp)"
+t_out="$(mktemp)"
+cat > "$t_src" <<'ENV'
+# a comment
+EMCP_PUBLIC_HOST=managed.example.com
+EMCP_MCP_MAX_BODY_BYTES=5242880
+
+EMCP_TRUSTED_PROXY_CIDRS=10.0.0.0/8
+# trailing comment
+MY_CUSTOM=value
+ENV
+EMCP_MANAGED_ENV_KEYS=(EMCP_PUBLIC_HOST)
+preserve_overrides() {
+    local src="$1" out="$2"
+    [ -f "$src" ] || return 0
+    local pat
+    pat="$(IFS='|'; printf '%s' "^(${EMCP_MANAGED_ENV_KEYS[*]})=")"
+    awk -v pat="$pat" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        /^[A-Za-z_][A-Za-z0-9_]*=/ { if ($0 !~ pat) print $0 }
+    ' "$src" >> "$out"
+}
+preserve_overrides "$t_src" "$t_out"
+expected=$'EMCP_MCP_MAX_BODY_BYTES=5242880\nEMCP_TRUSTED_PROXY_CIDRS=10.0.0.0/8\nMY_CUSTOM=value'
+if [ "$(cat "$t_out")" = "$expected" ]; then
+    say_pass "preserve_overrides drops comments + managed keys, keeps the rest (C2)"
+else
+    say_fail "preserve_overrides output unexpected: $(cat "$t_out" | tr '\n' '|')"
+fi
+rm -f "$t_src" "$t_out"
+unset -f preserve_overrides
+unset EMCP_MANAGED_ENV_KEYS
+
+# ---- 9. tty_read routes prompts through /dev/tty (C1) ---------------------
 
 if grep -qE '^tty_read\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines tty_read helper (C1)"
