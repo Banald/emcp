@@ -162,7 +162,25 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. uninstall path safety + mutex flags (H6, N1) ----------------------
+# ---- 8. redis remediation + docker hub rate limit (H7, M1) ----------------
+
+if grep -qE '^remediate_redis_password_mismatch\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines remediate_redis_password_mismatch (H7)"
+else
+    say_fail "install.sh missing Redis auth remediation (H7)"
+fi
+if grep -qE 'NOAUTH\|WRONGPASS' "$INSTALL_SH"; then
+    say_pass "postflight detects NOAUTH/WRONGPASS redis errors (H7)"
+else
+    say_fail "postflight missing redis auth-error detection (H7)"
+fi
+if grep -qE 'toomanyrequests\|rate limit' "$INSTALL_SH"; then
+    say_pass "phase_compose_up detects Docker Hub rate-limit errors (M1)"
+else
+    say_fail "phase_compose_up missing registry rate-limit hint (M1)"
+fi
+
+# ---- 9. uninstall path safety + mutex flags (H6, N1) ----------------------
 
 if grep -qE 'refusing to uninstall' "$INSTALL_SH" \
    && grep -qE '"/opt"' "$INSTALL_SH" \
@@ -383,11 +401,11 @@ if grep -qE '^run_and_log\(\)' "$INSTALL_SH"; then
 else
     say_fail "install.sh missing run_and_log (H9)"
 fi
-if grep -qE 'run_and_log "docker compose pull"' "$INSTALL_SH" \
+if grep -qE 'log_to_file "\$pull_out"' "$INSTALL_SH" \
    && grep -qE 'run_and_log "docker compose up -d"' "$INSTALL_SH"; then
-    say_pass "install.sh compose pull + up -d go through run_and_log (H9)"
+    say_pass "compose pull output captured; compose up via run_and_log (H9)"
 else
-    say_fail "install.sh compose pull/up not routed through run_and_log (H9)"
+    say_fail "compose pull output or up -d not captured in install log (H9)"
 fi
 if grep -qE '^compose_cd\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines compose_cd helper (H9)"

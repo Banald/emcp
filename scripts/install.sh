@@ -1045,8 +1045,22 @@ docker_login_with_token() {
 
 phase_compose_up() {
     log_step "Pull images and start stack"
-    run_and_log "docker compose pull" compose_cd pull --quiet \
-        || die "docker compose pull failed"
+
+    # Capture pull output ourselves so we can scan it for Docker Hub
+    # rate-limit signatures (M1). run_and_log would hide the stdout in the
+    # log file only; for remediation we also need it in-memory.
+    local pull_out pull_rc=0
+    pull_out="$(compose_cd pull --quiet 2>&1)" || pull_rc=$?
+    log_to_file "--- docker compose pull ---"
+    log_to_file "$pull_out"
+    if [ "$pull_rc" -ne 0 ]; then
+        if grep -qiE 'toomanyrequests|rate limit|HTTP 429' <<< "$pull_out"; then
+            log_error "Docker Hub rate-limited the pull. Authenticate with 'docker login' (docker.io — *not* ghcr.io) and retry; anonymous pulls are throttled."
+        fi
+        printf '%s\n' "$pull_out" >&2
+        die "docker compose pull failed"
+    fi
+
     run_and_log "docker compose up -d" compose_cd up -d \
         || die "docker compose up failed"
 
@@ -1164,6 +1178,10 @@ phase_postflight_detection() {
         remediate_postgres_password_mismatch && retry_compose_up && return 0
     fi
 
+    if grep -qiE 'NOAUTH|WRONGPASS|Client sent AUTH, but no password' <<< "$combined"; then
+        remediate_redis_password_mismatch && retry_compose_up && return 0
+    fi
+
     if grep -qiE 'migrate .* exited with code [1-9]' <<< "$combined" \
        || (cd "$EMCP_HOME" && docker compose ps --format json 2>/dev/null \
            | grep -q '"Service":"migrate"' \
@@ -1256,6 +1274,28 @@ remediate_postgres_password_mismatch() {
             return 1
             ;;
     esac
+}
+
+# Redis in our compose stack runs without persistence (no RDB, no AOF —
+# see compose.yaml comments). So a NOAUTH/WRONGPASS mismatch is almost
+# always because secrets/redis_password.txt was rotated without
+# restarting redis. The fix is simply "regenerate + bounce the three
+# consumers". No data-loss prompt because there's no data to lose.
+remediate_redis_password_mismatch() {
+    log_error "Redis auth failed (NOAUTH/WRONGPASS detected in mcp-server logs)."
+    log_error "secrets/redis_password.txt almost certainly diverged from the"
+    log_error "running redis container. Redis has no persistent state here, so"
+    log_error "the fix is: regenerate the secret and bounce redis + the two app"
+    log_error "processes. No data is lost (rate-limit cache is ephemeral by design)."
+    if ! prompt_yesno "regenerate redis password and restart redis + mcp-server + mcp-worker?" y; then
+        return 1
+    fi
+    rm -f "$EMCP_HOME/secrets/redis_password.txt"
+    generate_secret_if_missing "$EMCP_HOME/secrets/redis_password.txt" 24 "redis password"
+    run_and_log "docker compose restart redis mcp-server mcp-worker" \
+        compose_cd restart redis mcp-server mcp-worker || return 1
+    log_info "redis password rotated; retrying healthcheck…"
+    return 0
 }
 
 retry_compose_up() {
