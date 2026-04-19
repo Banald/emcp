@@ -449,22 +449,32 @@ phase_preflight() {
     log_ok "preflight passed"
 }
 
-suggest_docker_install() {
-    local id=""
-    [ -r /etc/os-release ] && id="$(. /etc/os-release 2>/dev/null; echo "${ID:-}")"
-    case "$id" in
-        fedora|rhel|centos|rocky|almalinux)
+# Runs in a subshell so sourcing /etc/os-release (which exports many vars)
+# doesn't leak into the parent. M5: also matches ID_LIKE so derivatives
+# (Rocky Linux, AlmaLinux, Pop!_OS, EndeavourOS, etc.) pick the right
+# suggestion even when ID itself isn't in the list.
+suggest_docker_install() (
+    id="" id_like=""
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        id="${ID:-}"
+        id_like="${ID_LIKE:-}"
+    fi
+    haystack=" $id $id_like "
+    case "$haystack" in
+        *\ fedora\ *|*\ rhel\ *|*\ centos\ *|*\ rocky\ *|*\ almalinux\ *)
             log_error "install with: dnf install -y docker docker-compose-plugin" ;;
-        debian|ubuntu|linuxmint|pop)
+        *\ debian\ *|*\ ubuntu\ *|*\ linuxmint\ *|*\ pop\ *)
             log_error "install with: apt-get install -y docker.io docker-compose-plugin" ;;
-        arch|manjaro|endeavouros)
+        *\ arch\ *|*\ manjaro\ *|*\ endeavouros\ *)
             log_error "install with: pacman -S --noconfirm docker docker-compose" ;;
-        alpine)
+        *\ alpine\ *)
             log_error "install with: apk add docker docker-cli-compose" ;;
         *)
             log_error "install Docker per: https://docs.docker.com/engine/install/" ;;
     esac
-}
+)
 
 # --- Source fetch ----------------------------------------------------------
 
@@ -492,9 +502,17 @@ phase_fetch_source() {
     trap 'rm -rf "$tmp"' RETURN
 
     log_info "downloading $url"
-    if ! curl -fsSL "$url" -o "$tmp/src.tar.gz"; then
-        die "failed to download source tarball. Check that tag $TAG exists: https://github.com/${REPO_OWNER}/${REPO_NAME}/releases"
-    fi
+    local curl_rc=0
+    curl -fsSL "$url" -o "$tmp/src.tar.gz" || curl_rc=$?
+    # L2: translate common curl exit codes into actionable messages.
+    case "$curl_rc" in
+        0) : ;;
+        22) die "tag $TAG not found (HTTP 4xx from $url). See https://github.com/${REPO_OWNER}/${REPO_NAME}/releases" ;;
+        6)  die "DNS lookup failed for github.com — check /etc/resolv.conf and outbound connectivity" ;;
+        7)  die "connection refused reaching github.com — check your firewall or HTTP proxy" ;;
+        28) die "curl timed out fetching $url — check your network latency / proxy" ;;
+        *)  die "curl failed (exit $curl_rc) fetching $url" ;;
+    esac
 
     tar -xzf "$tmp/src.tar.gz" -C "$tmp"
     local extracted
@@ -1460,24 +1478,31 @@ save_installer_copy() {
         chmod 0755 "$dest"
         return 0
     fi
-    # Piped-from-curl path: refetch from the release, then raw as fallback.
-    local urls=(
-        "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG}/install.sh"
-        "https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${TAG}/scripts/install.sh"
-    )
-    for url in "${urls[@]}"; do
-        if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
-            chmod 0755 "$dest"
-            return 0
-        fi
-    done
-    log_warn "could not save installer copy at $dest; 'emcp config' and 'emcp uninstall' will need install.sh re-downloaded"
+    # M7: the raw-source fallback was removed because it ships the
+    # UNSTAMPED copy (`EMCP_INSTALLER_VERSION="v0.0.0-dev"`), which breaks
+    # `emcp version` and `emcp config` downstream. Try only the stamped
+    # release asset; warn loudly if it's unreachable.
+    local url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG}/install.sh"
+    if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
+        chmod 0755 "$dest"
+        return 0
+    fi
+    log_warn "could not save installer copy at $dest"
+    log_warn "'emcp config' / 'emcp uninstall' will need install.sh re-downloaded from $url"
 }
 
 # --- First API key ---------------------------------------------------------
 
 phase_first_key() {
     if [ "$SKIP_FIRST_KEY" -eq 1 ]; then
+        return 0
+    fi
+    # M6: NON_INTERACTIVE can't answer the "create a key?" prompt, and the
+    # default-y path would auto-create a key whose raw value scrolls by
+    # invisibly in an unattended run. Skip cleanly and tell the operator
+    # how to create one later.
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        log_info "non-interactive: skipping first-key creation. Create one later with: emcp key create --name \"<name>\""
         return 0
     fi
     log_step "Create the first API key"

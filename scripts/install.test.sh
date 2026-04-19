@@ -162,7 +162,32 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. DNS sanity + RFC 1035 hostname (H8, M2) ---------------------------
+# ---- 8. polish: ID_LIKE / non-interactive first key / save-copy / curl (M5-M7, L2) -----
+
+if grep -qE 'ID_LIKE' "$INSTALL_SH" \
+   && grep -qE '\*\\ fedora\\ \*' "$INSTALL_SH"; then
+    say_pass "suggest_docker_install matches ID_LIKE (M5)"
+else
+    say_fail "suggest_docker_install missing ID_LIKE fallback (M5)"
+fi
+if grep -qE 'non-interactive: skipping first-key' "$INSTALL_SH"; then
+    say_pass "phase_first_key short-circuits under --non-interactive (M6)"
+else
+    say_fail "phase_first_key missing non-interactive skip (M6)"
+fi
+if grep -qE 'raw\.githubusercontent\.com.*scripts/install\.sh' "$INSTALL_SH"; then
+    say_fail "save_installer_copy still has raw.githubusercontent fallback (M7 regression)"
+else
+    say_pass "save_installer_copy no longer falls back to raw.githubusercontent (M7)"
+fi
+if grep -qE 'curl_rc=\$\?' "$INSTALL_SH" \
+   && grep -qE 'tag \$TAG not found' "$INSTALL_SH"; then
+    say_pass "phase_fetch_source differentiates curl error codes (L2)"
+else
+    say_fail "phase_fetch_source missing curl exit-code handling (L2)"
+fi
+
+# ---- 9. DNS sanity + RFC 1035 hostname (H8, M2) ---------------------------
 
 if grep -qE '^dns_sanity_check\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines dns_sanity_check (H8)"
