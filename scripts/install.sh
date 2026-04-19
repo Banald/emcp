@@ -82,6 +82,7 @@ IMAGE_TAG=""
 GHCR_TOKEN_FILE=""
 SKIP_FIRST_KEY=0
 NON_INTERACTIVE=0
+AUTO_NON_INTERACTIVE=0  # 1 when NON_INTERACTIVE was auto-set due to no TTY
 RECONFIGURE=0
 FROM_LOCAL=""
 UNINSTALL=0
@@ -226,6 +227,23 @@ parse_args() {
 
 # --- Prompt helpers --------------------------------------------------------
 
+# Drop-in for `read`. When stdin isn't a TTY (e.g. curl | sudo bash), route
+# via /dev/tty so piped installers still prompt the operator. Returns 1
+# when neither stdin nor /dev/tty is usable — the caller must then respect
+# NON_INTERACTIVE/AUTO_NON_INTERACTIVE or die. `[ -r /dev/tty ]` would
+# wrongly say "yes" in sessions without a controlling terminal (setsid,
+# systemd service contexts, etc.) because the mode bits are world-readable
+# — we actually open it to discriminate.
+tty_read() {
+    if [ -t 0 ]; then
+        read "$@"
+    elif (exec 0</dev/tty) 2>/dev/null; then
+        read "$@" </dev/tty
+    else
+        return 1
+    fi
+}
+
 # prompt VAR "Question" "default" ["validator_fn"]
 prompt() {
     local __out_var="$1" __question="$2" __default="${3:-}" __validator="${4:-}"
@@ -245,9 +263,9 @@ prompt() {
     local __answer
     while true; do
         if [ -n "$__default" ]; then
-            read -r -p "${C_CYAN}?${C_RESET} ${__question} [${__default}]: " __answer
+            tty_read -r -p "${C_CYAN}?${C_RESET} ${__question} [${__default}]: " __answer
         else
-            read -r -p "${C_CYAN}?${C_RESET} ${__question}: " __answer
+            tty_read -r -p "${C_CYAN}?${C_RESET} ${__question}: " __answer
         fi
         __answer="${__answer:-$__default}"
         if [ -z "$__answer" ]; then
@@ -269,10 +287,10 @@ prompt_yesno() {
     fi
     while true; do
         if [ "$__default" = "y" ]; then
-            read -r -p "${C_CYAN}?${C_RESET} ${__question} [Y/n]: " __answer
+            tty_read -r -p "${C_CYAN}?${C_RESET} ${__question} [Y/n]: " __answer
             __answer="${__answer:-y}"
         else
-            read -r -p "${C_CYAN}?${C_RESET} ${__question} [y/N]: " __answer
+            tty_read -r -p "${C_CYAN}?${C_RESET} ${__question} [y/N]: " __answer
             __answer="${__answer:-n}"
         fi
         case "${__answer,,}" in
@@ -286,9 +304,18 @@ prompt_yesno() {
 prompt_secret() {
     local __out_var="$1" __question="$2" __answer
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        if [ "$AUTO_NON_INTERACTIVE" -eq 1 ]; then
+            die "no TTY — $__out_var is a secret. Re-run in a real terminal, or supply --ghcr-token-file / GHCR_TOKEN."
+        fi
         die "--non-interactive: $__out_var is a secret and must be supplied via --ghcr-token-file or GHCR_TOKEN."
     fi
-    read -r -s -p "${C_CYAN}?${C_RESET} ${__question}: " __answer
+    # `read -s` requires a terminal; tty_read routes through /dev/tty when
+    # stdin is piped, so -s still works. If neither stdin nor /dev/tty is
+    # readable, tty_read returns 1 and we must not echo the secret.
+    if ! tty_read -r -s -p "${C_CYAN}?${C_RESET} ${__question}: " __answer; then
+        printf '\n' >&2
+        die "no terminal available to read $__out_var without echo"
+    fi
     printf '\n' >&2
     printf -v "$__out_var" '%s' "$__answer"
 }
@@ -740,7 +767,7 @@ phase_proxy_wizard() {
             if [ "$NON_INTERACTIVE" -eq 1 ]; then
                 die "--non-interactive: --proxy-urls is required when the wizard would otherwise prompt"
             fi
-            read -r -p "${C_CYAN}?${C_RESET} Comma-separated proxy URLs (http://user:pass@host:port,...): " current
+            tty_read -r -p "${C_CYAN}?${C_RESET} Comma-separated proxy URLs (http://user:pass@host:port,...): " current
         fi
         if [ -z "$current" ]; then
             log_warn "proxy URL list cannot be empty when the feature is enabled"
@@ -768,7 +795,7 @@ phase_proxy_wizard() {
             EMCP_SEARXNG_OUTGOING_PROXIES="$EMCP_PROXY_URLS"
         else
             local searxng_input=""
-            read -r -p "${C_CYAN}?${C_RESET} SearXNG proxy URLs (blank = direct egress): " searxng_input
+            tty_read -r -p "${C_CYAN}?${C_RESET} SearXNG proxy URLs (blank = direct egress): " searxng_input
             if [ -n "$searxng_input" ] && ! validate_proxy_csv "$searxng_input"; then
                 log_warn "invalid SearXNG proxy list; falling back to direct egress"
                 EMCP_SEARXNG_OUTGOING_PROXIES=""
@@ -859,6 +886,9 @@ phase_ghcr_login() {
     fi
 
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        if [ "$AUTO_NON_INTERACTIVE" -eq 1 ]; then
+            die "no TTY — supply GHCR_TOKEN, --ghcr-token-file, or sign in with 'gh auth login' before piping from curl"
+        fi
         die "--non-interactive requires GHCR_TOKEN, --ghcr-token-file, or a signed-in gh CLI"
     fi
 
@@ -997,11 +1027,11 @@ remediate_port_conflict() {
     echo "  (b) stop the holder yourself, then retry" >&2
     echo "  (c) abort" >&2
     local choice
-    read -r -p "choice [a/b/c]: " choice
+    tty_read -r -p "choice [a/b/c]: " choice
     case "${choice,,}" in
         a)
             local new_port
-            read -r -p "new port (e.g. 8443): " new_port
+            tty_read -r -p "new port (e.g. 8443): " new_port
             validate_port "$new_port" || return 1
             if [ "${collided_port:-0}" = "${EMCP_HTTPS_PORT:-0}" ]; then
                 EMCP_HTTPS_PORT="$new_port"
@@ -1014,7 +1044,7 @@ remediate_port_conflict() {
             return 0
             ;;
         b)
-            read -r -p "press Enter when the port is free " _
+            tty_read -r -p "press Enter when the port is free " _
             return 0
             ;;
         *)
@@ -1031,7 +1061,7 @@ remediate_postgres_password_mismatch() {
     echo "  (b) paste the ORIGINAL postgres password — I will restore it"    >&2
     echo "  (c) abort and let me fix this manually"                          >&2
     local choice
-    read -r -p "choice [a/b/c]: " choice
+    tty_read -r -p "choice [a/b/c]: " choice
     case "${choice,,}" in
         a)
             if ! prompt_yesno "are you SURE you want to destroy all eMCP data?" n; then
@@ -1244,6 +1274,18 @@ main() {
     [ "$is_help" -eq 0 ] && init_install_log
 
     parse_args "$@"
+
+    # If there's no way to reach a terminal (stdin is closed AND /dev/tty
+    # can't be opened — e.g. setsid, some systemd service contexts),
+    # silently accepting defaults would be worse than failing loudly. Flip
+    # to non-interactive and remember the user didn't ask for it so error
+    # messages can say "no TTY" instead of "--non-interactive".
+    if [ "$NON_INTERACTIVE" -eq 0 ] && [ ! -t 0 ] \
+       && ! (exec 0</dev/tty) 2>/dev/null; then
+        NON_INTERACTIVE=1
+        AUTO_NON_INTERACTIVE=1
+        log_warn "no TTY detected; running non-interactively. Pass flags or supply GHCR_TOKEN=<pat>."
+    fi
 
     if [ "$UNINSTALL" -eq 1 ]; then
         phase_uninstall

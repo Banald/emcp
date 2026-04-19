@@ -143,7 +143,38 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. install log infrastructure (H9) -----------------------------------
+# ---- 8. tty_read routes prompts through /dev/tty (C1) ---------------------
+
+if grep -qE '^tty_read\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines tty_read helper (C1)"
+else
+    say_fail "install.sh missing tty_read helper (C1)"
+fi
+
+# Every user-facing read must go through tty_read. Program-output parses
+# (`while IFS=... read -r x`) are allowed to stay as raw reads because they
+# don't read from the terminal.
+bare_prompt_reads="$(grep -cE '^[[:space:]]*read -r(-s)? -p' "$INSTALL_SH" || true)"
+if [ "$bare_prompt_reads" -eq 0 ]; then
+    say_pass "no bare 'read -r -p' in install.sh (all prompts via tty_read) (C1)"
+else
+    say_fail "install.sh has $bare_prompt_reads bare 'read -r -p' call(s) — should use tty_read (C1)"
+fi
+
+if grep -qE '^AUTO_NON_INTERACTIVE=' "$INSTALL_SH" \
+   && grep -qE 'AUTO_NON_INTERACTIVE=1' "$INSTALL_SH"; then
+    say_pass "install.sh tracks AUTO_NON_INTERACTIVE for honest error messages (C1)"
+else
+    say_fail "install.sh missing AUTO_NON_INTERACTIVE tracking (C1)"
+fi
+
+if grep -qE 'no TTY detected' "$INSTALL_SH"; then
+    say_pass "install.sh warns on auto non-interactive fallback (C1)"
+else
+    say_fail "install.sh missing no-TTY warning (C1)"
+fi
+
+# ---- 9. install log infrastructure (H9) -----------------------------------
 
 if grep -qE '^init_install_log\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines init_install_log (H9)"
