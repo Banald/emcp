@@ -162,7 +162,21 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. .env preservation on rewrite (C2) ---------------------------------
+# ---- 8. port-conflict guard when caddy holds the port (C3) ----------------
+
+if grep -qE '^caddy_holds_port\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines caddy_holds_port helper (C3)"
+else
+    say_fail "install.sh missing caddy_holds_port (C3)"
+fi
+if grep -qE 'port_in_use 80 && ! caddy_holds_port' "$INSTALL_SH" \
+   && grep -qE 'port_in_use 443 && ! caddy_holds_port' "$INSTALL_SH"; then
+    say_pass "phase_env_wizard skips port conflict when caddy owns the port (C3)"
+else
+    say_fail "phase_env_wizard still prompts on port conflict even when caddy owns it (C3)"
+fi
+
+# ---- 9. .env preservation on rewrite (C2) ---------------------------------
 
 if grep -qE '^EMCP_MANAGED_ENV_KEYS=\(' "$INSTALL_SH"; then
     say_pass "install.sh declares EMCP_MANAGED_ENV_KEYS (C2)"

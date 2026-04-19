@@ -514,7 +514,7 @@ phase_env_wizard() {
 
     if [ -z "$EMCP_HTTP_PORT" ]; then
         EMCP_HTTP_PORT=80
-        if port_in_use 80; then
+        if port_in_use 80 && ! caddy_holds_port 80; then
             log_warn "port 80 is already in use on this host"
             resolve_port_conflict 80 && EMCP_HTTP_PORT=8080
         fi
@@ -523,7 +523,8 @@ phase_env_wizard() {
 
     if [ -z "$EMCP_HTTPS_PORT" ]; then
         EMCP_HTTPS_PORT=443
-        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] && port_in_use 443; then
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] \
+           && port_in_use 443 && ! caddy_holds_port 443; then
             log_warn "port 443 is already in use on this host"
             resolve_port_conflict 443 && EMCP_HTTPS_PORT=8443
         fi
@@ -898,6 +899,22 @@ port_in_use() {
     if command -v lsof >/dev/null 2>&1; then
         lsof -iTCP:"$port" -sTCP:LISTEN -Pn 2>/dev/null | grep -q . && return 0
     fi
+    return 1
+}
+
+# True when this install's caddy container is already running and publishing
+# the given port. Used to squelch the bogus "port already in use" prompt on
+# `emcp config` — caddy holding 80/443 is expected state.
+caddy_holds_port() {
+    local port="$1"
+    # Compose must exist in $EMCP_HOME to check.
+    [ -f "$EMCP_HOME/compose.yaml" ] || return 1
+    compose_cd ps caddy --format json 2>/dev/null \
+        | grep -q '"State":"running"' || return 1
+    case "$port" in
+        "$EMCP_HTTP_PORT"|"$EMCP_HTTPS_PORT") return 0 ;;
+        80|443) return 0 ;;
+    esac
     return 1
 }
 
