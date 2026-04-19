@@ -39,6 +39,11 @@ GHCR_TOKEN_FILE=""
 SKIP_FIRST_KEY=0
 NON_INTERACTIVE=0
 AUTO_NON_INTERACTIVE=0  # 1 when NON_INTERACTIVE was auto-set due to no TTY
+# N2: every `mktemp -d` the installer makes is tracked here; the EXIT
+# trap in main() sweeps the list so interrupted runs (SIGINT, SIGTERM,
+# die after tmp creation but before function-local trap RETURN) don't
+# leak directories under $TMPDIR.
+INSTALLER_TMP_ROOTS=()
 RECONFIGURE=0
 FROM_LOCAL=""
 UNINSTALL=0
@@ -499,6 +504,9 @@ phase_fetch_source() {
     local url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${TAG}.tar.gz"
     local tmp
     tmp="$(mktemp -d)"
+    # Register with the global EXIT trap so SIGINT mid-download also cleans
+    # up. The function-local RETURN trap still fires on normal return.
+    INSTALLER_TMP_ROOTS+=("$tmp")
     trap 'rm -rf "$tmp"' RETURN
 
     log_info "downloading $url"
@@ -1579,6 +1587,17 @@ Day-2 commands (run from anywhere):
   emcp down            stop the stack (preserves data)
   emcp uninstall       stop and remove everything (destroys data)
 
+Claude Code / IDE MCP client config (paste into ~/.config/claude-code/settings.json
+or your client's equivalent):
+
+  "mcpServers": {
+    "emcp": {
+      "type": "http",
+      "url": "${endpoint}",
+      "headers": { "Authorization": "Bearer <paste-key-from-emcp-key-create>" }
+    }
+  }
+
 Full docs: https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${TAG}/docs/OPERATIONS.md
 
 EOF
@@ -1654,7 +1673,27 @@ phase_reconfigure() {
 
 # --- Main ------------------------------------------------------------------
 
+installer_cleanup() {
+    # Always return 0 — EXIT traps inherit their exit status from the last
+    # command, and an empty-array iteration's `[ -n "" ]` returns 1 which
+    # would then clobber the script's real exit code (including 0 for
+    # --help).
+    local d
+    for d in "${INSTALLER_TMP_ROOTS[@]:-}"; do
+        if [ -n "$d" ] && [ -d "$d" ]; then
+            rm -rf "$d"
+        fi
+    done
+    return 0
+}
+
 main() {
+    # Sweep any mktemp -d dirs we tracked when the process exits for any
+    # reason (normal, die, SIGINT). Function-local RETURN traps on
+    # individual phases cover the normal path; this backstop handles
+    # interrupts.
+    trap installer_cleanup EXIT
+
     # Pre-scan argv for --install-dir so the install log opens before
     # parse_args — so parse-arg errors also land in the log, and so a
     # malformed flag still produces a debuggable artifact on disk. Skip

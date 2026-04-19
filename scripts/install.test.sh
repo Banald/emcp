@@ -162,7 +162,27 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. polish: ID_LIKE / non-interactive first key / save-copy / curl (M5-M7, L2) -----
+# ---- 8. summary snippet + EXIT trap (L4, N2) ------------------------------
+
+if grep -qE 'mcpServers' "$INSTALL_SH" \
+   && grep -qE '"type": "http"' "$INSTALL_SH"; then
+    say_pass "phase_summary prints an MCP-client config snippet (L4)"
+else
+    say_fail "phase_summary missing MCP-client config snippet (L4)"
+fi
+if grep -qE '^installer_cleanup\(\)' "$INSTALL_SH" \
+   && grep -qE 'trap installer_cleanup EXIT' "$INSTALL_SH"; then
+    say_pass "main installs EXIT trap for tmp-dir cleanup (N2)"
+else
+    say_fail "main missing EXIT trap / cleanup (N2)"
+fi
+if grep -qE 'INSTALLER_TMP_ROOTS\+=' "$INSTALL_SH"; then
+    say_pass "phase_fetch_source registers tmp dir for EXIT cleanup (N2)"
+else
+    say_fail "phase_fetch_source does not track tmp dir globally (N2)"
+fi
+
+# ---- 9. polish: ID_LIKE / non-interactive first key / save-copy / curl (M5-M7, L2) -----
 
 if grep -qE 'ID_LIKE' "$INSTALL_SH" \
    && grep -qE '\*\\ fedora\\ \*' "$INSTALL_SH"; then
