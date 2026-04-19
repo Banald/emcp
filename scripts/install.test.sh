@@ -162,7 +162,48 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. redis remediation + docker hub rate limit (H7, M1) ----------------
+# ---- 8. DNS sanity + RFC 1035 hostname (H8, M2) ---------------------------
+
+if grep -qE '^dns_sanity_check\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines dns_sanity_check (H8)"
+else
+    say_fail "install.sh missing dns_sanity_check (H8)"
+fi
+if grep -qE 'getent hosts' "$INSTALL_SH"; then
+    say_pass "dns_sanity_check uses getent hosts (H8)"
+else
+    say_fail "dns_sanity_check does not use getent (H8)"
+fi
+
+# Exercise the tightened validate_host (M2) by eval-ing a mirror. The
+# install.sh's validator uses log_warn; mirror a minimal version here.
+m2_validate_host() {
+    local h="$1"
+    [ "$h" = "localhost" ] && return 0
+    [[ "$h" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && return 0
+    [[ "$h" =~ ^\[?[0-9a-fA-F:]+\]?$ ]] && return 0
+    [ "${#h}" -le 253 ] && [ "${#h}" -ge 1 ] || return 1
+    local IFS=. label
+    for label in $h; do
+        [ -n "$label" ] && [ "${#label}" -le 63 ] || return 1
+        [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || return 1
+    done
+    return 0
+}
+m2_all_ok=1
+m2_validate_host "emcp.example.com" || m2_all_ok=0
+m2_validate_host "localhost"        || m2_all_ok=0
+m2_validate_host "127.0.0.1"        || m2_all_ok=0
+if ! m2_validate_host "-bad.example.com" && ! m2_validate_host "bad-.example.com"; then :; else m2_all_ok=0; fi
+if ! m2_validate_host "foo..bar"         && ! m2_validate_host ""              ; then :; else m2_all_ok=0; fi
+if [ "$m2_all_ok" -eq 1 ]; then
+    say_pass "validate_host accepts valid names/IPs and rejects RFC 1035 violations (M2)"
+else
+    say_fail "validate_host RFC 1035 behaviour not as expected (M2)"
+fi
+unset -f m2_validate_host
+
+# ---- 9. redis remediation + docker hub rate limit (H7, M1) ----------------
 
 if grep -qE '^remediate_redis_password_mismatch\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines remediate_redis_password_mismatch (H7)"

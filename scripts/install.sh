@@ -331,7 +331,29 @@ prompt_secret() {
     printf -v "$__out_var" '%s' "$__answer"
 }
 
-validate_host()   { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || { log_warn "not a valid hostname"; return 1; }; }
+validate_host() {
+    local h="$1"
+    [ "$h" = "localhost" ] && return 0
+    # IPv4 dotted-quad
+    if [[ "$h" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then return 0; fi
+    # IPv6 literal (with or without brackets)
+    if [[ "$h" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then return 0; fi
+    # RFC 1035: total <= 253 chars; each dot-separated label 1..63 chars,
+    # alnum with optional internal hyphens (no leading / trailing dash).
+    if [ "${#h}" -lt 1 ] || [ "${#h}" -gt 253 ]; then
+        log_warn "hostname length must be 1..253 (got ${#h})"; return 1
+    fi
+    local IFS=. label
+    for label in $h; do
+        if [ -z "$label" ] || [ "${#label}" -gt 63 ]; then
+            log_warn "hostname label bad length: '$label' (1..63)"; return 1
+        fi
+        if ! [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+            log_warn "invalid hostname label (RFC 1035): '$label'"; return 1
+        fi
+    done
+    return 0
+}
 validate_scheme() { [ "$1" = "http" ] || [ "$1" = "https" ] || { log_warn "must be 'http' or 'https'"; return 1; }; }
 validate_port()   { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { log_warn "must be 1..65535"; return 1; }; }
 validate_nonempty() { [ -n "$1" ] || { log_warn "value required"; return 1; }; }
@@ -585,6 +607,29 @@ phase_env_wizard() {
 
     write_env_file "$searxng_secret"
     log_ok ".env written to $EMCP_HOME/.env (0600)"
+
+    dns_sanity_check
+}
+
+# H8: when the operator sets a real public hostname with HTTPS, Caddy's
+# Let's Encrypt flow silently loops until DNS points at this host. A
+# fast local check is better than a slow mystery. Warning-only — DNS may
+# be set up after install (split-horizon, dry-run, etc.).
+dns_sanity_check() {
+    [ "${EMCP_PUBLIC_SCHEME:-https}" = "https" ] || return 0
+    local h="$EMCP_PUBLIC_HOST"
+    case "$h" in
+        localhost|*.local) return 0 ;;
+    esac
+    if [[ "$h" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then return 0; fi
+    if [[ "$h" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then return 0; fi
+    if ! command -v getent >/dev/null 2>&1; then
+        # getent is part of glibc; should be on any supported Linux. Skip if not.
+        return 0
+    fi
+    if ! getent hosts "$h" >/dev/null 2>&1; then
+        log_warn "DNS for $h does not resolve on this host. Let's Encrypt will fail until the A/AAAA record points here. (If DNS will be wired up after install, ignore this.)"
+    fi
 }
 
 load_existing_env_defaults() {
