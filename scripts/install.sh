@@ -236,9 +236,44 @@ parse_args() {
     if [ "$TAG" = "v0.0.0-dev" ] && [ -z "$FROM_LOCAL" ] && [ "$RECONFIGURE" -eq 0 ] && [ "$UNINSTALL" -eq 0 ]; then
         die "this install.sh is an unstamped dev build — pass --tag <vX.Y.Z> or --from-local <path>, or download install.sh from a GitHub release."
     fi
+
+    # `--from-local` on an unstamped working copy has no way to resolve
+    # the image tag: the source tree is local, but the container image
+    # is pulled from ghcr.io and `0.0.0-dev` isn't a published tag. Try
+    # to discover the real version from the checkout itself.
+    if [ "$TAG" = "v0.0.0-dev" ] && [ -n "$FROM_LOCAL" ] && [ -z "$IMAGE_TAG" ]; then
+        detect_from_local_tag
+    fi
+
     if [ -z "$IMAGE_TAG" ]; then
         # strip leading 'v' for image tag (ghcr.io tags are 0.11.0, not v0.11.0)
         IMAGE_TAG="${TAG#v}"
+    fi
+}
+
+# Mutates TAG / IMAGE_TAG when we can infer the real release from the
+# local checkout. Order: git describe (prefers the explicit tag on HEAD)
+# → package.json version (authoritative across shallow clones). Both are
+# best-effort; if neither works, the operator will hit the pull error
+# with actionable guidance later.
+detect_from_local_tag() {
+    local detected=""
+    if command -v git >/dev/null 2>&1 && [ -d "$FROM_LOCAL/.git" ]; then
+        detected="$(git -C "$FROM_LOCAL" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+    fi
+    if [ -z "$detected" ] && [ -f "$FROM_LOCAL/package.json" ]; then
+        # Grep-only parse (no node dependency on the host).
+        local pkg_ver
+        pkg_ver="$(grep -oE '"version":[[:space:]]*"[^"]+"' "$FROM_LOCAL/package.json" \
+            | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')"
+        [ -n "$pkg_ver" ] && detected="v$pkg_ver"
+    fi
+    if [ -n "$detected" ]; then
+        log_info "--from-local: detected version $detected; pinning image to match"
+        TAG="$detected"
+        IMAGE_TAG="${TAG#v}"
+    else
+        log_warn "--from-local unstamped and version undetectable — the pull will fail. Pass --tag vX.Y.Z explicitly, or set EMCP_PULL_POLICY=build in .env to build the image from your local Dockerfile."
     fi
 }
 

@@ -162,7 +162,34 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. gh CLI detection works under sudo --------------------------------
+# ---- 8. --from-local auto-detects the real image tag --------------------
+
+if grep -qE '^detect_from_local_tag\(\)' "$INSTALL_SH" \
+   && grep -qE 'git -C "\$FROM_LOCAL" describe --tags' "$INSTALL_SH" \
+   && grep -qE 'FROM_LOCAL/package\.json' "$INSTALL_SH"; then
+    say_pass "install.sh detects version from git tag / package.json for --from-local"
+else
+    say_fail "install.sh does not auto-detect version for --from-local"
+fi
+
+# Sanity-check the parser used for package.json version fallback.
+t_pkg="$(mktemp)"
+cat > "$t_pkg" <<'PKG'
+{
+  "name": "emcp",
+  "version": "1.2.3",
+  "other": "1.2.4"
+}
+PKG
+parsed="$(grep -oE '"version":[[:space:]]*"[^"]+"' "$t_pkg" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')"
+if [ "$parsed" = "1.2.3" ]; then
+    say_pass "package.json version grep/sed pulls the right field"
+else
+    say_fail "package.json version parser gave '$parsed' (expected 1.2.3)"
+fi
+rm -f "$t_pkg"
+
+# ---- 9. gh CLI detection works under sudo --------------------------------
 
 if grep -qE 'SUDO_USER.*gh auth status' "$INSTALL_SH" \
    && grep -qE 'sudo -u "\$SUDO_USER" -- gh' "$INSTALL_SH"; then
