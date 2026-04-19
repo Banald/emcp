@@ -143,6 +143,35 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
+# ---- 8. install log infrastructure (H9) -----------------------------------
+
+if grep -qE '^init_install_log\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines init_install_log (H9)"
+else
+    say_fail "install.sh missing init_install_log (H9)"
+fi
+if grep -qE '^INSTALL_LOG_PATH=' "$INSTALL_SH"; then
+    say_pass "install.sh declares INSTALL_LOG_PATH (H9)"
+else
+    say_fail "install.sh does not declare INSTALL_LOG_PATH (H9)"
+fi
+if grep -qE '^run_and_log\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines run_and_log (H9)"
+else
+    say_fail "install.sh missing run_and_log (H9)"
+fi
+if grep -qE 'run_and_log "docker compose pull"' "$INSTALL_SH" \
+   && grep -qE 'run_and_log "docker compose up -d"' "$INSTALL_SH"; then
+    say_pass "install.sh compose pull + up -d go through run_and_log (H9)"
+else
+    say_fail "install.sh compose pull/up not routed through run_and_log (H9)"
+fi
+if grep -qE '^compose_cd\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines compose_cd helper (H9)"
+else
+    say_fail "install.sh missing compose_cd helper (H9)"
+fi
+
 # ---- summary --------------------------------------------------------------
 
 echo

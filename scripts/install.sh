@@ -115,13 +115,56 @@ else
     C_RESET="" C_RED="" C_YELLOW="" C_BLUE="" C_CYAN="" C_GREEN="" C_BOLD=""
 fi
 
-log_info()  { printf '%s[info]%s  %s\n'  "$C_BLUE"   "$C_RESET" "$*" >&2; }
-log_warn()  { printf '%s[warn]%s  %s\n'  "$C_YELLOW" "$C_RESET" "$*" >&2; }
-log_error() { printf '%s[error]%s %s\n'  "$C_RED"    "$C_RESET" "$*" >&2; }
-log_ok()    { printf '%s[ok]%s    %s\n'  "$C_GREEN"  "$C_RESET" "$*" >&2; }
-log_step()  { printf '\n%s==>%s %s%s%s\n' "$C_CYAN"  "$C_RESET" "$C_BOLD" "$*" "$C_RESET" >&2; }
+# --- Install log ----------------------------------------------------------
+# Initialised from main() once $EMCP_HOME is known. Every log_* call mirrors
+# its payload (ANSI stripped) to this file; run_and_log captures external
+# command output too. Path is 0600 — survives in $EMCP_HOME/bin so `emcp
+# config` and `emcp uninstall` can see prior runs.
+INSTALL_LOG_PATH=""
+
+strip_ansi() { sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g'; }
+
+log_to_file() {
+    [ -n "$INSTALL_LOG_PATH" ] || return 0
+    printf '%s\n' "$*" | strip_ansi >> "$INSTALL_LOG_PATH" 2>/dev/null || true
+}
+
+log_info()  { printf '%s[info]%s  %s\n'  "$C_BLUE"   "$C_RESET" "$*" >&2; log_to_file "[info]  $*"; }
+log_warn()  { printf '%s[warn]%s  %s\n'  "$C_YELLOW" "$C_RESET" "$*" >&2; log_to_file "[warn]  $*"; }
+log_error() { printf '%s[error]%s %s\n'  "$C_RED"    "$C_RESET" "$*" >&2; log_to_file "[error] $*"; }
+log_ok()    { printf '%s[ok]%s    %s\n'  "$C_GREEN"  "$C_RESET" "$*" >&2; log_to_file "[ok]    $*"; }
+log_step()  { printf '\n%s==>%s %s%s%s\n' "$C_CYAN"  "$C_RESET" "$C_BOLD" "$*" "$C_RESET" >&2; log_to_file "==> $*"; }
 
 die() { log_error "$*"; exit 1; }
+
+init_install_log() {
+    [ -n "${EMCP_HOME:-}" ] || return 0
+    mkdir -p "$EMCP_HOME/bin" 2>/dev/null || return 0
+    local path="$EMCP_HOME/bin/install-$(date -u +%Y%m%d-%H%M%S).log"
+    if ! : > "$path" 2>/dev/null; then
+        return 0
+    fi
+    chmod 0600 "$path" 2>/dev/null || true
+    INSTALL_LOG_PATH="$path"
+    log_to_file "install log opened at $INSTALL_LOG_PATH"
+    log_to_file "installer version: $EMCP_INSTALLER_VERSION"
+}
+
+# Run a command, mirroring its stdout+stderr to the install log (and the
+# terminal). Use for compose pull/up and anything whose output matters
+# for postflight diagnosis. Preserves the command's exit status.
+run_and_log() {
+    local desc="$1"; shift
+    log_to_file "--- $desc ---"
+    if [ -n "$INSTALL_LOG_PATH" ]; then
+        "$@" > >(tee -a >(strip_ansi >> "$INSTALL_LOG_PATH")) 2>&1
+        return "${PIPESTATUS[0]}"
+    fi
+    "$@"
+}
+
+# Run `docker compose ...` in $EMCP_HOME without leaking a `cd` to the caller.
+compose_cd() ( cd "$EMCP_HOME" && docker compose "$@"; )
 
 # --- Arg parsing -----------------------------------------------------------
 
@@ -841,8 +884,10 @@ docker_login_with_token() {
 
 phase_compose_up() {
     log_step "Pull images and start stack"
-    ( cd "$EMCP_HOME" && docker compose pull --quiet ) || die "docker compose pull failed"
-    ( cd "$EMCP_HOME" && docker compose up -d ) || die "docker compose up failed"
+    run_and_log "docker compose pull" compose_cd pull --quiet \
+        || die "docker compose pull failed"
+    run_and_log "docker compose up -d" compose_cd up -d \
+        || die "docker compose up failed"
 
     log_info "waiting up to ${HEALTHCHECK_TIMEOUT_SECONDS}s for services to become healthy…"
     if wait_for_healthy; then
@@ -1016,7 +1061,7 @@ remediate_postgres_password_mismatch() {
 
 retry_compose_up() {
     log_info "retrying docker compose up -d"
-    ( cd "$EMCP_HOME" && docker compose up -d ) || return 1
+    run_and_log "docker compose up -d (retry)" compose_cd up -d || return 1
     wait_for_healthy || return 1
     return 0
 }
@@ -1172,13 +1217,32 @@ phase_reconfigure() {
     phase_env_wizard
     phase_proxy_wizard
     log_info "restarting stack to pick up new .env"
-    ( cd "$EMCP_HOME" && docker compose up -d ) || die "docker compose up failed"
+    run_and_log "docker compose up -d (reconfigure)" compose_cd up -d \
+        || die "docker compose up failed"
     wait_for_healthy && log_ok "stack healthy" || phase_postflight_detection
 }
 
 # --- Main ------------------------------------------------------------------
 
 main() {
+    # Pre-scan argv for --install-dir so the install log opens before
+    # parse_args — so parse-arg errors also land in the log, and so a
+    # malformed flag still produces a debuggable artifact on disk. Skip
+    # log creation for pure help invocations so --help never touches the
+    # filesystem.
+    local i early_dir="" j is_help=0
+    for ((i=1; i<=$#; i++)); do
+        case "${!i}" in
+            -h|--help) is_help=1 ;;
+            --install-dir)
+                j=$((i+1))
+                early_dir="${!j:-}"
+                ;;
+        esac
+    done
+    EMCP_HOME="${early_dir:-$DEFAULT_INSTALL_DIR}"
+    [ "$is_help" -eq 0 ] && init_install_log
+
     parse_args "$@"
 
     if [ "$UNINSTALL" -eq 1 ]; then
