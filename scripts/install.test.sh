@@ -64,10 +64,29 @@ fi
 
 # ---- 5. help / usage doesn't explode -------------------------------------
 
-if "$INSTALL_SH" --help >/dev/null 2>&1; then
+help_out="$("$INSTALL_SH" --help 2>&1)"
+help_rc=$?
+if [ "$help_rc" -eq 0 ]; then
     say_pass "install.sh --help returns 0"
 else
     say_fail "install.sh --help returned non-zero"
+fi
+# M3: usage() must print documented flags, not rely on sed "$0" (which
+# fails when piped via `curl | sudo bash` because $0 == bash).
+if grep -qE 'sed -n .3,[0-9]+p. "\$0"' "$INSTALL_SH"; then
+    say_fail "usage() still uses 'sed -n 3,Np \"\$0\"' (M3 regression; fails under curl-pipe)"
+else
+    say_pass "usage() does not scrape \$0 via sed (M3)"
+fi
+for flag in --install-dir --public-host --tag --ghcr-token-file --reconfigure; do
+    if printf '%s\n' "$help_out" | grep -qE -- "$flag"; then
+        continue
+    fi
+    say_fail "install.sh --help output missing flag: $flag (M3)"
+    help_flags_fail=1
+done
+if [ -z "${help_flags_fail:-}" ]; then
+    say_pass "install.sh --help documents install-dir/public-host/tag/ghcr-token-file/reconfigure (M3)"
 fi
 
 # emcp help without a compose install still runs (usage is help-text only).

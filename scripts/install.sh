@@ -1,51 +1,7 @@
 #!/usr/bin/env bash
-# ---------------------------------------------------------------------------
-# eMCP one-shot installer
-#
-# Downloads the matched-tag source tarball, generates Docker secrets, walks
-# you through the .env interactively, logs in to ghcr.io, brings the compose
-# stack up, and installs the permanent `emcp` CLI at /usr/local/bin/emcp.
-#
-# Usage:
-#     curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
-#     # or, to inspect first:
-#     curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
-#     less install.sh
-#     sudo bash install.sh
-#
-# Flags (all optional — the interactive wizard fills the gaps):
-#     --install-dir <path>     default: /opt/emcp
-#     --tag <ref>              override the release tag (default: stamped
-#                              installer version; 'main' in dev builds)
-#     --public-host <host>
-#     --public-scheme <https|http>
-#     --allowed-origins <csv>
-#     --http-port <n>
-#     --https-port <n>
-#     --log-level <level>
-#     --postgres-user <name>
-#     --postgres-db <name>
-#     --image-tag <tag>        image tag to pin (default: derived from --tag)
-#     --ghcr-token-file <path> PAT with read:packages (env: GHCR_TOKEN)
-#     --skip-first-key
-#     --non-interactive        fail fast if any answer would need a prompt
-#     --reconfigure            skip source fetch / secret gen; re-run the
-#                              env wizard against an existing install, then
-#                              re-up the stack. Used by `emcp config`.
-#     --from-local <path>      skip source fetch; use the given local repo
-#                              checkout as the source tree. For dev.
-#     --uninstall              see also `emcp uninstall`.
-#     --force                  skip confirmation prompts (destructive ops
-#                              still re-prompt for safety).
-#     --proxy-urls <csv>       rotating-proxy pool (http/https URLs, CSV).
-#                              Empty CSV or --no-proxy disables routing.
-#     --proxy-rotation <mode>  round-robin (default) | random
-#     --searxng-proxies <csv>  proxies SearXNG engines use. Empty = direct.
-#                              Defaults to the same list as --proxy-urls.
-#     --no-proxy               explicitly opt out of the proxy wizard
-#                              (useful in --non-interactive runs).
-#     -h, --help
-# ---------------------------------------------------------------------------
+# eMCP one-shot installer. Run `install.sh --help` for the full flag list;
+# usage() below is the single source of truth so `--help` still works when
+# piped via `curl | sudo bash` (where $0 is "bash", not a file path).
 
 set -euo pipefail
 
@@ -170,10 +126,48 @@ compose_cd() ( cd "$EMCP_HOME" && docker compose "$@"; )
 # --- Arg parsing -----------------------------------------------------------
 
 usage() {
-    # Prints the header comment block (lines 3..end-of-block). The range
-    # grew when the proxy-wizard flags were added; the end line is the
-    # "# -----..." divider that closes the block at top of file.
-    sed -n '3,47p' "$0"
+    cat <<'USAGE' >&2
+eMCP one-shot installer.
+
+Downloads the matched-tag source tarball, generates Docker secrets, walks
+you through .env interactively, logs in to ghcr.io, brings the compose
+stack up, and installs the permanent `emcp` CLI at /usr/local/bin/emcp.
+
+USAGE:
+  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
+  # or, to inspect first:
+  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
+  less install.sh
+  sudo bash install.sh
+
+FLAGS (all optional — the interactive wizard fills the gaps):
+  --install-dir <path>     default: /opt/emcp
+  --tag <ref>              override the release tag (default: stamped
+                           installer version; rejected for dev builds)
+  --public-host <host>     hostname clients will use to reach eMCP
+  --public-scheme <s>      https (default) | http
+  --allowed-origins <csv>  Origin allowlist, comma-separated
+  --http-port <n>          host port for plain HTTP (default 80)
+  --https-port <n>         host port for HTTPS (default 443)
+  --log-level <level>      fatal|error|warn|info|debug|trace|silent
+  --postgres-user <name>   database user (default: mcp)
+  --postgres-db <name>     database name (default: mcp)
+  --image-tag <tag>        pin a specific ghcr.io image tag
+  --ghcr-token-file <path> PAT with read:packages (env: GHCR_TOKEN)
+  --skip-first-key         don't prompt to create the first API key
+  --non-interactive        fail fast instead of prompting
+  --reconfigure            re-run the wizard against an existing install
+  --from-local <path>      use a local repo checkout as the source tree
+  --uninstall              stop the stack and remove /opt/emcp
+  --force                  skip confirmation prompts
+  --proxy-urls <csv>       rotating-proxy pool (http/https URLs)
+  --proxy-rotation <mode>  round-robin (default) | random
+  --searxng-proxies <csv>  proxies SearXNG engines use (default: same)
+  --no-proxy               disable proxy routing explicitly
+  -h, --help               show this help and exit
+
+See docs/OPERATIONS.md for day-2 operations via the `emcp` CLI.
+USAGE
     exit "${1:-0}"
 }
 
