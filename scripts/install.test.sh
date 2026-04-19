@@ -162,7 +162,21 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. preflight gates: compose version + arch (H1, H2) ------------------
+# ---- 8. health wait progress + jq fallback (H3, L1) -----------------------
+
+if grep -qE 'still waiting \(elapsed' "$INSTALL_SH"; then
+    say_pass "wait_for_healthy emits progress snapshot (H3)"
+else
+    say_fail "wait_for_healthy does not log progress (H3)"
+fi
+if grep -qE '^compose_all_healthy_jq\(\)' "$INSTALL_SH" \
+   && grep -qE '^compose_all_healthy_sed\(\)' "$INSTALL_SH"; then
+    say_pass "compose_all_healthy has jq fast-path + sed fallback (L1)"
+else
+    say_fail "compose_all_healthy missing jq/sed split (L1)"
+fi
+
+# ---- 9. preflight gates: compose version + arch (H1, H2) ------------------
 
 if grep -qE 'docker compose version --short' "$INSTALL_SH" \
    && grep -qE 'needs >= 2\.17' "$INSTALL_SH"; then

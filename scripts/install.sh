@@ -1042,12 +1042,20 @@ phase_compose_up() {
 }
 
 # Returns 0 when every service with a healthcheck is "healthy" AND no
-# service is in a failed state. Returns 1 on timeout.
+# service is in a failed state. Returns 1 on timeout. Emits a per-service
+# status snapshot every 15 seconds so the operator sees progress.
 wait_for_healthy() {
     local deadline=$((SECONDS + HEALTHCHECK_TIMEOUT_SECONDS))
+    local start=$SECONDS
+    local next_snapshot=$((SECONDS + 15))
     while [ "$SECONDS" -lt "$deadline" ]; do
         if compose_all_healthy; then
             return 0
+        fi
+        if [ "$SECONDS" -ge "$next_snapshot" ]; then
+            log_info "still waiting (elapsed $((SECONDS - start))s / ${HEALTHCHECK_TIMEOUT_SECONDS}s)"
+            compose_cd ps --format 'table {{.Service}}\t{{.State}}\t{{.Health}}' >&2 2>/dev/null || true
+            next_snapshot=$((SECONDS + 15))
         fi
         sleep 3
     done
@@ -1056,20 +1064,50 @@ wait_for_healthy() {
 
 compose_all_healthy() {
     local json
-    json="$(cd "$EMCP_HOME" && docker compose ps --format json 2>/dev/null)"
+    json="$(compose_cd ps --format json 2>/dev/null)"
     [ -n "$json" ] || return 1
 
-    # docker compose v2 emits NDJSON (one per service). Parse with python if
-    # available, else bail and assume healthy once the healthcheck window
-    # has passed — the caller will surface diagnostics on timeout anyway.
+    # L1: when jq is available, parse JSON properly. `jq -s` handles both
+    # NDJSON (modern compose) and array-wrapped JSON (pre-2.20). Falls
+    # back to the sed-regex parser when jq is absent so the installer
+    # still works on minimal hosts.
+    if command -v jq >/dev/null 2>&1; then
+        compose_all_healthy_jq "$json"
+        return $?
+    fi
+    compose_all_healthy_sed "$json"
+}
+
+compose_all_healthy_jq() {
+    local json="$1"
+    # Emit one line per service: "service<TAB>state<TAB>health<TAB>exit".
+    # The `.[]` walks whichever shape jq parses into (array or NDJSON via -s).
+    local rows
+    rows="$(printf '%s' "$json" | jq -rs '.[] | [.Service, .State, (.Health // ""), (.ExitCode // 0)] | @tsv' 2>/dev/null || true)"
+    [ -n "$rows" ] || return 1
+    local svc state health exit_code
+    while IFS=$'\t' read -r svc state health exit_code; do
+        [ -z "$svc" ] && continue
+        if [ "$state" = "exited" ]; then
+            [ "${exit_code:-1}" -ne 0 ] && return 1
+            continue
+        fi
+        [ "$state" = "running" ] || return 1
+        if [ -n "$health" ] && [ "$health" != "healthy" ]; then
+            return 1
+        fi
+    done <<< "$rows"
+    return 0
+}
+
+compose_all_healthy_sed() {
+    local json="$1"
     local unhealthy=0
     while IFS= read -r line; do
         [ -z "$line" ] && continue
-        # Fields: Name, Service, State, Health (may be empty string)
         local state health
         state="$(printf '%s' "$line" | sed -n 's/.*"State":"\([^"]*\)".*/\1/p')"
         health="$(printf '%s' "$line" | sed -n 's/.*"Health":"\([^"]*\)".*/\1/p')"
-        # migrate service exits after running — exit 0 is success, not failure.
         if [ "$state" = "exited" ]; then
             local exit_code
             exit_code="$(printf '%s' "$line" | sed -n 's/.*"ExitCode":\([0-9]*\).*/\1/p')"
