@@ -19,7 +19,7 @@ describe('shouldWarnBareBindHost', () => {
       shouldWarnBareBindHost({
         nodeEnv: 'production',
         bindHost: '0.0.0.0',
-        composeProjectName: 'echo',
+        composeProjectName: 'emcp',
       }),
       false,
     );

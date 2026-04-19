@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Echo one-shot installer
+# eMCP one-shot installer
 #
 # Downloads the matched-tag source tarball, generates Docker secrets, walks
 # you through the .env interactively, logs in to ghcr.io, brings the compose
 # stack up, and installs the permanent `emcp` CLI at /usr/local/bin/emcp.
 #
 # Usage:
-#     curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh | sudo bash
+#     curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
 #     # or, to inspect first:
-#     curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh -o install.sh
+#     curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
 #     less install.sh
 #     sudo bash install.sh
 #
 # Flags (all optional — the interactive wizard fills the gaps):
-#     --install-dir <path>     default: /opt/echo
+#     --install-dir <path>     default: /opt/emcp
 #     --tag <ref>              override the release tag (default: stamped
 #                              installer version; 'main' in dev builds)
 #     --public-host <host>
@@ -51,18 +51,18 @@ set -euo pipefail
 
 # Version is stamped by .github/workflows/release.yml at tag time. The sed
 # match line MUST stay exact — don't reflow.
-ECHO_INSTALLER_VERSION="v0.0.0-dev"
+EMCP_INSTALLER_VERSION="v0.0.0-dev"
 
 REPO_OWNER="Banald"
-REPO_NAME="echo"
+REPO_NAME="emcp"
 # ghcr.io path is always lowercase (see release.yml "Compute lowercased
 # image name" step).
-IMAGE_REPO="ghcr.io/banald/echo"
+IMAGE_REPO="ghcr.io/banald/emcp"
 
-DEFAULT_INSTALL_DIR="/opt/echo"
+DEFAULT_INSTALL_DIR="/opt/emcp"
 EMCP_BIN_PATH="/usr/local/bin/emcp"
-EMCP_CONFIG_PATH="/etc/echo/config"
-INSTALLER_SAVE_PATH_REL="bin/install.sh"  # copied into $ECHO_HOME for `emcp config`
+EMCP_CONFIG_PATH="/etc/emcp/config"
+INSTALLER_SAVE_PATH_REL="bin/install.sh"  # copied into $EMCP_HOME for `emcp config`
 HEALTHCHECK_TIMEOUT_SECONDS=180
 MIN_FREE_GB=2
 
@@ -97,7 +97,7 @@ SEARXNG_OUTGOING_PROXIES_SET=0  # 1 when the flag or existing env set it
 NO_PROXY_FLAG=0
 
 # Filled during the run
-ECHO_HOME=""
+EMCP_HOME=""
 IS_UPGRADE=0
 SEARXNG_SECRET_EXISTING=""
 
@@ -167,10 +167,10 @@ parse_args() {
     done
 
     INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-    ECHO_HOME="$INSTALL_DIR"
+    EMCP_HOME="$INSTALL_DIR"
 
     if [ -z "$TAG" ]; then
-        TAG="$ECHO_INSTALLER_VERSION"
+        TAG="$EMCP_INSTALLER_VERSION"
     fi
     if [ "$TAG" = "v0.0.0-dev" ] && [ -z "$FROM_LOCAL" ] && [ "$RECONFIGURE" -eq 0 ] && [ "$UNINSTALL" -eq 0 ]; then
         die "this install.sh is an unstamped dev build — pass --tag <vX.Y.Z> or --from-local <path>, or download install.sh from a GitHub release."
@@ -313,7 +313,7 @@ phase_preflight() {
         fi
     fi
 
-    mkdir -p "$ECHO_HOME"
+    mkdir -p "$EMCP_HOME"
 
     log_ok "preflight passed"
 }
@@ -340,9 +340,9 @@ suggest_docker_install() {
 phase_fetch_source() {
     log_step "Fetch source ($TAG)"
 
-    if [ -f "$ECHO_HOME/compose.yaml" ]; then
+    if [ -f "$EMCP_HOME/compose.yaml" ]; then
         IS_UPGRADE=1
-        log_info "existing install detected at $ECHO_HOME"
+        log_info "existing install detected at $EMCP_HOME"
         if ! prompt_yesno "upgrade in place (preserve secrets and .env)?" y; then
             die "aborted by user"
         fi
@@ -350,8 +350,8 @@ phase_fetch_source() {
 
     if [ -n "$FROM_LOCAL" ]; then
         [ -f "$FROM_LOCAL/compose.yaml" ] || die "--from-local: $FROM_LOCAL/compose.yaml not found"
-        log_info "copying from local checkout $FROM_LOCAL → $ECHO_HOME"
-        copy_source_tree "$FROM_LOCAL" "$ECHO_HOME"
+        log_info "copying from local checkout $FROM_LOCAL → $EMCP_HOME"
+        copy_source_tree "$FROM_LOCAL" "$EMCP_HOME"
         return 0
     fi
 
@@ -370,8 +370,8 @@ phase_fetch_source() {
     extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -n1)"
     [ -n "$extracted" ] || die "source tarball has unexpected layout"
 
-    copy_source_tree "$extracted" "$ECHO_HOME"
-    log_ok "source extracted to $ECHO_HOME"
+    copy_source_tree "$extracted" "$EMCP_HOME"
+    log_ok "source extracted to $EMCP_HOME"
 }
 
 # Copy only the files compose.yaml needs, preserving existing .env + secrets.
@@ -396,25 +396,25 @@ copy_source_tree() {
 
 phase_generate_secrets() {
     log_step "Generate Docker secrets"
-    mkdir -p "$ECHO_HOME/secrets"
+    mkdir -p "$EMCP_HOME/secrets"
 
-    generate_secret_if_missing "$ECHO_HOME/secrets/postgres_password.txt"   24 "postgres password"
-    generate_secret_if_missing "$ECHO_HOME/secrets/redis_password.txt"      24 "redis password"
+    generate_secret_if_missing "$EMCP_HOME/secrets/postgres_password.txt"   24 "postgres password"
+    generate_secret_if_missing "$EMCP_HOME/secrets/redis_password.txt"      24 "redis password"
 
-    if [ -s "$ECHO_HOME/secrets/api_key_hmac_secret.txt" ]; then
+    if [ -s "$EMCP_HOME/secrets/api_key_hmac_secret.txt" ]; then
         log_info "api_key_hmac_secret.txt exists — preserving (rotating it invalidates every API key)"
     elif [ "$IS_UPGRADE" -eq 1 ]; then
         log_warn "api_key_hmac_secret.txt is missing on an upgrade. Generating a fresh one WILL invalidate every previously issued API key."
         if ! prompt_yesno "generate a new HMAC pepper and accept that all old keys will stop working?" n; then
             die "aborted; restore secrets/api_key_hmac_secret.txt from backup and re-run"
         fi
-        generate_secret_if_missing "$ECHO_HOME/secrets/api_key_hmac_secret.txt" 32 "API key HMAC pepper"
+        generate_secret_if_missing "$EMCP_HOME/secrets/api_key_hmac_secret.txt" 32 "API key HMAC pepper"
     else
-        generate_secret_if_missing "$ECHO_HOME/secrets/api_key_hmac_secret.txt" 32 "API key HMAC pepper"
+        generate_secret_if_missing "$EMCP_HOME/secrets/api_key_hmac_secret.txt" 32 "API key HMAC pepper"
     fi
 
-    chmod 0644 "$ECHO_HOME/secrets"/*.txt
-    log_ok "secrets ready at $ECHO_HOME/secrets/"
+    chmod 0644 "$EMCP_HOME/secrets"/*.txt
+    log_ok "secrets ready at $EMCP_HOME/secrets/"
 }
 
 generate_secret_if_missing() {
@@ -436,7 +436,7 @@ phase_env_wizard() {
     # Seed defaults from an existing .env so re-runs are non-destructive.
     load_existing_env_defaults
 
-    prompt PUBLIC_HOST "Public hostname — what clients will use to reach Echo (e.g. echo.example.com, or 'localhost' for local use)" "${PUBLIC_HOST:-localhost}" validate_host
+    prompt PUBLIC_HOST "Public hostname — what clients will use to reach eMCP (e.g. emcp.example.com, or 'localhost' for local use)" "${PUBLIC_HOST:-localhost}" validate_host
 
     prompt PUBLIC_SCHEME "Use HTTPS (recommended) or HTTP? HTTP is plaintext; use only on fully trusted networks" "${PUBLIC_SCHEME:-https}" validate_scheme
 
@@ -474,12 +474,12 @@ phase_env_wizard() {
     [ -n "$searxng_secret" ] || searxng_secret="$(openssl rand -hex 32)"
 
     write_env_file "$searxng_secret"
-    chmod 0600 "$ECHO_HOME/.env"
-    log_ok ".env written to $ECHO_HOME/.env (0600)"
+    chmod 0600 "$EMCP_HOME/.env"
+    log_ok ".env written to $EMCP_HOME/.env (0600)"
 }
 
 load_existing_env_defaults() {
-    local f="$ECHO_HOME/.env"
+    local f="$EMCP_HOME/.env"
     [ -f "$f" ] || return 0
     # Extract known keys without sourcing (the file may contain arbitrary quoting).
     local k v
@@ -507,7 +507,7 @@ load_existing_env_defaults() {
 
 dequote() { local s="$1"; s="${s%\"}"; s="${s#\"}"; printf '%s' "$s"; }
 
-# Mask the user:pass segment of a proxy URL for echo-back. Mirrors
+# Mask the user:pass segment of a proxy URL for display. Mirrors
 # maskProxyUrl in src/shared/net/proxy/redact.ts so the CLI and the
 # runtime speak the same language about redaction.
 mask_proxy_url() {
@@ -540,7 +540,7 @@ mask_proxy_url_csv() {
 
 # Validate a single proxy URL: http:// or https:// scheme, non-empty
 # host, optional user:pass. Returns 0 on success, 1 (with a log_warn)
-# on failure. Echoes no credentials — only the host:port portion.
+# on failure. Prints no credentials — only the host:port portion.
 validate_proxy_url() {
     local url="$1"
     case "$url" in
@@ -582,9 +582,9 @@ validate_proxy_csv() {
 
 write_env_file() {
     local searxng_secret="$1"
-    local f="$ECHO_HOME/.env"
+    local f="$EMCP_HOME/.env"
     cat > "$f" <<EOF
-# Managed by Echo installer ($ECHO_INSTALLER_VERSION) — edit freely and run
+# Managed by eMCP installer ($EMCP_INSTALLER_VERSION) — edit freely and run
 # \`emcp restart\` to apply. Re-running the installer uses these values as
 # defaults, so manual edits survive an upgrade.
 
@@ -611,8 +611,8 @@ HTTPS_PORT=${HTTPS_PORT}
 
 # --- Image pinning ---
 GHCR_OWNER=banald
-ECHO_IMAGE_TAG=${IMAGE_TAG}
-ECHO_PULL_POLICY=always
+EMCP_IMAGE_TAG=${IMAGE_TAG}
+EMCP_PULL_POLICY=always
 
 # --- Limits (compose defaults are fine; override here if you need to) ---
 DATABASE_POOL_MAX=10
@@ -841,8 +841,8 @@ docker_login_with_token() {
 
 phase_compose_up() {
     log_step "Pull images and start stack"
-    ( cd "$ECHO_HOME" && docker compose pull --quiet ) || die "docker compose pull failed"
-    ( cd "$ECHO_HOME" && docker compose up -d ) || die "docker compose up failed"
+    ( cd "$EMCP_HOME" && docker compose pull --quiet ) || die "docker compose pull failed"
+    ( cd "$EMCP_HOME" && docker compose up -d ) || die "docker compose up failed"
 
     log_info "waiting up to ${HEALTHCHECK_TIMEOUT_SECONDS}s for services to become healthy…"
     if wait_for_healthy; then
@@ -867,7 +867,7 @@ wait_for_healthy() {
 
 compose_all_healthy() {
     local json
-    json="$(cd "$ECHO_HOME" && docker compose ps --format json 2>/dev/null)"
+    json="$(cd "$EMCP_HOME" && docker compose ps --format json 2>/dev/null)"
     [ -n "$json" ] || return 1
 
     # docker compose v2 emits NDJSON (one per service). Parse with python if
@@ -910,7 +910,7 @@ phase_postflight_detection() {
 
     log_step "Diagnose unhealthy stack"
     local combined
-    combined="$(cd "$ECHO_HOME" && docker compose logs --no-color --tail 200 2>&1 || true)"
+    combined="$(cd "$EMCP_HOME" && docker compose logs --no-color --tail 200 2>&1 || true)"
 
     if grep -qiE 'bind: address already in use' <<< "$combined"; then
         remediate_port_conflict "$combined" && retry_compose_up && return 0
@@ -921,17 +921,17 @@ phase_postflight_detection() {
     fi
 
     if grep -qiE 'migrate .* exited with code [1-9]' <<< "$combined" \
-       || (cd "$ECHO_HOME" && docker compose ps --format json 2>/dev/null \
+       || (cd "$EMCP_HOME" && docker compose ps --format json 2>/dev/null \
            | grep -q '"Service":"migrate"' \
-           && cd "$ECHO_HOME" && docker compose ps migrate --format json 2>/dev/null \
+           && cd "$EMCP_HOME" && docker compose ps migrate --format json 2>/dev/null \
            | grep -q '"ExitCode":[1-9]'); then
         log_error "migrations failed. Last 80 lines:"
-        ( cd "$ECHO_HOME" && docker compose logs --no-color --tail 80 migrate ) >&2 || true
+        ( cd "$EMCP_HOME" && docker compose logs --no-color --tail 80 migrate ) >&2 || true
         log_error "manual recovery: see docs/OPERATIONS.md — Database migrations."
     fi
 
     log_error "one or more services are unhealthy after ${HEALTHCHECK_TIMEOUT_SECONDS}s"
-    ( cd "$ECHO_HOME" && docker compose ps ) >&2
+    ( cd "$EMCP_HOME" && docker compose ps ) >&2
     die "install did not complete; see messages above"
 }
 
@@ -960,10 +960,10 @@ remediate_port_conflict() {
             validate_port "$new_port" || return 1
             if [ "${collided_port:-0}" = "${HTTPS_PORT:-0}" ]; then
                 HTTPS_PORT="$new_port"
-                sed -i "s/^HTTPS_PORT=.*/HTTPS_PORT=${new_port}/" "$ECHO_HOME/.env"
+                sed -i "s/^HTTPS_PORT=.*/HTTPS_PORT=${new_port}/" "$EMCP_HOME/.env"
             else
                 HTTP_PORT="$new_port"
-                sed -i "s/^HTTP_PORT=.*/HTTP_PORT=${new_port}/" "$ECHO_HOME/.env"
+                sed -i "s/^HTTP_PORT=.*/HTTP_PORT=${new_port}/" "$EMCP_HOME/.env"
             fi
             log_info "updated .env; will retry compose up"
             return 0
@@ -989,13 +989,13 @@ remediate_postgres_password_mismatch() {
     read -r -p "choice [a/b/c]: " choice
     case "${choice,,}" in
         a)
-            if ! prompt_yesno "are you SURE you want to destroy all Echo data?" n; then
+            if ! prompt_yesno "are you SURE you want to destroy all eMCP data?" n; then
                 return 1
             fi
             if ! prompt_yesno "once more — this is destructive. Continue?" n; then
                 return 1
             fi
-            ( cd "$ECHO_HOME" && docker compose down -v ) || return 1
+            ( cd "$EMCP_HOME" && docker compose down -v ) || return 1
             log_info "pgdata volume destroyed; retrying up…"
             return 0
             ;;
@@ -1003,8 +1003,8 @@ remediate_postgres_password_mismatch() {
             local pw
             prompt_secret pw "paste the original postgres password"
             [ -n "$pw" ] || return 1
-            printf '%s\n' "$pw" > "$ECHO_HOME/secrets/postgres_password.txt"
-            chmod 0644 "$ECHO_HOME/secrets/postgres_password.txt"
+            printf '%s\n' "$pw" > "$EMCP_HOME/secrets/postgres_password.txt"
+            chmod 0644 "$EMCP_HOME/secrets/postgres_password.txt"
             log_info "postgres_password.txt restored; retrying up…"
             return 0
             ;;
@@ -1016,7 +1016,7 @@ remediate_postgres_password_mismatch() {
 
 retry_compose_up() {
     log_info "retrying docker compose up -d"
-    ( cd "$ECHO_HOME" && docker compose up -d ) || return 1
+    ( cd "$EMCP_HOME" && docker compose up -d ) || return 1
     wait_for_healthy || return 1
     return 0
 }
@@ -1028,16 +1028,16 @@ phase_install_emcp() {
 
     mkdir -p "$(dirname "$EMCP_CONFIG_PATH")"
     cat > "$EMCP_CONFIG_PATH" <<EOF
-# Managed by install.sh ($ECHO_INSTALLER_VERSION).
-ECHO_HOME=${ECHO_HOME}
+# Managed by install.sh ($EMCP_INSTALLER_VERSION).
+EMCP_HOME=${EMCP_HOME}
 EOF
     chmod 0644 "$EMCP_CONFIG_PATH"
 
     local emcp_src
     if [ -n "$FROM_LOCAL" ] && [ -f "$FROM_LOCAL/scripts/emcp" ]; then
         emcp_src="$FROM_LOCAL/scripts/emcp"
-    elif [ -f "$ECHO_HOME/scripts/emcp" ]; then
-        emcp_src="$ECHO_HOME/scripts/emcp"
+    elif [ -f "$EMCP_HOME/scripts/emcp" ]; then
+        emcp_src="$EMCP_HOME/scripts/emcp"
     else
         # Fallback: fetch the tagged copy from GitHub raw.
         local url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${TAG}/scripts/emcp"
@@ -1049,7 +1049,7 @@ EOF
 
     install -D -m 0755 "$emcp_src" "$EMCP_BIN_PATH"
 
-    # Also save this installer inside $ECHO_HOME so `emcp config` and
+    # Also save this installer inside $EMCP_HOME so `emcp config` and
     # `emcp uninstall` can re-run it later. `curl | sudo bash` streams the
     # script from stdin and `$0` is the shell itself (not a file on disk),
     # so refetch from the release in that case.
@@ -1059,7 +1059,7 @@ EOF
 }
 
 save_installer_copy() {
-    local dest="$ECHO_HOME/$INSTALLER_SAVE_PATH_REL"
+    local dest="$EMCP_HOME/$INSTALLER_SAVE_PATH_REL"
     mkdir -p "$(dirname "$dest")"
     if [ -f "$0" ] && head -n1 "$0" 2>/dev/null | grep -q '^#!'; then
         cp -f "$0" "$dest"
@@ -1096,7 +1096,7 @@ phase_first_key() {
     name="${USER:-operator}@${host}"
     prompt name "name for this key" "$name" validate_nonempty
 
-    ( cd "$ECHO_HOME" && docker compose run --rm mcp-server \
+    ( cd "$EMCP_HOME" && docker compose run --rm mcp-server \
         node dist/cli/keys.js create --name "$name" ) || {
         log_error "key creation failed; you can retry with: emcp key create --name \"$name\""
         return 0
@@ -1121,11 +1121,11 @@ phase_summary() {
 
     cat <<EOF >&2
 
-Echo is running.
+eMCP is running.
 
   MCP endpoint:   ${C_BOLD}${endpoint}${C_RESET}
-  Install dir:    ${ECHO_HOME}
-  Installer tag:  ${ECHO_INSTALLER_VERSION}
+  Install dir:    ${EMCP_HOME}
+  Installer tag:  ${EMCP_INSTALLER_VERSION}
 
 Day-2 commands (run from anywhere):
   emcp status          show container status
@@ -1148,31 +1148,31 @@ EOF
 # --- Uninstall -------------------------------------------------------------
 
 phase_uninstall() {
-    log_step "Uninstall Echo"
-    if ! prompt_yesno "this will stop the stack, delete $ECHO_HOME, remove $EMCP_BIN_PATH, and wipe all data volumes. Continue?" n; then
+    log_step "Uninstall eMCP"
+    if ! prompt_yesno "this will stop the stack, delete $EMCP_HOME, remove $EMCP_BIN_PATH, and wipe all data volumes. Continue?" n; then
         die "aborted"
     fi
     if ! prompt_yesno "are you SURE? This destroys the database." n; then
         die "aborted"
     fi
-    if [ -f "$ECHO_HOME/compose.yaml" ]; then
-        ( cd "$ECHO_HOME" && docker compose down -v ) || log_warn "compose down -v returned non-zero"
+    if [ -f "$EMCP_HOME/compose.yaml" ]; then
+        ( cd "$EMCP_HOME" && docker compose down -v ) || log_warn "compose down -v returned non-zero"
     fi
-    rm -rf "$ECHO_HOME"
+    rm -rf "$EMCP_HOME"
     rm -f "$EMCP_BIN_PATH" "$EMCP_CONFIG_PATH"
     rmdir "$(dirname "$EMCP_CONFIG_PATH")" 2>/dev/null || true
-    log_ok "Echo uninstalled."
+    log_ok "eMCP uninstalled."
 }
 
 # --- Reconfigure -----------------------------------------------------------
 
 phase_reconfigure() {
-    [ -f "$ECHO_HOME/compose.yaml" ] || die "no existing install at $ECHO_HOME (run install.sh first)"
-    log_step "Reconfigure $ECHO_HOME/.env"
+    [ -f "$EMCP_HOME/compose.yaml" ] || die "no existing install at $EMCP_HOME (run install.sh first)"
+    log_step "Reconfigure $EMCP_HOME/.env"
     phase_env_wizard
     phase_proxy_wizard
     log_info "restarting stack to pick up new .env"
-    ( cd "$ECHO_HOME" && docker compose up -d ) || die "docker compose up failed"
+    ( cd "$EMCP_HOME" && docker compose up -d ) || die "docker compose up failed"
     wait_for_healthy && log_ok "stack healthy" || phase_postflight_detection
 }
 

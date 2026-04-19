@@ -7,7 +7,7 @@ use_default_settings:
       - qwant
       - startpage
 
-# --- Outgoing proxy rotation (Echo) ---
+# --- Outgoing proxy rotation (eMCP) ---
 # The SEARXNG_OUTGOING_PROXIES env var is expanded by
 # infra/searxng/entrypoint.sh at container start. Empty var → this
 # marker line is removed and SearXNG makes direct requests. Non-empty
@@ -18,7 +18,7 @@ use_default_settings:
 # SEARXNG_OUTGOING_PROXIES_MARKER
 
 general:
-  instance_name: "Echo SearXNG"
+  instance_name: "eMCP SearXNG"
 
 search:
   safe_search: 0

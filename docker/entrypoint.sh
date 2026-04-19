@@ -1,5 +1,5 @@
 #!/bin/sh
-# Echo container entrypoint.
+# eMCP container entrypoint.
 #
 # 1. Expand any *_FILE env vars into their bare-name equivalent, reading the
 #    file contents (convention used by the postgres, mysql, and redis images).

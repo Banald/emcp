@@ -6,7 +6,7 @@ This document covers operational tasks: managing API keys, running migrations, g
 
 Hosts provisioned by `scripts/install.sh` have `/usr/local/bin/emcp`, a
 thin wrapper around `docker compose` in the install directory (default
-`/opt/echo`). Every operation in this document can be driven through it,
+`/opt/emcp`). Every operation in this document can be driven through it,
 and `emcp key …` is a full passthrough to the `keys.ts` subcommands
 documented below. The raw `docker compose run …` forms remain supported
 and are the escape hatch when the wrapper doesn't fit.
@@ -64,15 +64,15 @@ passthrough to `docker compose run --rm mcp-server node dist/cli/keys.js <cmd> <
 | Task | `emcp` form | Equivalent raw form |
 |--|--|--|
 | Pull current pinned image and recreate | `emcp update` | `docker compose pull && docker compose up -d` |
-| Pin a specific tag and update | `emcp update <tag>` (alias `emcp upgrade <tag>`) | edit `ECHO_IMAGE_TAG` in `.env`, then `docker compose pull && docker compose up -d` |
+| Pin a specific tag and update | `emcp update <tag>` (alias `emcp upgrade <tag>`) | edit `EMCP_IMAGE_TAG` in `.env`, then `docker compose pull && docker compose up -d` |
 | Re-run the interactive env wizard | `emcp config` | edit `.env` by hand, `docker compose up -d` |
-| Uninstall (destroys data) | `emcp uninstall` | `docker compose down -v && rm -rf /opt/echo` |
+| Uninstall (destroys data) | `emcp uninstall` | `docker compose down -v && rm -rf /opt/emcp` |
 | Print help | `emcp help` (aliases `--help` / `-h`; bare `emcp` with no args) | n/a |
 | Print version | `emcp version` (aliases `--version` / `-V`) | n/a |
 
-`emcp` resolves the install directory from `/etc/echo/config` (written by
-`install.sh`) and falls back to `/opt/echo`. Override per-invocation with
-`ECHO_HOME=/alt/path emcp …`.
+`emcp` resolves the install directory from `/etc/emcp/config` (written by
+`install.sh`) and falls back to `/opt/emcp`. Override per-invocation with
+`EMCP_HOME=/alt/path emcp …`.
 
 ## API key management (CLI)
 
@@ -281,7 +281,7 @@ registerShutdown(async () => {
 
 ## Containerized deployment operations
 
-When Echo runs under Docker Compose (see `README.md`), every CLI command
+When eMCP runs under Docker Compose (see `README.md`), every CLI command
 runs via `docker compose run --rm <service>`. The image is the same one
 that powers `mcp-server` and `mcp-worker` — it ships `dist/db/migrate.js`,
 `dist/cli/keys.js`, and the full runtime.
@@ -360,7 +360,7 @@ and mirror the PM2 `kill_timeout` values in `ecosystem.config.cjs`.
 
 ## Outbound proxy rotation
 
-Echo can rotate external HTTP egress across a configurable pool of HTTP(S) proxies. When `PROXY_URLS` is empty (the default), every external fetch goes direct and the subsystem is effectively absent. When it's set, the server + worker processes pick a proxy per request, retry on connect failure, and cool down misbehaving proxies automatically.
+eMCP can rotate external HTTP egress across a configurable pool of HTTP(S) proxies. When `PROXY_URLS` is empty (the default), every external fetch goes direct and the subsystem is effectively absent. When it's set, the server + worker processes pick a proxy per request, retry on connect failure, and cool down misbehaving proxies automatically.
 
 Subsystem deep-dive lives in `docs/ARCHITECTURE.md` ("Proxy egress") and `docs/SECURITY.md` Rule 13. This section is the operator runbook.
 
@@ -375,20 +375,20 @@ emcp config                                  # existing install
 
 # Non-interactive: CSV + rotation + SearXNG proxies all supplied.
 sudo bash install.sh --non-interactive \
-  --public-host echo.example.com --public-scheme https \
-  --allowed-origins https://echo.example.com \
+  --public-host emcp.example.com --public-scheme https \
+  --allowed-origins https://emcp.example.com \
   --proxy-urls "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080" \
   --proxy-rotation round-robin \
   --searxng-proxies "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080"
 ```
 
-To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/echo/.env` and clear `PROXY_URLS=` (and `SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
+To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/emcp/.env` and clear `PROXY_URLS=` (and `SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
 
 Operator-facing prints mask the credentials (`http://***@host:port`). The raw `.env` file is written at `0600` and the credentials never appear in `docker compose logs`.
 
 ### Knobs
 
-Set in `/opt/echo/.env`; compose rebuilds on `emcp restart`:
+Set in `/opt/emcp/.env`; compose rebuilds on `emcp restart`:
 
 | Variable | Default | Purpose |
 |--|--|--|
@@ -430,7 +430,7 @@ The `proxy_id` label is the pool index (`p0`, `p1`, …); the URL is never label
 
 ```bash
 docker compose logs searxng | head -5
-# [echo-searxng] proxies enabled: p1.example.com:8080,p2.example.com:8080
+# [emcp-searxng] proxies enabled: p1.example.com:8080,p2.example.com:8080
 docker compose exec searxng grep -A4 'outgoing:' /etc/searxng/settings.yml
 ```
 

@@ -564,7 +564,7 @@ async function handleMcp(
   });
 
   const mcpServer = new McpServer(
-    { name: 'echo', version: PKG_VERSION },
+    { name: 'emcp', version: PKG_VERSION },
     { capabilities: { tools: {} } },
   );
 

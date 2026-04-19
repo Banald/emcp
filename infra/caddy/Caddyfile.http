@@ -1,4 +1,4 @@
-# Caddy reverse proxy for Echo — plain HTTP mode.
+# Caddy reverse proxy for eMCP — plain HTTP mode.
 #
 # Selected by PUBLIC_SCHEME=http in .env. TLS is disabled; the site only
 # listens on port 80. Use this ONLY on trusted internal networks — bearer

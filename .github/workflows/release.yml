@@ -170,7 +170,7 @@ jobs:
         # usernames and org names may contain them. Lowercase once, reuse.
         run: |
           owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "name=ghcr.io/${owner}/echo" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${owner}/emcp" >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - name: Log in to ghcr.io
@@ -237,14 +237,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Stamp installer version
-        # Rewrite the placeholder ECHO_INSTALLER_VERSION in scripts/install.sh
+        # Rewrite the placeholder EMCP_INSTALLER_VERSION in scripts/install.sh
         # to the concrete tag. The scripts/install.test.sh smoke test asserts
         # this line's format, so changes here must stay compatible.
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          sed -i "s|^ECHO_INSTALLER_VERSION=.*|ECHO_INSTALLER_VERSION=\"${TAG}\"|" scripts/install.sh
-          grep '^ECHO_INSTALLER_VERSION=' scripts/install.sh
+          sed -i "s|^EMCP_INSTALLER_VERSION=.*|EMCP_INSTALLER_VERSION=\"${TAG}\"|" scripts/install.sh
+          grep '^EMCP_INSTALLER_VERSION=' scripts/install.sh
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -285,7 +285,7 @@ jobs:
           \`\`\`
           EOF
           gh release create "$TAG" \
-            --title "Echo $TAG" \
+            --title "eMCP $TAG" \
             --notes-file "$NOTES_FILE" \
             --generate-notes \
             $PRERELEASE_FLAG

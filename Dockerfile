@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for Echo MCP server.
+# Multi-stage build for the eMCP server.
 # The same image runs either process — `mcp-server` or `mcp-worker` — chosen
 # by the CMD override in compose.yaml.
 
@@ -30,19 +30,19 @@ ENV NODE_ENV=production \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 echo \
-    && useradd --system --uid 10001 --gid echo --home-dir /app --shell /usr/sbin/nologin echo
+    && groupadd --system --gid 10001 emcp \
+    && useradd --system --uid 10001 --gid emcp --home-dir /app --shell /usr/sbin/nologin emcp
 
 WORKDIR /app
 
-COPY --from=deps --chown=echo:echo /app/node_modules ./node_modules
-COPY --from=build --chown=echo:echo /app/dist ./dist
-COPY --chown=echo:echo migrations ./migrations
-COPY --chown=echo:echo package.json ./package.json
+COPY --from=deps --chown=emcp:emcp /app/node_modules ./node_modules
+COPY --from=build --chown=emcp:emcp /app/dist ./dist
+COPY --chown=emcp:emcp migrations ./migrations
+COPY --chown=emcp:emcp package.json ./package.json
 COPY --chown=root:root docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
-USER echo
+USER emcp
 EXPOSE 3000
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]

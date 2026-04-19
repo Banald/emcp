@@ -4,7 +4,7 @@
 
 ## What this project is
 
-A production-grade **Model Context Protocol (MCP) server named Echo** written in TypeScript. It exposes tools to MCP clients (Claude, IDEs, agents) over **Streamable HTTP** transport with custom API key authentication, per-key usage metrics, and a croner-backed scheduler that runs drop-in cron workers in a separate process.
+A production-grade **Model Context Protocol (MCP) server named eMCP** written in TypeScript. It exposes tools to MCP clients (Claude, IDEs, agents) over **Streamable HTTP** transport with custom API key authentication, per-key usage metrics, and a croner-backed scheduler that runs drop-in cron workers in a separate process.
 
 This server is **production from day one**. It is not a prototype. Every line of code must be reviewed with that in mind.
 

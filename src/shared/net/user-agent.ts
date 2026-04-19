@@ -6,4 +6,4 @@
  * (notably Wikimedia) require a descriptive UA and a contact URL, and mixing
  * versions/formats across components breaks upstream rate-limit attribution.
  */
-export const USER_AGENT = 'EchoMCP/0.10 (+https://github.com/Banald/echo)';
+export const USER_AGENT = 'eMCP/0.10 (+https://github.com/Banald/emcp)';

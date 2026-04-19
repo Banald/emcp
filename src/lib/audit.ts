@@ -6,7 +6,7 @@ import { REDACT_PATHS } from './logger.ts';
  * Audit stream. Separate from the operational logger so retention,
  * destination, and redaction can be tuned independently. Every record
  * carries `{ stream: 'audit' }` so operators running under compose or
- * PM2 can tee it via their log forwarder of choice without Echo needing
+ * PM2 can tee it via their log forwarder of choice without eMCP needing
  * a file path or external sink baked in.
  *
  * All emit helpers are explicitly typed to enforce an allowlist of

@@ -1,4 +1,4 @@
-# Echo
+# eMCP
 
 Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, drop-in scheduled background workers, drop-in tool authoring.
 
@@ -40,16 +40,16 @@ See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 
 ## Quick install
 
-The fastest way to run Echo on a Linux host with Docker:
+The fastest way to run eMCP on a Linux host with Docker:
 
 ```bash
-curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
 ```
 
 Or, to inspect before running (recommended):
 
 ```bash
-curl -fsSL https://github.com/Banald/echo/releases/latest/download/install.sh -o install.sh
+curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
 less install.sh
 sudo bash install.sh
 ```
@@ -57,7 +57,7 @@ sudo bash install.sh
 The installer:
 
 - checks prerequisites (Docker 24+, Compose v2, daemon running, free disk)
-- downloads the matched-release source tarball into `/opt/echo`
+- downloads the matched-release source tarball into `/opt/emcp`
 - generates the three Docker secrets (`postgres_password.txt`,
   `redis_password.txt`, `api_key_hmac_secret.txt`)
 - walks you through `.env` with plain-English prompts
@@ -79,8 +79,8 @@ Non-interactive install (for CI / automation):
 ```bash
 sudo GHCR_TOKEN="$PAT" bash install.sh \
   --non-interactive \
-  --public-host echo.example.com --public-scheme https \
-  --allowed-origins https://echo.example.com \
+  --public-host emcp.example.com --public-scheme https \
+  --allowed-origins https://emcp.example.com \
   --skip-first-key
 ```
 
@@ -137,7 +137,7 @@ subcommand and flag documented there works here too.
 
 Controlled by `PUBLIC_SCHEME` in `.env` (default `https`). The installer
 sets this for you; you can change it later with `emcp config` or by
-editing `/opt/echo/.env` directly and running `emcp restart`.
+editing `/opt/emcp/.env` directly and running `emcp restart`.
 
 **HTTPS mode (`PUBLIC_SCHEME=https`, default).** Caddy picks a strategy
 based on `PUBLIC_HOST`:
@@ -159,7 +159,7 @@ networks. Caveats:
   send.
 
 Switching modes is a restart, not a rebuild: `emcp config` → pick the new
-scheme, or edit `/opt/echo/.env` and `emcp restart`.
+scheme, or edit `/opt/emcp/.env` and `emcp restart`.
 
 ## Advanced / manual deploy
 
@@ -169,8 +169,8 @@ locally, or placing the install in a non-standard path — here's the
 manual recipe:
 
 ```bash
-git clone https://github.com/Banald/echo.git
-cd echo
+git clone https://github.com/Banald/emcp.git
+cd emcp
 
 # 1. Configure
 cp .env.example .env
@@ -188,7 +188,7 @@ openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
 chmod 0644 secrets/*.txt
 
 # 3. Authenticate to ghcr.io
-# Banald/echo is private, so pulling the image requires auth. If gh CLI
+# Banald/emcp is private, so pulling the image requires auth. If gh CLI
 # is already signed in, extend your token with `read:packages` once and
 # pipe it straight into docker login:
 gh auth refresh -s read:packages   # one-time per machine
@@ -198,7 +198,7 @@ gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-st
 #   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
 
 # 4. Bring up the stack (pulls the prebuilt image; builds from source if
-#    ECHO_PULL_POLICY=build is set in .env)
+#    EMCP_PULL_POLICY=build is set in .env)
 docker compose up -d
 
 # 5. Create your first API key
@@ -219,12 +219,12 @@ docker compose run --rm migrate
 
 ### Pinning a specific version
 
-By default compose pulls `ghcr.io/banald/echo:latest`. To pin a release
+By default compose pulls `ghcr.io/banald/emcp:latest`. To pin a release
 tag (recommended for production), set in `.env`:
 
 ```
-ECHO_IMAGE_TAG=v0.5.1
-ECHO_PULL_POLICY=always
+EMCP_IMAGE_TAG=v0.5.1
+EMCP_PULL_POLICY=always
 ```
 
 Then `docker compose pull && docker compose up -d` to refresh. If the
@@ -236,7 +236,7 @@ If you've forked the repo, or you're iterating on the image locally, skip
 the ghcr.io login and build from source instead:
 
 ```
-ECHO_PULL_POLICY=build
+EMCP_PULL_POLICY=build
 ```
 
 in `.env`. First `up -d` will build the image from the working tree.
@@ -255,13 +255,13 @@ them nowhere.
 
 ## Deploy from source (bare-metal, no Docker)
 
-If you can't run Docker in the target environment, Echo still ships as a
+If you can't run Docker in the target environment, eMCP still ships as a
 straight Node.js app. You'll need to provision PostgreSQL, Redis, and
 SearXNG yourself.
 
 ```bash
-git clone https://github.com/Banald/echo.git
-cd echo
+git clone https://github.com/Banald/emcp.git
+cd emcp
 nvm use                # picks up Node 24 from .nvmrc
 npm ci --omit=dev
 npm run build          # tsc → dist/

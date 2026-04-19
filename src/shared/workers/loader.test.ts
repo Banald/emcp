@@ -6,7 +6,7 @@ import { after, describe, it } from 'node:test';
 import { loadWorkers } from './loader.ts';
 
 async function createTmpDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'echo-workers-test-'));
+  return mkdtemp(join(tmpdir(), 'emcp-workers-test-'));
 }
 
 async function writeWorker(dir: string, filename: string, content: string): Promise<void> {

@@ -1,4 +1,4 @@
-# Echo — full-stack deployment (Postgres, Redis, SearXNG, Caddy, server, worker).
+# eMCP — full-stack deployment (Postgres, Redis, SearXNG, Caddy, server, worker).
 # See README.md "Deploy with Docker Compose" for the operator workflow.
 
 services:
@@ -58,13 +58,13 @@ services:
       SEARXNG_OUTGOING_PROXIES: ${SEARXNG_OUTGOING_PROXIES:-}
     volumes:
       - ./infra/searxng/settings.template.yml:/etc/searxng/settings.template.yml:ro
-      - ./infra/searxng/entrypoint.sh:/usr/local/bin/echo-searxng-entrypoint.sh:ro
+      - ./infra/searxng/entrypoint.sh:/usr/local/bin/emcp-searxng-entrypoint.sh:ro
     # Chain through our wrapper entrypoint before the image's own. It
     # renders the template (SEARXNG_OUTGOING_PROXIES → outgoing.proxies
     # YAML block) and then execs /usr/local/searxng/dockerfiles/
     # docker-entrypoint.sh so SEARXNG_SECRET substitution + signal
     # handling still run upstream.
-    entrypoint: ["/bin/sh", "/usr/local/bin/echo-searxng-entrypoint.sh"]
+    entrypoint: ["/bin/sh", "/usr/local/bin/emcp-searxng-entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -75,10 +75,10 @@ services:
   migrate:
     # One-shot: applies pending migrations, then exits 0. mcp-server and
     # mcp-worker wait for this to complete successfully before starting.
-    image: ${ECHO_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/echo:${ECHO_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
-    pull_policy: ${ECHO_PULL_POLICY:-missing}
+    pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: "no"
     command: ["node", "dist/db/migrate.js", "up"]
     environment:
@@ -105,10 +105,10 @@ services:
         condition: service_healthy
 
   mcp-server:
-    image: ${ECHO_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/echo:${ECHO_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
-    pull_policy: ${ECHO_PULL_POLICY:-missing}
+    pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
     command: ["node", "dist/index.js"]
     environment:
@@ -175,10 +175,10 @@ services:
     stop_grace_period: 35s
 
   mcp-worker:
-    image: ${ECHO_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/echo:${ECHO_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
-    pull_policy: ${ECHO_PULL_POLICY:-missing}
+    pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
     command: ["node", "dist/workers/index.js"]
     environment:

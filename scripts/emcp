@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# emcp — Echo day-2 CLI.
+# emcp — eMCP day-2 CLI.
 #
-# Thin wrapper around `docker compose` in $ECHO_HOME plus passthrough to the
+# Thin wrapper around `docker compose` in $EMCP_HOME plus passthrough to the
 # bundled key-management CLI. Installed by scripts/install.sh.
 #
 # Run `emcp help` for the full command list.
@@ -10,16 +10,16 @@
 
 set -euo pipefail
 
-EMCP_CONFIG_PATH="${EMCP_CONFIG_PATH:-/etc/echo/config}"
+EMCP_CONFIG_PATH="${EMCP_CONFIG_PATH:-/etc/emcp/config}"
 
-# Env overrides config: allow `ECHO_HOME=/alt/path emcp …` without editing /etc.
-if [ -z "${ECHO_HOME:-}" ] && [ -r "$EMCP_CONFIG_PATH" ]; then
+# Env overrides config: allow `EMCP_HOME=/alt/path emcp …` without editing /etc.
+if [ -z "${EMCP_HOME:-}" ] && [ -r "$EMCP_CONFIG_PATH" ]; then
     # Config is a simple KEY=VALUE file written by install.sh. Source it in a
     # subshell so we never leak unexpected assignments into the parent shell.
     # shellcheck disable=SC1090
-    ECHO_HOME="$(. "$EMCP_CONFIG_PATH" >/dev/null 2>&1; printf '%s' "${ECHO_HOME:-}")"
+    EMCP_HOME="$(. "$EMCP_CONFIG_PATH" >/dev/null 2>&1; printf '%s' "${EMCP_HOME:-}")"
 fi
-ECHO_HOME="${ECHO_HOME:-/opt/echo}"
+EMCP_HOME="${EMCP_HOME:-/opt/emcp}"
 
 if [ -t 2 ]; then
     C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
@@ -36,18 +36,18 @@ log_info()  { printf '%s[emcp]%s %s\n' "$C_CYAN"   "$C_RESET" "$*" >&2; }
 die() { log_error "$*"; exit 1; }
 
 require_home() {
-    [ -f "$ECHO_HOME/compose.yaml" ] \
-        || die "no compose.yaml at $ECHO_HOME. Run install.sh or set ECHO_HOME."
+    [ -f "$EMCP_HOME/compose.yaml" ] \
+        || die "no compose.yaml at $EMCP_HOME. Run install.sh or set EMCP_HOME."
 }
 
 dc() {
     require_home
-    ( cd "$ECHO_HOME" && docker compose "$@" )
+    ( cd "$EMCP_HOME" && docker compose "$@" )
 }
 
 usage() {
     cat <<EOF
-${C_BOLD}emcp${C_RESET} — Echo day-2 CLI
+${C_BOLD}emcp${C_RESET} — eMCP day-2 CLI
 
 ${C_BOLD}USAGE${C_RESET}
     emcp <command> [args...]
@@ -84,7 +84,7 @@ ${C_BOLD}MAINTENANCE${C_RESET}
     uninstall       stop the stack, remove everything (destroys data)
 
 ${C_BOLD}CONFIG${C_RESET}
-    \$ECHO_HOME      ${ECHO_HOME}
+    \$EMCP_HOME      ${EMCP_HOME}
     \$EMCP_CONFIG_PATH ${EMCP_CONFIG_PATH}
 
 EOF
@@ -98,7 +98,7 @@ cmd_logs()    { dc logs -f --tail 100 "$@"; }
 
 cmd_health() {
     require_home
-    ( cd "$ECHO_HOME" && docker compose exec -T mcp-server \
+    ( cd "$EMCP_HOME" && docker compose exec -T mcp-server \
         node -e "fetch('http://127.0.0.1:3000/health').then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1) })" 2>&1 )
 }
 
@@ -106,13 +106,13 @@ cmd_migrate() {
     local sub="${1:-up}"
     shift || true
     require_home
-    ( cd "$ECHO_HOME" && docker compose run --rm migrate \
+    ( cd "$EMCP_HOME" && docker compose run --rm migrate \
         node dist/db/migrate.js "$sub" "$@" )
 }
 
 cmd_key() {
     require_home
-    ( cd "$ECHO_HOME" && docker compose run --rm mcp-server \
+    ( cd "$EMCP_HOME" && docker compose run --rm mcp-server \
         node dist/cli/keys.js "$@" )
 }
 
@@ -121,47 +121,47 @@ cmd_update() {
     local new_tag="${1:-}"
     if [ -n "$new_tag" ]; then
         local stripped="${new_tag#v}"
-        log_info "pinning ECHO_IMAGE_TAG=${stripped} in ${ECHO_HOME}/.env"
-        if grep -q '^ECHO_IMAGE_TAG=' "$ECHO_HOME/.env"; then
-            sed -i "s|^ECHO_IMAGE_TAG=.*|ECHO_IMAGE_TAG=${stripped}|" "$ECHO_HOME/.env"
+        log_info "pinning EMCP_IMAGE_TAG=${stripped} in ${EMCP_HOME}/.env"
+        if grep -q '^EMCP_IMAGE_TAG=' "$EMCP_HOME/.env"; then
+            sed -i "s|^EMCP_IMAGE_TAG=.*|EMCP_IMAGE_TAG=${stripped}|" "$EMCP_HOME/.env"
         else
-            printf 'ECHO_IMAGE_TAG=%s\n' "$stripped" >> "$ECHO_HOME/.env"
+            printf 'EMCP_IMAGE_TAG=%s\n' "$stripped" >> "$EMCP_HOME/.env"
         fi
     fi
-    ( cd "$ECHO_HOME" && docker compose pull && docker compose up -d )
+    ( cd "$EMCP_HOME" && docker compose pull && docker compose up -d )
 }
 
 cmd_config() {
     require_home
-    local installer="$ECHO_HOME/bin/install.sh"
+    local installer="$EMCP_HOME/bin/install.sh"
     [ -x "$installer" ] || die "installer not found at $installer — run install.sh manually"
     if [ "$(id -u)" -ne 0 ]; then
-        exec sudo -E "$installer" --reconfigure --install-dir "$ECHO_HOME"
+        exec sudo -E "$installer" --reconfigure --install-dir "$EMCP_HOME"
     fi
-    exec "$installer" --reconfigure --install-dir "$ECHO_HOME"
+    exec "$installer" --reconfigure --install-dir "$EMCP_HOME"
 }
 
 cmd_uninstall() {
-    local installer="$ECHO_HOME/bin/install.sh"
+    local installer="$EMCP_HOME/bin/install.sh"
     [ -x "$installer" ] || die "installer not found at $installer — run install.sh --uninstall manually"
     if [ "$(id -u)" -ne 0 ]; then
-        exec sudo -E "$installer" --uninstall --install-dir "$ECHO_HOME" "$@"
+        exec sudo -E "$installer" --uninstall --install-dir "$EMCP_HOME" "$@"
     fi
-    exec "$installer" --uninstall --install-dir "$ECHO_HOME" "$@"
+    exec "$installer" --uninstall --install-dir "$EMCP_HOME" "$@"
 }
 
 cmd_version() {
-    local installer="$ECHO_HOME/bin/install.sh"
+    local installer="$EMCP_HOME/bin/install.sh"
     local inst_ver="unknown"
     if [ -f "$installer" ]; then
-        inst_ver="$(awk -F'"' '/^ECHO_INSTALLER_VERSION=/ {print $2; exit}' "$installer")"
+        inst_ver="$(awk -F'"' '/^EMCP_INSTALLER_VERSION=/ {print $2; exit}' "$installer")"
     fi
     local img_tag=""
-    if [ -f "$ECHO_HOME/.env" ]; then
-        img_tag="$(awk -F= '/^ECHO_IMAGE_TAG=/ {print $2; exit}' "$ECHO_HOME/.env")"
+    if [ -f "$EMCP_HOME/.env" ]; then
+        img_tag="$(awk -F= '/^EMCP_IMAGE_TAG=/ {print $2; exit}' "$EMCP_HOME/.env")"
     fi
     printf 'emcp\n  installer: %s\n  image tag: %s\n  compose dir: %s\n' \
-        "$inst_ver" "${img_tag:-<unset>}" "$ECHO_HOME"
+        "$inst_ver" "${img_tag:-<unset>}" "$EMCP_HOME"
 }
 
 main() {

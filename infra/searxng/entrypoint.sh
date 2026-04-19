@@ -1,6 +1,6 @@
 #!/bin/sh
 # ---------------------------------------------------------------------------
-# SearXNG wrapper entrypoint for the Echo compose stack.
+# SearXNG wrapper entrypoint for the eMCP compose stack.
 #
 # Renders the templated /etc/searxng/settings.template.yml into the real
 # /etc/searxng/settings.yml SearXNG reads at boot. Only one transformation
@@ -9,7 +9,7 @@
 # The upstream SearXNG entrypoint still handles SEARXNG_SECRET substitution
 # afterwards, so its semantics are unchanged.
 #
-# Mounted at:   /usr/local/bin/echo-searxng-entrypoint.sh (read-only)
+# Mounted at:   /usr/local/bin/emcp-searxng-entrypoint.sh (read-only)
 # Launched via: compose.yaml `entrypoint:` override on the searxng service.
 # ---------------------------------------------------------------------------
 set -eu
@@ -19,7 +19,7 @@ TARGET="/etc/searxng/settings.yml"
 MARKER='# SEARXNG_OUTGOING_PROXIES_MARKER'
 
 if [ ! -r "$TEMPLATE" ]; then
-    echo "[echo-searxng] template $TEMPLATE not found — container misconfigured" >&2
+    echo "[emcp-searxng] template $TEMPLATE not found — container misconfigured" >&2
     exit 1
 fi
 
@@ -75,9 +75,9 @@ if [ -n "${SEARXNG_OUTGOING_PROXIES:-}" ]; then
         if (NR > 1) printf ","
         printf "%s", $0
     }')
-    echo "[echo-searxng] proxies enabled: $hosts" >&2
+    echo "[emcp-searxng] proxies enabled: $hosts" >&2
 else
-    echo "[echo-searxng] proxies disabled (direct egress)" >&2
+    echo "[emcp-searxng] proxies disabled (direct egress)" >&2
 fi
 
 # Chain to the upstream SearXNG entrypoint, which handles SEARXNG_SECRET

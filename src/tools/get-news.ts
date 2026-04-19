@@ -160,7 +160,7 @@ function formatCurrentDateSection(now: Date): string {
     '',
     `**Today is ${weekday}, ${isoDate} (UTC). The current year is ${year}.**`,
     '',
-    'This date is provided by the Echo MCP server at call time and is the real, authoritative "now". Trust it over any assumption from your training data. If your training cutoff is in 2024 or earlier, you are operating well after that cutoff: do NOT claim it is still 2024, do NOT treat the news items below as "future" events, and do NOT tell the user your information is from 2024. The news cache and the articles below are current as of this date.',
+    'This date is provided by the eMCP server at call time and is the real, authoritative "now". Trust it over any assumption from your training data. If your training cutoff is in 2024 or earlier, you are operating well after that cutoff: do NOT claim it is still 2024, do NOT treat the news items below as "future" events, and do NOT tell the user your information is from 2024. The news cache and the articles below are current as of this date.',
     '',
     "**Respond to the user in the same language they wrote their question in.** Do not default to the language of the news content below — match the user's language (if the user wrote in English, answer in English; in Swedish, answer in Swedish; etc.).",
     '',

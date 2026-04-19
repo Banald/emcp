@@ -55,11 +55,11 @@ fi
 
 # ---- 4. version stamp format ---------------------------------------------
 
-version_line="$(grep -E '^ECHO_INSTALLER_VERSION=' "$INSTALL_SH" | head -n1 || true)"
-if [ -n "$version_line" ] && [[ "$version_line" =~ ^ECHO_INSTALLER_VERSION=\"v[0-9]+\.[0-9]+\.[0-9]+.*\"$ ]]; then
-    say_pass "ECHO_INSTALLER_VERSION has a valid stamp shape"
+version_line="$(grep -E '^EMCP_INSTALLER_VERSION=' "$INSTALL_SH" | head -n1 || true)"
+if [ -n "$version_line" ] && [[ "$version_line" =~ ^EMCP_INSTALLER_VERSION=\"v[0-9]+\.[0-9]+\.[0-9]+.*\"$ ]]; then
+    say_pass "EMCP_INSTALLER_VERSION has a valid stamp shape"
 else
-    say_fail "ECHO_INSTALLER_VERSION line missing or malformed (release.yml depends on exact prefix)"
+    say_fail "EMCP_INSTALLER_VERSION line missing or malformed (release.yml depends on exact prefix)"
 fi
 
 # ---- 5. help / usage doesn't explode -------------------------------------
@@ -71,7 +71,7 @@ else
 fi
 
 # emcp help without a compose install still runs (usage is help-text only).
-if ECHO_HOME=/nonexistent EMCP_CONFIG_PATH=/nonexistent "$EMCP_BIN" help >/dev/null 2>&1; then
+if EMCP_HOME=/nonexistent EMCP_CONFIG_PATH=/nonexistent "$EMCP_BIN" help >/dev/null 2>&1; then
     say_pass "emcp help returns 0"
 else
     say_fail "emcp help returned non-zero"
@@ -79,7 +79,7 @@ fi
 
 # emcp with a missing compose file must fail, not silently pass.
 tmp="$(mktemp -d)"
-if ECHO_HOME="$tmp" EMCP_CONFIG_PATH=/nonexistent "$EMCP_BIN" status >/dev/null 2>&1; then
+if EMCP_HOME="$tmp" EMCP_CONFIG_PATH=/nonexistent "$EMCP_BIN" status >/dev/null 2>&1; then
     say_fail "emcp status succeeded despite missing compose.yaml"
 else
     say_pass "emcp status fails loudly when compose.yaml is missing"

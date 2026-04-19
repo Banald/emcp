@@ -16,7 +16,7 @@ at the repo root.
 | `redis_password.txt` | `openssl rand -base64 24` | redis, migrate, mcp-server, mcp-worker |
 
 Trailing newlines from shell redirection are tolerated — both the postgres
-image's entrypoint and Echo's entrypoint strip them.
+image's entrypoint and eMCP's entrypoint strip them.
 
 ## One-time setup
 
@@ -30,7 +30,7 @@ chmod 0644 secrets/*.txt
 
 `0644` (not `0600`) is required: Docker Compose `secrets:` bind-mounts these
 files into the service container with host permissions preserved, and the
-non-root container user (`echo`, UID 10001) must be able to read them.
+non-root container user (`emcp`, UID 10001) must be able to read them.
 Mode `0600` breaks the mount for that user, and the entrypoint refuses to
 start with `$_FILE is not readable`. The files still must not be committed
 (enforced by the repo's `.gitignore`).

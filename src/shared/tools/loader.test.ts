@@ -9,7 +9,7 @@ import { loadTools } from './loader.ts';
 const zodUrl = import.meta.resolve('zod');
 
 async function createTmpDir(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'echo-tools-test-'));
+  return mkdtemp(join(tmpdir(), 'emcp-tools-test-'));
 }
 
 async function writeTool(dir: string, filename: string, content: string): Promise<void> {
