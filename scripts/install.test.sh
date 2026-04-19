@@ -162,7 +162,16 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. summary snippet + EXIT trap (L4, N2) ------------------------------
+# ---- 8. gh CLI detection works under sudo --------------------------------
+
+if grep -qE 'SUDO_USER.*gh auth status' "$INSTALL_SH" \
+   && grep -qE 'sudo -u "\$SUDO_USER" -- gh' "$INSTALL_SH"; then
+    say_pass "phase_ghcr_login falls back to SUDO_USER when root lacks gh"
+else
+    say_fail "phase_ghcr_login does not re-run gh as SUDO_USER under sudo"
+fi
+
+# ---- 9. summary snippet + EXIT trap (L4, N2) ------------------------------
 
 if grep -qE 'mcpServers' "$INSTALL_SH" \
    && grep -qE '"type": "http"' "$INSTALL_SH"; then
