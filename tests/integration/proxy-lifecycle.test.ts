@@ -13,6 +13,7 @@ import { connect as tcpConnect } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { TransientError } from '../../src/lib/errors.ts';
 import { fetchExternal } from '../../src/shared/net/egress.ts';
+import { fetchSafe } from '../../src/shared/net/http.ts';
 import { buildPoolFromConfig } from '../../src/shared/net/proxy/registry.ts';
 import type { ProxyPool } from '../../src/shared/net/proxy/types.ts';
 
@@ -20,7 +21,8 @@ interface StubProxy {
   readonly server: Server;
   readonly port: number;
   readonly url: string;
-  requestCount: number;
+  readonly requestCount: number;
+  readonly connectCount: number;
   close(): Promise<void>;
 }
 
@@ -44,7 +46,7 @@ function closeServer(server: Server): Promise<void> {
 // sends for http:// targets through an HTTP proxy) and CONNECT (not
 // used by this test but included so the proxy feels realistic).
 async function createStubProxy(): Promise<StubProxy> {
-  const state: { requestCount: number } = { requestCount: 0 };
+  const state = { requestCount: 0, connectCount: 0 };
   const server = createHttpServer();
 
   server.on('request', (req, res) => {
@@ -81,6 +83,7 @@ async function createStubProxy(): Promise<StubProxy> {
 
   server.on('connect', (req, clientSocket, head) => {
     state.requestCount += 1;
+    state.connectCount += 1;
     const [hostPart, portPart] = (req.url ?? '').split(':');
     const upstream = tcpConnect(Number(portPart || 443), hostPart ?? '127.0.0.1', () => {
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -99,6 +102,9 @@ async function createStubProxy(): Promise<StubProxy> {
     url: `http://127.0.0.1:${port}`,
     get requestCount() {
       return state.requestCount;
+    },
+    get connectCount() {
+      return state.connectCount;
     },
     close: () => closeServer(server),
   } as StubProxy;
@@ -199,6 +205,38 @@ describe('proxy egress lifecycle', { timeout: 30_000 }, () => {
       assert.equal(b?.inCooldown, false, 'proxyB should remain healthy');
     } finally {
       await freshPool.close();
+    }
+  });
+
+  it('fetchSafe threads a caller-supplied pool through to fetchExternal', async () => {
+    // Regression: fetchSafe used to resolve its pool independently of
+    // the singleton inside fetchExternal. A test or harness that passed
+    // `proxyPool: somePool` saw the guard + active-path branch but the
+    // actual request went direct because fetchExternal re-resolved
+    // from the empty singleton. Locking the end-to-end flow here.
+    const localProxy = await createStubProxy();
+    const localUp = await createStubUpstream();
+    const pool = buildPoolFromConfig({
+      proxyUrls: [localProxy.url],
+      proxyRotation: 'round-robin',
+      proxyFailureCooldownMs: 1_000,
+      proxyConnectTimeoutMs: 3_000,
+    });
+    assert.ok(pool !== null);
+    try {
+      const outcome = await fetchSafe(localUp.url, {
+        proxyPool: pool,
+        // SSRF guard must allow the loopback target for this scenario —
+        // the real guard behaviour is covered by src/shared/net/ssrf.test.ts.
+        assertPublicHost: async () => {},
+      });
+      assert.equal(outcome.status, 200);
+      assert.equal(outcome.body.toString('utf-8'), 'upstream-ok');
+      assert.equal(localProxy.connectCount, 1);
+    } finally {
+      await pool.close();
+      await localProxy.close();
+      await localUp.close();
     }
   });
 

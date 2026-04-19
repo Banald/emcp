@@ -237,7 +237,12 @@ export async function fetchSafe(
         : getProxyPool()
       : null;
   const proxyActive = pool !== null && pool.size > 0;
-  const proxiedFetch = options.proxiedFetch ?? fetchExternal;
+  // Thread the resolved pool into fetchExternal so callers supplying a
+  // non-singleton pool (tests, integration harnesses) get a consistent
+  // view. In production fetchExternal would resolve the same singleton
+  // anyway — passing it explicitly is a no-op there.
+  const proxiedFetch =
+    options.proxiedFetch ?? ((u: string, init: RequestInit) => fetchExternal(u, init, { pool }));
 
   const combinedSignal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])

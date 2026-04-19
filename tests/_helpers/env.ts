@@ -28,6 +28,12 @@ export const DEFAULT_TEST_ENV: Readonly<Record<string, string>> = Object.freeze(
   // AUDIT L-5 — set explicitly so the server.test.ts assertion can
   // anchor on a known value independent of the Node default (300s).
   HTTP_REQUEST_TIMEOUT_MS: '60000',
+  // Outbound-proxy rotation (docs/ARCHITECTURE.md "Proxy egress"):
+  // empty PROXY_URLS keeps the feature disabled so every existing test
+  // runs fetchExternal's bypass path. Integration tests that exercise
+  // the pool-active path build their own pool explicitly — they don't
+  // rely on this env var.
+  PROXY_URLS: '',
 });
 
 /**
