@@ -106,7 +106,8 @@ die() { log_error "$*"; exit 1; }
 init_install_log() {
     [ -n "${EMCP_HOME:-}" ] || return 0
     mkdir -p "$EMCP_HOME/bin" 2>/dev/null || return 0
-    local path="$EMCP_HOME/bin/install-$(date -u +%Y%m%d-%H%M%S).log"
+    local path
+    path="$EMCP_HOME/bin/install-$(date -u +%Y%m%d-%H%M%S).log"
     # Use `touch` so bash's own redirect-failure error (which bypasses the
     # builtin's 2>/dev/null when `> path` fails at redirection setup) never
     # leaks past this function. If create fails, we simply skip logging.
@@ -1425,7 +1426,7 @@ phase_smoke_test() {
             log_warn "/mcp returned 403 — check EMCP_ALLOWED_ORIGINS and EMCP_PUBLIC_HOST match the client's expected values" ;;
         0:429)
             log_warn "/mcp returned 429 — pre-auth rate limit fired on a smoke test; inspect EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE" ;;
-        0:2??|0:204)
+        0:2??)
             log_warn "/mcp returned ${code} — a bogus key should not succeed. Auth layer may not be active" ;;
         0:5??)
             log_warn "/mcp returned ${code} — server error before the auth check. See: emcp logs mcp-server" ;;
