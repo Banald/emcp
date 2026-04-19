@@ -228,35 +228,35 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | Variable | Required | Example | Purpose |
 |--|--|--|--|
 | `NODE_ENV` | yes | `production` | `development` \| `production` \| `test` |
-| `PORT` | yes | `3000` | HTTP port for MCP server (bind to loopback) |
-| `BIND_HOST` | no | `127.0.0.1` | Interface to bind. Bare-metal deploys use `127.0.0.1` (default) and rely on a loopback-only reverse proxy as ingress. Containerized deploys (compose, k8s) set `0.0.0.0` so the proxy container can reach the process across the private bridge network. In both cases the external ingress is the reverse proxy — the app process is never published to a public IP. |
-| `PUBLIC_HOST` | yes | `mcp.example.com` | Expected `Host` header value (DNS rebinding defense) |
-| `ALLOWED_ORIGINS` | yes | `https://app.example.com,https://...` | Comma-separated allowlist for `Origin` header |
-| `DATABASE_URL` | yes | `postgres://user:pass@localhost:5432/mcp` | Postgres connection string |
-| `DATABASE_POOL_MAX` | no | `20` | Max pool connections. Default 10. |
-| `REDIS_URL` | yes | `redis://localhost:6379` | Redis connection string |
-| `API_KEY_HMAC_SECRET` | yes | (32+ random bytes, base64) | HMAC pepper for API key hashing. **Rotating this invalidates ALL keys.** |
-| `LOG_LEVEL` | no | `info` | Pino level. Default `info` in prod, `debug` in dev. |
-| `RATE_LIMIT_DEFAULT_PER_MINUTE` | no | `60` | Fallback when key has no override. Default 60. |
-| `SHUTDOWN_TIMEOUT_MS` | no | `30000` | Graceful shutdown deadline for both processes. Default 30s. |
-| `SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
-| `PUBLIC_SCHEME` | no (compose only) | `https` | Selects which Caddyfile the caddy container mounts: `https` (default, auto-TLS) or `http` (plaintext, trusted networks only). App code does not read this — it's a compose-layer knob. |
-| `MCP_MAX_BODY_BYTES` | no | `1048576` | Max POST body size to `/mcp`. Range 1 KiB–16 MiB. Default 1 MiB. |
-| `MCP_SESSION_IDLE_MS` | no | `1800000` | Idle window after which a stateful session is evicted. Range 1 min–24 h. Default 30 min. |
-| `MCP_SESSION_CLEANUP_INTERVAL_MS` | no | `60000` | How often the eviction sweep runs. Range 1 s–10 min. Default 1 min. |
-| `MCP_TOOL_CALL_TIMEOUT_MS` | no | `30000` | Per-tool-call abort timeout. Range 1 s–10 min. Default 30 s. |
-| `MCP_MAX_SESSIONS_PER_KEY` | no | `32` | Concurrent stateful sessions per API key. Over-cap initialises get `RateLimitError` (`-32029`). Range 1–10000. |
-| `MCP_MAX_SESSIONS_TOTAL` | no | `10000` | Process-wide session backstop. Over-cap initialises get a `TransientError` (`-32013`, 503) with `Retry-After: 60`. |
-| `HTTP_REQUEST_TIMEOUT_MS` | no | `60000` | HTTP request-receipt timeout (headers + body). Range 10 s–5 min. Applies to the request phase only; SSE response streams are unaffected. |
-| `PRE_AUTH_RATE_LIMIT_PER_MINUTE` | no | `600` | Pre-auth cap keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS`). Prevents credential-spray traffic from saturating the auth DB lookup. |
-| `AUTH_NEG_CACHE_TTL_SECONDS` | no | `60` | TTL for the Redis negative-lookup cache that short-circuits unknown bearer tokens before Postgres. Range 1 s–1 h. Cleared automatically on `ApiKeyRepository.create`. |
-| `TRUSTED_PROXY_CIDRS` | no | `127.0.0.0/8,::1/128` | Comma-separated CIDRs whose `X-Forwarded-For` header is honoured when picking the rate-limit key. Compose sets the docker bridge CIDRs by default. |
-| `PROXY_URLS` | no | empty | Comma-separated outbound HTTP(S) proxy URLs (`http(s)://[user:pass@]host:port`). Empty keeps the feature disabled (every external fetch goes direct). See "Proxy egress" below. |
-| `PROXY_ROTATION` | no | `round-robin` | Selection strategy for the next proxy: `round-robin` or `random`. |
-| `PROXY_FAILURE_COOLDOWN_MS` | no | `60000` | How long a proxy stays out of rotation after a connect/upstream failure. Range 1 s – 1 h. |
-| `PROXY_MAX_RETRIES_PER_REQUEST` | no | `3` | Failover budget per request. Clamped to pool size at runtime. Range 1 – 10. |
-| `PROXY_CONNECT_TIMEOUT_MS` | no | `10000` | CONNECT handshake timeout when tunneling to a proxy. Range 1 s – 60 s. |
-| `SEARXNG_OUTGOING_PROXIES` | no | empty | Proxies SearXNG engines (Google, Brave, Bing, Qwant, Startpage) rotate through. Independent of `PROXY_URLS`. Empty = direct egress. |
+| `EMCP_PORT` | yes | `3000` | HTTP port for MCP server (bind to loopback) |
+| `EMCP_BIND_HOST` | no | `127.0.0.1` | Interface to bind. Bare-metal deploys use `127.0.0.1` (default) and rely on a loopback-only reverse proxy as ingress. Containerized deploys (compose, k8s) set `0.0.0.0` so the proxy container can reach the process across the private bridge network. In both cases the external ingress is the reverse proxy — the app process is never published to a public IP. |
+| `EMCP_PUBLIC_HOST` | yes | `mcp.example.com` | Expected `Host` header value (DNS rebinding defense) |
+| `EMCP_ALLOWED_ORIGINS` | yes | `https://app.example.com,https://...` | Comma-separated allowlist for `Origin` header |
+| `EMCP_DATABASE_URL` | yes | `postgres://user:pass@localhost:5432/mcp` | Postgres connection string |
+| `EMCP_DATABASE_POOL_MAX` | no | `20` | Max pool connections. Default 10. |
+| `EMCP_REDIS_URL` | yes | `redis://localhost:6379` | Redis connection string |
+| `EMCP_API_KEY_HMAC_SECRET` | yes | (32+ random bytes, base64) | HMAC pepper for API key hashing. **Rotating this invalidates ALL keys.** |
+| `EMCP_LOG_LEVEL` | no | `info` | Pino level. Default `info` in prod, `debug` in dev. |
+| `EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE` | no | `60` | Fallback when key has no override. Default 60. |
+| `EMCP_SHUTDOWN_TIMEOUT_MS` | no | `30000` | Graceful shutdown deadline for both processes. Default 30s. |
+| `EMCP_SEARXNG_URL` | no | `http://localhost:8080` | SearXNG base URL for the `web-search` tool. Default `http://localhost:8080`. See `infra/searxng/`. |
+| `EMCP_PUBLIC_SCHEME` | no (compose only) | `https` | Selects which Caddyfile the caddy container mounts: `https` (default, auto-TLS) or `http` (plaintext, trusted networks only). App code does not read this — it's a compose-layer knob. |
+| `EMCP_MCP_MAX_BODY_BYTES` | no | `1048576` | Max POST body size to `/mcp`. Range 1 KiB–16 MiB. Default 1 MiB. |
+| `EMCP_MCP_SESSION_IDLE_MS` | no | `1800000` | Idle window after which a stateful session is evicted. Range 1 min–24 h. Default 30 min. |
+| `EMCP_MCP_SESSION_CLEANUP_INTERVAL_MS` | no | `60000` | How often the eviction sweep runs. Range 1 s–10 min. Default 1 min. |
+| `EMCP_MCP_TOOL_CALL_TIMEOUT_MS` | no | `30000` | Per-tool-call abort timeout. Range 1 s–10 min. Default 30 s. |
+| `EMCP_MCP_MAX_SESSIONS_PER_KEY` | no | `32` | Concurrent stateful sessions per API key. Over-cap initialises get `RateLimitError` (`-32029`). Range 1–10000. |
+| `EMCP_MCP_MAX_SESSIONS_TOTAL` | no | `10000` | Process-wide session backstop. Over-cap initialises get a `TransientError` (`-32013`, 503) with `Retry-After: 60`. |
+| `EMCP_HTTP_REQUEST_TIMEOUT_MS` | no | `60000` | HTTP request-receipt timeout (headers + body). Range 10 s–5 min. Applies to the request phase only; SSE response streams are unaffected. |
+| `EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE` | no | `600` | Pre-auth cap keyed on the resolved client IP (see `EMCP_TRUSTED_PROXY_CIDRS`). Prevents credential-spray traffic from saturating the auth DB lookup. |
+| `EMCP_AUTH_NEG_CACHE_TTL_SECONDS` | no | `60` | TTL for the Redis negative-lookup cache that short-circuits unknown bearer tokens before Postgres. Range 1 s–1 h. Cleared automatically on `ApiKeyRepository.create`. |
+| `EMCP_TRUSTED_PROXY_CIDRS` | no | `127.0.0.0/8,::1/128` | Comma-separated CIDRs whose `X-Forwarded-For` header is honoured when picking the rate-limit key. Compose sets the docker bridge CIDRs by default. |
+| `EMCP_PROXY_URLS` | no | empty | Comma-separated outbound HTTP(S) proxy URLs (`http(s)://[user:pass@]host:port`). Empty keeps the feature disabled (every external fetch goes direct). See "Proxy egress" below. |
+| `EMCP_PROXY_ROTATION` | no | `round-robin` | Selection strategy for the next proxy: `round-robin` or `random`. |
+| `EMCP_PROXY_FAILURE_COOLDOWN_MS` | no | `60000` | How long a proxy stays out of rotation after a connect/upstream failure. Range 1 s – 1 h. |
+| `EMCP_PROXY_MAX_RETRIES_PER_REQUEST` | no | `3` | Failover budget per request. Clamped to pool size at runtime. Range 1 – 10. |
+| `EMCP_PROXY_CONNECT_TIMEOUT_MS` | no | `10000` | CONNECT handshake timeout when tunneling to a proxy. Range 1 s – 60 s. |
+| `EMCP_SEARXNG_OUTGOING_PROXIES` | no | empty | Proxies SearXNG engines (Google, Brave, Bing, Qwant, Startpage) rotate through. Independent of `EMCP_PROXY_URLS`. Empty = direct egress. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 
@@ -301,9 +301,9 @@ Design choices:
 - **`undici.ProxyAgent`** (runtime dep). Chosen over hand-rolling ~300 LOC of CONNECT + TLS over `node:http`. Battle-tested, already a transitive dep via the MCP SDK, and exposes the exact dispatcher contract fetch needs.
 - **Rotation is in-process and in-memory.** `createProxyPool` in `src/shared/net/proxy/pool.ts` owns the round-robin cursor, health state, and cooldown arithmetic. Single Node event loop → no locking required. Server and worker hold independent pool instances because they're separate processes; that's fine — each pool's job is to smooth out failures within its own request stream.
 - **Connect-level failures vs upstream failures.** Only `connect_failure` and `upstream_failure` (HTTP 407/502 on the proxy CONNECT itself) mark a proxy unhealthy. Aborts and upstream 4xx/5xx leave the proxy alone — those are the client's or the upstream's concern.
-- **Transparent failover.** `fetchExternal` retries on the next proxy up to `PROXY_MAX_RETRIES_PER_REQUEST` times. Only when every in-budget attempt fails does a `TransientError` surface, mapping to HTTP 503 / JSON-RPC -32013 / `Retry-After`.
+- **Transparent failover.** `fetchExternal` retries on the next proxy up to `EMCP_PROXY_MAX_RETRIES_PER_REQUEST` times. Only when every in-budget attempt fails does a `TransientError` surface, mapping to HTTP 503 / JSON-RPC -32013 / `Retry-After`.
 - **Internal services are never proxied.** Postgres, Redis, and SearXNG's internal compose URL (`http://searxng:8080`) go over the compose bridge network and stay direct. `web-search` keeps a raw `fetch()` call with an inline comment noting the carve-out; routing the compose-internal hop through an external proxy would create a traffic loop.
-- **SearXNG has its own proxy layer.** `SEARXNG_OUTGOING_PROXIES` feeds `infra/searxng/settings.template.yml` (rendered at container start by `infra/searxng/entrypoint.sh`) so the engine scrapers rotate independently of the Node-side pool. Operators typically set both to the same list, but the option is there to diverge.
+- **SearXNG has its own proxy layer.** `EMCP_SEARXNG_OUTGOING_PROXIES` feeds `infra/searxng/settings.template.yml` (rendered at container start by `infra/searxng/entrypoint.sh`) so the engine scrapers rotate independently of the Node-side pool. Operators typically set both to the same list, but the option is there to diverge.
 - **Metrics** (`/metrics`): `proxy_requests_total{proxy_id,status}`, `proxy_request_duration_seconds{proxy_id}`, `proxy_cooldowns_total{proxy_id}`, `proxy_pool_healthy` (gauge). `proxy_id` uses the pool-index form (`p0`, `p1`, …) — the full URL is never a label, keeping cardinality bounded and credentials out of the metrics endpoint.
 - **Credential redaction.** Every log line that mentions a proxy URL goes through `maskProxyUrl` in `src/shared/net/proxy/redact.ts` (`http://user:pass@h:p` → `http://***@h:p`). The install wizard and `emcp config` use the same helper on their confirmation prints. Startup `ConfigError` messages for malformed proxy URLs use generic wording so a typo in `.env` can't leak a secret to operational logs.
 
@@ -347,7 +347,7 @@ Both `/health` and `/metrics` are unauthenticated because the process binds to `
 | `mcp-server` | 1 | HTTP server, MCP transport, auth, tool dispatch |
 | `mcp-worker` | 1 | croner scheduler, drop-in cron workers |
 
-Supervised by Docker Compose in the production deployment (`compose.yaml` at the repo root) — one container each for `mcp-server` and `mcp-worker`, running the same image with different `CMD`. Bare-metal deploys use PM2 (`ecosystem.config.cjs`). Both processes share the same codebase and the same Postgres. Only `mcp-server` talks to Redis. Graceful shutdown drains in-flight requests / worker runs with the `SHUTDOWN_TIMEOUT_MS` budget; `stop_grace_period` in compose and `kill_timeout` in PM2 are both tuned to match.
+Supervised by Docker Compose in the production deployment (`compose.yaml` at the repo root) — one container each for `mcp-server` and `mcp-worker`, running the same image with different `CMD`. Bare-metal deploys use PM2 (`ecosystem.config.cjs`). Both processes share the same codebase and the same Postgres. Only `mcp-server` talks to Redis. Graceful shutdown drains in-flight requests / worker runs with the `EMCP_SHUTDOWN_TIMEOUT_MS` budget; `stop_grace_period` in compose and `kill_timeout` in PM2 are both tuned to match.
 
 **Worker scaling (known limitation)**: `mcp-worker` runs as a single instance because croner schedules are in-memory. Running multiple instances would fire every cron tick per instance. Horizontal scaling requires a Redis advisory lock around every fire — out of scope for the initial migration, documented as a follow-up in `docs/WORKER_AUTHORING.md`.
 

@@ -4,7 +4,7 @@
 #
 # Renders the templated /etc/searxng/settings.template.yml into the real
 # /etc/searxng/settings.yml SearXNG reads at boot. Only one transformation
-# is done here: expanding the SEARXNG_OUTGOING_PROXIES env var into an
+# is done here: expanding the EMCP_SEARXNG_OUTGOING_PROXIES env var into an
 # `outgoing.proxies.all://` block (or stripping the marker when unset).
 # The upstream SearXNG entrypoint still handles SEARXNG_SECRET substitution
 # afterwards, so its semantics are unchanged.
@@ -16,7 +16,7 @@ set -eu
 
 TEMPLATE="/etc/searxng/settings.template.yml"
 TARGET="/etc/searxng/settings.yml"
-MARKER='# SEARXNG_OUTGOING_PROXIES_MARKER'
+MARKER='# EMCP_SEARXNG_OUTGOING_PROXIES_MARKER'
 
 if [ ! -r "$TEMPLATE" ]; then
     echo "[emcp-searxng] template $TEMPLATE not found — container misconfigured" >&2
@@ -25,20 +25,20 @@ fi
 
 # Build the YAML block to inject — or leave empty to strip the marker.
 BLOCK=""
-if [ -n "${SEARXNG_OUTGOING_PROXIES:-}" ]; then
+if [ -n "${EMCP_SEARXNG_OUTGOING_PROXIES:-}" ]; then
     # Start the block with outgoing.proxies.all://.
     BLOCK="outgoing:"
     BLOCK="$BLOCK
   request_timeout: 5.0
   proxies:
     all://:"
-    # Split SEARXNG_OUTGOING_PROXIES on commas. Use `set --` with IFS so
-    # shell-quoting of the URLs is irrelevant — each becomes one list
+    # Split EMCP_SEARXNG_OUTGOING_PROXIES on commas. Use `set --` with IFS
+    # so shell-quoting of the URLs is irrelevant — each becomes one list
     # item in the generated YAML.
     OLD_IFS="$IFS"
     IFS=','
     # shellcheck disable=SC2086
-    set -- $SEARXNG_OUTGOING_PROXIES
+    set -- $EMCP_SEARXNG_OUTGOING_PROXIES
     IFS="$OLD_IFS"
     for raw in "$@"; do
         # Trim leading/trailing whitespace.
@@ -64,10 +64,10 @@ awk -v block="$BLOCK" -v marker="$MARKER" '
 # compose env layer owns the credentials already, and SearXNG itself
 # prints them in its own config dump, so adding redaction here would be
 # a half-measure. The MCP server logs the redacted form separately.
-if [ -n "${SEARXNG_OUTGOING_PROXIES:-}" ]; then
+if [ -n "${EMCP_SEARXNG_OUTGOING_PROXIES:-}" ]; then
     # Hostnames only for this log line so credentials don't land in the
     # compose `logs` output.
-    hosts=$(printf '%s' "$SEARXNG_OUTGOING_PROXIES" | awk -v RS=',' '{
+    hosts=$(printf '%s' "$EMCP_SEARXNG_OUTGOING_PROXIES" | awk -v RS=',' '{
         gsub(/^[[:space:]]*|[[:space:]]*$/, "", $0)
         if ($0 == "") next
         gsub(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^@\/]*@/, "")

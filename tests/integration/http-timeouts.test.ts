@@ -1,6 +1,6 @@
 // Integration test for AUDIT L-5 (HTTP request-receipt timeout).
 // Covers the normal-POST round-trip and a raw-socket smoke test that
-// the server honours `HTTP_REQUEST_TIMEOUT_MS` end-to-end via env.
+// the server honours `EMCP_HTTP_REQUEST_TIMEOUT_MS` end-to-end via env.
 // The slow-body scenario from the audit is exercised as a unit test in
 // `src/server.test.ts` — doing it here with a real socket is flaky in
 // CI (Node's `connectionsCheckingInterval` defers enforcement and the
@@ -38,7 +38,7 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-describe('HTTP_REQUEST_TIMEOUT_MS (AUDIT L-5)', { timeout: 60_000 }, () => {
+describe('EMCP_HTTP_REQUEST_TIMEOUT_MS (AUDIT L-5)', { timeout: 60_000 }, () => {
   let pgContainer: StartedPostgreSqlContainer;
   let redisContainer: StartedTestContainer;
   let closeServer: () => Promise<void>;
@@ -64,13 +64,13 @@ describe('HTTP_REQUEST_TIMEOUT_MS (AUDIT L-5)', { timeout: 60_000 }, () => {
     Object.assign(
       process.env,
       buildTestEnv({
-        PORT: String(port),
-        BIND_HOST: '127.0.0.1',
-        PUBLIC_HOST: `127.0.0.1:${port}`,
-        ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
-        DATABASE_URL: databaseUrl,
-        REDIS_URL: redisUrl,
-        HTTP_REQUEST_TIMEOUT_MS: String(REQUEST_TIMEOUT_MS),
+        EMCP_PORT: String(port),
+        EMCP_BIND_HOST: '127.0.0.1',
+        EMCP_PUBLIC_HOST: `127.0.0.1:${port}`,
+        EMCP_ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
+        EMCP_DATABASE_URL: databaseUrl,
+        EMCP_REDIS_URL: redisUrl,
+        EMCP_HTTP_REQUEST_TIMEOUT_MS: String(REQUEST_TIMEOUT_MS),
       }),
     );
 
@@ -146,7 +146,7 @@ describe('HTTP_REQUEST_TIMEOUT_MS (AUDIT L-5)', { timeout: 60_000 }, () => {
     assert.equal(res.status, 200);
   });
 
-  it('configures httpServer.requestTimeout from HTTP_REQUEST_TIMEOUT_MS', async () => {
+  it('configures httpServer.requestTimeout from EMCP_HTTP_REQUEST_TIMEOUT_MS', async () => {
     // AUDIT L-5 focuses on the server-level configuration knob: the Node
     // default of 300s is too generous for a public endpoint. Assert the
     // knob is wired end-to-end from env → config → httpServer. Driving

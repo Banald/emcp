@@ -10,7 +10,7 @@ import type { Dispatcher } from 'undici';
  * pulling in undici's concrete ProxyAgent class.
  */
 
-/** Selection strategy for the next proxy. Matches PROXY_ROTATION env enum. */
+/** Selection strategy for the next proxy. Matches EMCP_PROXY_ROTATION env enum. */
 export type RotationStrategy = 'round-robin' | 'random';
 
 /**

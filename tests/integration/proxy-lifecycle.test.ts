@@ -137,10 +137,10 @@ describe('proxy egress lifecycle', { timeout: 30_000 }, () => {
   let upstream: Awaited<ReturnType<typeof createStubUpstream>>;
 
   before(async () => {
-    // The CI integration env sets `PORT=0` (and `DATABASE_URL`,
-    // `REDIS_URL`) as deliberate placeholders that every integration
+    // The CI integration env sets `EMCP_PORT=0` (and `EMCP_DATABASE_URL`,
+    // `EMCP_REDIS_URL`) as deliberate placeholders that every integration
     // test overrides before loading any src/ module — src/config.ts
-    // rejects PORT=0 at Zod validation time. Object.assign-ing the
+    // rejects EMCP_PORT=0 at Zod validation time. Object.assign-ing the
     // full DEFAULT_TEST_ENV overwrites each key unconditionally so the
     // dynamic imports below see a config-valid environment. Matches
     // the pattern in tests/integration/{http-timeouts,shutdown,worker}

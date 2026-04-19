@@ -19,7 +19,7 @@ async function main() {
     })
   ) {
     logger.warn(
-      'BIND_HOST is 0.0.0.0 in production outside compose — only safe behind a reverse proxy',
+      'EMCP_BIND_HOST is 0.0.0.0 in production outside compose — only safe behind a reverse proxy',
     );
   }
 

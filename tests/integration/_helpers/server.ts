@@ -57,7 +57,7 @@ export async function startTestServer(): Promise<TestServer> {
   const databaseUrl = pgContainer.getConnectionUri();
   const redisUrl = `redis://localhost:${redisContainer.getMappedPort(6379)}`;
 
-  // 2. Find a free port so we can set PUBLIC_HOST before importing src/.
+  // 2. Find a free port so we can set EMCP_PUBLIC_HOST before importing src/.
   const port = await findFreePort();
   const host = '127.0.0.1';
 
@@ -67,12 +67,12 @@ export async function startTestServer(): Promise<TestServer> {
   Object.assign(
     process.env,
     buildTestEnv({
-      PORT: String(port),
-      BIND_HOST: host,
-      PUBLIC_HOST: `${host}:${port}`,
-      ALLOWED_ORIGINS: `http://${host}:${port}`,
-      DATABASE_URL: databaseUrl,
-      REDIS_URL: redisUrl,
+      EMCP_PORT: String(port),
+      EMCP_BIND_HOST: host,
+      EMCP_PUBLIC_HOST: `${host}:${port}`,
+      EMCP_ALLOWED_ORIGINS: `http://${host}:${port}`,
+      EMCP_DATABASE_URL: databaseUrl,
+      EMCP_REDIS_URL: redisUrl,
     }),
   );
 

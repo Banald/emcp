@@ -24,8 +24,8 @@ const csv = z
 
 // Optional CSV: empty/absent input → empty array; non-empty input is split
 // and trimmed identically to `csv`. Used for feature-flag style env vars
-// (PROXY_URLS, SEARXNG_OUTGOING_PROXIES) where the natural default is
-// "feature disabled".
+// (EMCP_PROXY_URLS, EMCP_SEARXNG_OUTGOING_PROXIES) where the natural default
+// is "feature disabled".
 const optionalCsv = z
   .string()
   .default('')
@@ -90,18 +90,18 @@ const base64Secret = z
 
 const envSchema = z.object({
   NODE_ENV: nodeEnvSchema,
-  PORT: integer(1, 65535),
-  BIND_HOST: z.string().min(1).default('127.0.0.1'),
-  PUBLIC_HOST: z.string().min(1),
-  ALLOWED_ORIGINS: csv,
-  DATABASE_URL: z.string().min(1),
-  DATABASE_POOL_MAX: integer(1, 1000).default(10),
-  REDIS_URL: z.string().min(1),
-  API_KEY_HMAC_SECRET: base64Secret,
-  LOG_LEVEL: logLevelSchema.optional(),
-  RATE_LIMIT_DEFAULT_PER_MINUTE: integer(1).default(60),
-  SHUTDOWN_TIMEOUT_MS: integer(1000).default(30000),
-  SEARXNG_URL: z
+  EMCP_PORT: integer(1, 65535),
+  EMCP_BIND_HOST: z.string().min(1).default('127.0.0.1'),
+  EMCP_PUBLIC_HOST: z.string().min(1),
+  EMCP_ALLOWED_ORIGINS: csv,
+  EMCP_DATABASE_URL: z.string().min(1),
+  EMCP_DATABASE_POOL_MAX: integer(1, 1000).default(10),
+  EMCP_REDIS_URL: z.string().min(1),
+  EMCP_API_KEY_HMAC_SECRET: base64Secret,
+  EMCP_LOG_LEVEL: logLevelSchema.optional(),
+  EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE: integer(1).default(60),
+  EMCP_SHUTDOWN_TIMEOUT_MS: integer(1000).default(30000),
+  EMCP_SEARXNG_URL: z
     .string()
     .url()
     .default('http://localhost:8080')
@@ -109,36 +109,36 @@ const envSchema = z.object({
   // MCP HTTP transport tunables. Defaults mirror the file-level constants
   // that used to live in src/server.ts; bounds prevent pathological values
   // at startup rather than at the first request.
-  MCP_MAX_BODY_BYTES: integer(1024, 16 * 1024 * 1024).default(1_048_576),
-  MCP_SESSION_IDLE_MS: integer(60_000, 24 * 60 * 60 * 1000).default(30 * 60_000),
-  MCP_SESSION_CLEANUP_INTERVAL_MS: integer(1_000, 10 * 60_000).default(60_000),
-  MCP_TOOL_CALL_TIMEOUT_MS: integer(1_000, 10 * 60_000).default(30_000),
+  EMCP_MCP_MAX_BODY_BYTES: integer(1024, 16 * 1024 * 1024).default(1_048_576),
+  EMCP_MCP_SESSION_IDLE_MS: integer(60_000, 24 * 60 * 60 * 1000).default(30 * 60_000),
+  EMCP_MCP_SESSION_CLEANUP_INTERVAL_MS: integer(1_000, 10 * 60_000).default(60_000),
+  EMCP_MCP_TOOL_CALL_TIMEOUT_MS: integer(1_000, 10 * 60_000).default(30_000),
   // Session cap (AUDIT M-1). Prevents one key from parking unbounded
   // sessions and exhausting server memory. Global cap is a backstop.
-  MCP_MAX_SESSIONS_PER_KEY: integer(1, 10_000).default(32),
-  MCP_MAX_SESSIONS_TOTAL: integer(1, 1_000_000).default(10_000),
+  EMCP_MCP_MAX_SESSIONS_PER_KEY: integer(1, 10_000).default(32),
+  EMCP_MCP_MAX_SESSIONS_TOTAL: integer(1, 1_000_000).default(10_000),
   // Request-receipt timeout (AUDIT L-5). Node's default is 300s, which
   // lets slowloris-style attackers hold sockets open for 5 minutes per
   // request. Applies to headers+body only — SSE streams are unaffected
   // because their response phase sits outside this budget.
-  HTTP_REQUEST_TIMEOUT_MS: integer(10_000, 300_000).default(60_000),
-  // Pre-auth defences (AUDIT H-3). `PRE_AUTH_RATE_LIMIT_PER_MINUTE` caps
+  EMCP_HTTP_REQUEST_TIMEOUT_MS: integer(10_000, 300_000).default(60_000),
+  // Pre-auth defences (AUDIT H-3). `EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE` caps
   // how fast *any* peer can burn through failed lookups; the bucket is
-  // keyed on the resolved client IP (see `TRUSTED_PROXY_CIDRS` for XFF
-  // handling). `AUTH_NEG_CACHE_TTL_SECONDS` short-circuits repeated bad
+  // keyed on the resolved client IP (see `EMCP_TRUSTED_PROXY_CIDRS` for XFF
+  // handling). `EMCP_AUTH_NEG_CACHE_TTL_SECONDS` short-circuits repeated bad
   // tokens in Redis before they reach Postgres.
-  PRE_AUTH_RATE_LIMIT_PER_MINUTE: integer(1).default(600),
-  AUTH_NEG_CACHE_TTL_SECONDS: integer(1, 3600).default(60),
-  TRUSTED_PROXY_CIDRS: z.string().min(1).default('127.0.0.0/8,::1/128'),
+  EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE: integer(1).default(600),
+  EMCP_AUTH_NEG_CACHE_TTL_SECONDS: integer(1, 3600).default(60),
+  EMCP_TRUSTED_PROXY_CIDRS: z.string().min(1).default('127.0.0.0/8,::1/128'),
   // Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
-  // Empty PROXY_URLS keeps the feature disabled — no ProxyAgents are
+  // Empty EMCP_PROXY_URLS keeps the feature disabled — no ProxyAgents are
   // created, no dispatcher is threaded through global fetch, and every
   // external call behaves exactly as it did pre-feature.
-  PROXY_URLS: proxyUrlCsv,
-  PROXY_ROTATION: proxyRotationSchema.default('round-robin'),
-  PROXY_FAILURE_COOLDOWN_MS: integer(1_000, 3_600_000).default(60_000),
-  PROXY_MAX_RETRIES_PER_REQUEST: integer(1, 10).default(3),
-  PROXY_CONNECT_TIMEOUT_MS: integer(1_000, 60_000).default(10_000),
+  EMCP_PROXY_URLS: proxyUrlCsv,
+  EMCP_PROXY_ROTATION: proxyRotationSchema.default('round-robin'),
+  EMCP_PROXY_FAILURE_COOLDOWN_MS: integer(1_000, 3_600_000).default(60_000),
+  EMCP_PROXY_MAX_RETRIES_PER_REQUEST: integer(1, 10).default(3),
+  EMCP_PROXY_CONNECT_TIMEOUT_MS: integer(1_000, 60_000).default(10_000),
 });
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
@@ -189,47 +189,48 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
 
   const raw = result.data;
-  const logLevel: LogLevel = raw.LOG_LEVEL ?? (raw.NODE_ENV === 'development' ? 'debug' : 'info');
+  const logLevel: LogLevel =
+    raw.EMCP_LOG_LEVEL ?? (raw.NODE_ENV === 'development' ? 'debug' : 'info');
 
   let trustedProxyCidrs: readonly ParsedCidr[];
   try {
-    trustedProxyCidrs = parseCidrList(raw.TRUSTED_PROXY_CIDRS);
+    trustedProxyCidrs = parseCidrList(raw.EMCP_TRUSTED_PROXY_CIDRS);
   } catch (err) {
     throw new ConfigError(
-      `Invalid TRUSTED_PROXY_CIDRS: ${(err as Error).message}`,
+      `Invalid EMCP_TRUSTED_PROXY_CIDRS: ${(err as Error).message}`,
       'Server configuration error.',
     );
   }
 
   const resolved: Config = {
     nodeEnv: raw.NODE_ENV,
-    port: raw.PORT,
-    bindHost: raw.BIND_HOST,
-    publicHost: raw.PUBLIC_HOST,
-    allowedOrigins: Object.freeze([...raw.ALLOWED_ORIGINS]),
-    databaseUrl: raw.DATABASE_URL,
-    databasePoolMax: raw.DATABASE_POOL_MAX,
-    redisUrl: raw.REDIS_URL,
-    apiKeyHmacSecret: raw.API_KEY_HMAC_SECRET,
+    port: raw.EMCP_PORT,
+    bindHost: raw.EMCP_BIND_HOST,
+    publicHost: raw.EMCP_PUBLIC_HOST,
+    allowedOrigins: Object.freeze([...raw.EMCP_ALLOWED_ORIGINS]),
+    databaseUrl: raw.EMCP_DATABASE_URL,
+    databasePoolMax: raw.EMCP_DATABASE_POOL_MAX,
+    redisUrl: raw.EMCP_REDIS_URL,
+    apiKeyHmacSecret: raw.EMCP_API_KEY_HMAC_SECRET,
     logLevel,
-    rateLimitDefaultPerMinute: raw.RATE_LIMIT_DEFAULT_PER_MINUTE,
-    shutdownTimeoutMs: raw.SHUTDOWN_TIMEOUT_MS,
-    searxngUrl: raw.SEARXNG_URL,
-    mcpMaxBodyBytes: raw.MCP_MAX_BODY_BYTES,
-    mcpSessionIdleMs: raw.MCP_SESSION_IDLE_MS,
-    mcpSessionCleanupIntervalMs: raw.MCP_SESSION_CLEANUP_INTERVAL_MS,
-    mcpToolCallTimeoutMs: raw.MCP_TOOL_CALL_TIMEOUT_MS,
-    mcpMaxSessionsPerKey: raw.MCP_MAX_SESSIONS_PER_KEY,
-    mcpMaxSessionsTotal: raw.MCP_MAX_SESSIONS_TOTAL,
-    httpRequestTimeoutMs: raw.HTTP_REQUEST_TIMEOUT_MS,
-    preAuthRateLimitPerMinute: raw.PRE_AUTH_RATE_LIMIT_PER_MINUTE,
-    authNegCacheTtlSeconds: raw.AUTH_NEG_CACHE_TTL_SECONDS,
+    rateLimitDefaultPerMinute: raw.EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE,
+    shutdownTimeoutMs: raw.EMCP_SHUTDOWN_TIMEOUT_MS,
+    searxngUrl: raw.EMCP_SEARXNG_URL,
+    mcpMaxBodyBytes: raw.EMCP_MCP_MAX_BODY_BYTES,
+    mcpSessionIdleMs: raw.EMCP_MCP_SESSION_IDLE_MS,
+    mcpSessionCleanupIntervalMs: raw.EMCP_MCP_SESSION_CLEANUP_INTERVAL_MS,
+    mcpToolCallTimeoutMs: raw.EMCP_MCP_TOOL_CALL_TIMEOUT_MS,
+    mcpMaxSessionsPerKey: raw.EMCP_MCP_MAX_SESSIONS_PER_KEY,
+    mcpMaxSessionsTotal: raw.EMCP_MCP_MAX_SESSIONS_TOTAL,
+    httpRequestTimeoutMs: raw.EMCP_HTTP_REQUEST_TIMEOUT_MS,
+    preAuthRateLimitPerMinute: raw.EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE,
+    authNegCacheTtlSeconds: raw.EMCP_AUTH_NEG_CACHE_TTL_SECONDS,
     trustedProxyCidrs,
-    proxyUrls: Object.freeze([...raw.PROXY_URLS]),
-    proxyRotation: raw.PROXY_ROTATION,
-    proxyFailureCooldownMs: raw.PROXY_FAILURE_COOLDOWN_MS,
-    proxyMaxRetriesPerRequest: raw.PROXY_MAX_RETRIES_PER_REQUEST,
-    proxyConnectTimeoutMs: raw.PROXY_CONNECT_TIMEOUT_MS,
+    proxyUrls: Object.freeze([...raw.EMCP_PROXY_URLS]),
+    proxyRotation: raw.EMCP_PROXY_ROTATION,
+    proxyFailureCooldownMs: raw.EMCP_PROXY_FAILURE_COOLDOWN_MS,
+    proxyMaxRetriesPerRequest: raw.EMCP_PROXY_MAX_RETRIES_PER_REQUEST,
+    proxyConnectTimeoutMs: raw.EMCP_PROXY_CONNECT_TIMEOUT_MS,
   };
   return Object.freeze(resolved);
 }

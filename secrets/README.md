@@ -66,7 +66,8 @@ multi-step rewrite required as with the HMAC pepper.
 
 ## Why aren't all secrets here?
 
-See `.env.example`. The SearXNG secret (`SEARXNG_SECRET`) is kept in `.env`
-because it only salts session cookies and the bot limiter, both of which are
-irrelevant in this deployment (no user sessions, limiter disabled). The
-other two secrets protect authentication and data, so they live here.
+See `.env.example`. The SearXNG secret (`EMCP_SEARXNG_SECRET`) is kept in
+`.env` because it only salts session cookies and the bot limiter, both of
+which are irrelevant in this deployment (no user sessions, limiter
+disabled). The other two secrets protect authentication and data, so
+they live here.

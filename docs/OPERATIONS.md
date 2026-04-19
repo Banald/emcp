@@ -181,25 +181,25 @@ CI runs migrations against a fresh Postgres container at the start of integratio
 
 ## Graceful shutdown
 
-Both the server process and worker processes handle `SIGTERM` and `SIGINT` with a coordinated shutdown sequence. Docker Compose sends `SIGTERM` on `docker compose stop`, then `SIGKILL` after `stop_grace_period`. PM2 on bare-metal sends `SIGINT` first, then `SIGKILL` after `kill_timeout`. Both paths are wired to the same budgets: 35s for the server (`SHUTDOWN_TIMEOUT_MS` + 5s) and 65s for the worker.
+Both the server process and worker processes handle `SIGTERM` and `SIGINT` with a coordinated shutdown sequence. Docker Compose sends `SIGTERM` on `docker compose stop`, then `SIGKILL` after `stop_grace_period`. PM2 on bare-metal sends `SIGINT` first, then `SIGKILL` after `kill_timeout`. Both paths are wired to the same budgets: 35s for the server (`EMCP_SHUTDOWN_TIMEOUT_MS` + 5s) and 65s for the worker.
 
 ### Server shutdown sequence
 
 1. **Stop accepting new requests** — HTTP server's `listen` loop closes, returns 503 with `Connection: close` for any in-flight TCP accept.
 2. **Drain SSE connections** — for active stateful sessions with open SSE streams, send a `notifications/cancelled` event and close the stream.
-3. **Wait for in-flight tool calls** — abort their `ctx.signal` and wait up to `SHUTDOWN_TIMEOUT_MS / 2` for them to complete.
+3. **Wait for in-flight tool calls** — abort their `ctx.signal` and wait up to `EMCP_SHUTDOWN_TIMEOUT_MS / 2` for them to complete.
 4. **Close the Postgres pool** — `pool.end()`. Existing queries finish; new queries throw.
 5. **Close Redis connections** — `redis.quit()` (graceful) with a 2s fallback to `redis.disconnect()` (hard).
 6. **Flush logs** — `pino.flush()` ensures buffered logs reach the transport.
 7. **Exit 0.**
 
-If the entire sequence exceeds `SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit with code 1. The supervisor (Docker Compose or PM2) will restart per its `restart` / `autorestart` policy.
+If the entire sequence exceeds `EMCP_SHUTDOWN_TIMEOUT_MS` (default 30s), force-exit with code 1. The supervisor (Docker Compose or PM2) will restart per its `restart` / `autorestart` policy.
 
 ### Worker shutdown sequence
 
 1. **Stop the cron scheduler** — every cron handle stops; no new ticks fire. `stopped = true`, so even if a late callback slips through it is dropped.
 2. **Abort in-flight runs** — the shared shutdown `AbortSignal` fires, so any handler honoring `ctx.signal` (all of them, please) aborts cleanly.
-3. **Wait up to `SHUTDOWN_TIMEOUT_MS` (default 30s)** for in-flight runs to settle. The scheduler polls `inFlight` every 50ms until drained or the grace timeout elapses.
+3. **Wait up to `EMCP_SHUTDOWN_TIMEOUT_MS` (default 30s)** for in-flight runs to settle. The scheduler polls `inFlight` every 50ms until drained or the grace timeout elapses.
 4. **Close the Postgres pool.**
 5. **Flush logs, exit 0.**
 
@@ -351,7 +351,7 @@ during the restart has no durability consequence.
 ### Graceful restarts
 
 ```bash
-docker compose restart mcp-server   # 35s grace period (= SHUTDOWN_TIMEOUT_MS + 5s)
+docker compose restart mcp-server   # 35s grace period (= EMCP_SHUTDOWN_TIMEOUT_MS + 5s)
 docker compose restart mcp-worker   # 65s grace period (allows long cron handlers to drain)
 ```
 
@@ -360,7 +360,7 @@ and mirror the PM2 `kill_timeout` values in `ecosystem.config.cjs`.
 
 ## Outbound proxy rotation
 
-eMCP can rotate external HTTP egress across a configurable pool of HTTP(S) proxies. When `PROXY_URLS` is empty (the default), every external fetch goes direct and the subsystem is effectively absent. When it's set, the server + worker processes pick a proxy per request, retry on connect failure, and cool down misbehaving proxies automatically.
+eMCP can rotate external HTTP egress across a configurable pool of HTTP(S) proxies. When `EMCP_PROXY_URLS` is empty (the default), every external fetch goes direct and the subsystem is effectively absent. When it's set, the server + worker processes pick a proxy per request, retry on connect failure, and cool down misbehaving proxies automatically.
 
 Subsystem deep-dive lives in `docs/ARCHITECTURE.md` ("Proxy egress") and `docs/SECURITY.md` Rule 13. This section is the operator runbook.
 
@@ -382,7 +382,7 @@ sudo bash install.sh --non-interactive \
   --searxng-proxies "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080"
 ```
 
-To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/emcp/.env` and clear `PROXY_URLS=` (and `SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
+To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/emcp/.env` and clear `EMCP_PROXY_URLS=` (and `EMCP_SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
 
 Operator-facing prints mask the credentials (`http://***@host:port`). The raw `.env` file is written at `0600` and the credentials never appear in `docker compose logs`.
 
@@ -392,12 +392,12 @@ Set in `/opt/emcp/.env`; compose rebuilds on `emcp restart`:
 
 | Variable | Default | Purpose |
 |--|--|--|
-| `PROXY_URLS` | empty | Comma-separated proxy pool. Empty disables everything. |
-| `PROXY_ROTATION` | `round-robin` | `round-robin` or `random`. |
-| `PROXY_FAILURE_COOLDOWN_MS` | `60000` | How long a failed proxy stays out of rotation (1 s – 1 h). |
-| `PROXY_MAX_RETRIES_PER_REQUEST` | `3` | Failover budget per request; clamped to pool size at runtime. |
-| `PROXY_CONNECT_TIMEOUT_MS` | `10000` | CONNECT handshake timeout (1 s – 60 s). |
-| `SEARXNG_OUTGOING_PROXIES` | empty | Proxies SearXNG engines rotate through. Independent of `PROXY_URLS`. |
+| `EMCP_PROXY_URLS` | empty | Comma-separated proxy pool. Empty disables everything. |
+| `EMCP_PROXY_ROTATION` | `round-robin` | `round-robin` or `random`. |
+| `EMCP_PROXY_FAILURE_COOLDOWN_MS` | `60000` | How long a failed proxy stays out of rotation (1 s – 1 h). |
+| `EMCP_PROXY_MAX_RETRIES_PER_REQUEST` | `3` | Failover budget per request; clamped to pool size at runtime. |
+| `EMCP_PROXY_CONNECT_TIMEOUT_MS` | `10000` | CONNECT handshake timeout (1 s – 60 s). |
+| `EMCP_SEARXNG_OUTGOING_PROXIES` | empty | Proxies SearXNG engines rotate through. Independent of `EMCP_PROXY_URLS`. |
 
 ### Observing
 
@@ -420,13 +420,13 @@ The `proxy_id` label is the pool index (`p0`, `p1`, …); the URL is never label
 
 ### Common scenarios
 
-**A proxy is consistently failing.** Check `proxy_cooldowns_total{proxy_id="pN"}` and the corresponding `proxy_requests_total{proxy_id="pN",status="connect_failure"}`. If one proxy dominates, take it out of the rotation by editing `PROXY_URLS` and running `emcp restart`. The worker's in-progress runs will complete on whatever the pool gave them; new runs pick up the trimmed list.
+**A proxy is consistently failing.** Check `proxy_cooldowns_total{proxy_id="pN"}` and the corresponding `proxy_requests_total{proxy_id="pN",status="connect_failure"}`. If one proxy dominates, take it out of the rotation by editing `EMCP_PROXY_URLS` and running `emcp restart`. The worker's in-progress runs will complete on whatever the pool gave them; new runs pick up the trimmed list.
 
 **The whole upstream is slow.** Latency histograms rise for every proxy equally. `proxy_pool_healthy` stays at pool size. This is upstream (not proxy) trouble — escalate to the upstream provider.
 
-**Blacklist event.** Expect `proxy_requests_total{status="upstream_failure"}` to spike on one proxy as the upstream starts returning 407/502/429 through the CONNECT. The proxy enters cooldown for `PROXY_FAILURE_COOLDOWN_MS`; traffic shifts to the rest of the pool for that window. If the block is sticky (longer than the cooldown), operator intervention is expected: replace the blacklisted proxy in `.env`, `emcp restart`.
+**Blacklist event.** Expect `proxy_requests_total{status="upstream_failure"}` to spike on one proxy as the upstream starts returning 407/502/429 through the CONNECT. The proxy enters cooldown for `EMCP_PROXY_FAILURE_COOLDOWN_MS`; traffic shifts to the rest of the pool for that window. If the block is sticky (longer than the cooldown), operator intervention is expected: replace the blacklisted proxy in `.env`, `emcp restart`.
 
-**SearXNG can't reach upstreams.** `SEARXNG_OUTGOING_PROXIES` is rendered into `settings.yml` by `infra/searxng/entrypoint.sh` at container start. If the operator configures a bogus URL, SearXNG logs the rendering failure mode clearly:
+**SearXNG can't reach upstreams.** `EMCP_SEARXNG_OUTGOING_PROXIES` is rendered into `settings.yml` by `infra/searxng/entrypoint.sh` at container start. If the operator configures a bogus URL, SearXNG logs the rendering failure mode clearly:
 
 ```bash
 docker compose logs searxng | head -5
@@ -434,9 +434,9 @@ docker compose logs searxng | head -5
 docker compose exec searxng grep -A4 'outgoing:' /etc/searxng/settings.yml
 ```
 
-Toggle SearXNG back to direct by setting `SEARXNG_OUTGOING_PROXIES=` and `emcp restart`.
+Toggle SearXNG back to direct by setting `EMCP_SEARXNG_OUTGOING_PROXIES=` and `emcp restart`.
 
-**Rotating credentials on a proxy.** Edit `PROXY_URLS` in `.env` (replace the `user:pass@` segment), `emcp restart`. The server + worker reload the pool at startup; no other step. Old `ProxyAgent` instances are closed via the shutdown registry on graceful restart.
+**Rotating credentials on a proxy.** Edit `EMCP_PROXY_URLS` in `.env` (replace the `user:pass@` segment), `emcp restart`. The server + worker reload the pool at startup; no other step. Old `ProxyAgent` instances are closed via the shutdown registry on graceful restart.
 
 ### Known limitations
 

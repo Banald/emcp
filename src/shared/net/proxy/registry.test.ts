@@ -98,7 +98,7 @@ describe('getProxyPool (singleton)', () => {
   });
 
   it('returns null when config.proxyUrls is empty (default test env)', () => {
-    // Default test env sets PROXY_URLS='' so the singleton path builds null.
+    // Default test env sets EMCP_PROXY_URLS='' so the singleton path builds null.
     assert.equal(getProxyPool(), null);
   });
 
@@ -123,7 +123,7 @@ describe('getProxyPool (singleton)', () => {
   it('accepts __setProxyPoolForTesting(undefined) as a cache reset', () => {
     __setProxyPoolForTesting({ size: 1 } as unknown as ProxyPool);
     __setProxyPoolForTesting(undefined);
-    // Default config still has empty PROXY_URLS → rebuild returns null.
+    // Default config still has empty EMCP_PROXY_URLS → rebuild returns null.
     assert.equal(getProxyPool(), null);
   });
 });

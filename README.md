@@ -135,12 +135,12 @@ subcommand and flag documented there works here too.
 
 ### TLS
 
-Controlled by `PUBLIC_SCHEME` in `.env` (default `https`). The installer
-sets this for you; you can change it later with `emcp config` or by
-editing `/opt/emcp/.env` directly and running `emcp restart`.
+Controlled by `EMCP_PUBLIC_SCHEME` in `.env` (default `https`). The
+installer sets this for you; you can change it later with `emcp config`
+or by editing `/opt/emcp/.env` directly and running `emcp restart`.
 
-**HTTPS mode (`PUBLIC_SCHEME=https`, default).** Caddy picks a strategy
-based on `PUBLIC_HOST`:
+**HTTPS mode (`EMCP_PUBLIC_SCHEME=https`, default).** Caddy picks a
+strategy based on `EMCP_PUBLIC_HOST`:
 
 - `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
   Trust once with `caddy trust` if you want browsers to stop warning.
@@ -149,14 +149,14 @@ based on `PUBLIC_HOST`:
 - An internal-only hostname (e.g. `host.corp.local`) needs `tls internal`
   in `infra/caddy/Caddyfile.https` — Let's Encrypt can't validate it.
 
-**HTTP mode (`PUBLIC_SCHEME=http`).** Caddy serves plaintext on port 80
-with TLS fully disabled. Intended for deployments on trusted internal
-networks. Caveats:
+**HTTP mode (`EMCP_PUBLIC_SCHEME=http`).** Caddy serves plaintext on
+port 80 with TLS fully disabled. Intended for deployments on trusted
+internal networks. Caveats:
 
 - Bearer tokens on `/mcp` travel in the clear — anyone on-path can read
   them. Do not use across untrusted networks.
-- Update `ALLOWED_ORIGINS` to include the `http://` origin clients will
-  send.
+- Update `EMCP_ALLOWED_ORIGINS` to include the `http://` origin clients
+  will send.
 
 Switching modes is a restart, not a rebuild: `emcp config` → pick the new
 scheme, or edit `/opt/emcp/.env` and `emcp restart`.
@@ -174,8 +174,8 @@ cd emcp
 
 # 1. Configure
 cp .env.example .env
-# Edit .env — at minimum set PUBLIC_HOST and ALLOWED_ORIGINS. Change
-# SEARXNG_SECRET to a fresh value.
+# Edit .env — at minimum set EMCP_PUBLIC_HOST and EMCP_ALLOWED_ORIGINS.
+# Change EMCP_SEARXNG_SECRET to a fresh value.
 
 # 2. Create Docker secrets
 mkdir -p secrets
@@ -267,9 +267,10 @@ npm ci --omit=dev
 npm run build          # tsc → dist/
 
 cp .env.example .env
-# Uncomment the "Bare-metal only" block and fill in DATABASE_URL, REDIS_URL,
-# SEARXNG_URL, API_KEY_HMAC_SECRET. Set NODE_ENV=production, PORT, BIND_HOST,
-# PUBLIC_HOST, ALLOWED_ORIGINS.
+# Uncomment the "Bare-metal only" block and fill in EMCP_DATABASE_URL,
+# EMCP_REDIS_URL, EMCP_SEARXNG_URL, EMCP_API_KEY_HMAC_SECRET. Set
+# NODE_ENV=production, EMCP_PORT, EMCP_BIND_HOST, EMCP_PUBLIC_HOST,
+# EMCP_ALLOWED_ORIGINS.
 
 # Migrations + first key
 node --env-file=.env dist/db/migrate.js up

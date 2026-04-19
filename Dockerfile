@@ -24,8 +24,8 @@ RUN npx tsc
 FROM node:24-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
-    BIND_HOST=0.0.0.0 \
-    PORT=3000
+    EMCP_BIND_HOST=0.0.0.0 \
+    EMCP_PORT=3000
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini \

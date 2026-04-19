@@ -185,8 +185,8 @@ describe('fetchExternal', () => {
       for (const r of reports) assert.equal(r.outcome, 'connect_failure');
     });
 
-    it('caps retries at PROXY_MAX_RETRIES_PER_REQUEST even with more proxies available', async () => {
-      // Default test env leaves PROXY_MAX_RETRIES_PER_REQUEST=3. A pool
+    it('caps retries at EMCP_PROXY_MAX_RETRIES_PER_REQUEST even with more proxies available', async () => {
+      // Default test env leaves EMCP_PROXY_MAX_RETRIES_PER_REQUEST=3. A pool
       // of 5 failing proxies should get exactly 3 attempts.
       const { pool, reports } = makePool([
         entry('p0'),
@@ -323,7 +323,7 @@ describe('fetchExternal', () => {
       // path is tested in src/shared/net/proxy/pool.test.ts. The
       // important assertion here is that requestsTotal increments with
       // the failure label for every attempt. With pool.size=2 and
-      // PROXY_MAX_RETRIES_PER_REQUEST=3 (test-env default), the budget
+      // EMCP_PROXY_MAX_RETRIES_PER_REQUEST=3 (test-env default), the budget
       // is clamped to min(3, 2) = 2.
       assert.equal(rec.cooldowns.length, 0);
       const failures = rec.requests.filter((r) => r.status === 'connect_failure');

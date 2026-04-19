@@ -96,12 +96,12 @@ jobs:
       - name: Migrations reversibility test
         env:
           NODE_ENV: test
-          PORT: '3000'
-          PUBLIC_HOST: localhost
-          ALLOWED_ORIGINS: http://localhost
-          DATABASE_URL: postgres://mcp:mcp@localhost:5432/mcp_test
-          REDIS_URL: redis://localhost:6379
-          API_KEY_HMAC_SECRET: dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==
+          EMCP_PORT: '3000'
+          EMCP_PUBLIC_HOST: localhost
+          EMCP_ALLOWED_ORIGINS: http://localhost
+          EMCP_DATABASE_URL: postgres://mcp:mcp@localhost:5432/mcp_test
+          EMCP_REDIS_URL: redis://localhost:6379
+          EMCP_API_KEY_HMAC_SECRET: dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==
         run: |
           node src/db/migrate.ts up
           node src/db/migrate.ts down
@@ -139,12 +139,12 @@ jobs:
         run: npm run test:integration
         env:
           NODE_ENV: test
-          PORT: '0'
-          PUBLIC_HOST: localhost
-          ALLOWED_ORIGINS: http://localhost
-          API_KEY_HMAC_SECRET: dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==
-          DATABASE_URL: postgres://placeholder/placeholder
-          REDIS_URL: redis://placeholder
+          EMCP_PORT: '0'
+          EMCP_PUBLIC_HOST: localhost
+          EMCP_ALLOWED_ORIGINS: http://localhost
+          EMCP_API_KEY_HMAC_SECRET: dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==
+          EMCP_DATABASE_URL: postgres://placeholder/placeholder
+          EMCP_REDIS_URL: redis://placeholder
 
   dep-review:
     # Dependency Review requires GitHub Advanced Security on private repos.

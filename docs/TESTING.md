@@ -235,8 +235,8 @@ before(async () => {
     .withExposedPorts(6379)
     .start();
 
-  process.env.DATABASE_URL = pgContainer.getConnectionUri();
-  process.env.REDIS_URL = `redis://localhost:${redisContainer.getMappedPort(6379)}`;
+  process.env.EMCP_DATABASE_URL = pgContainer.getConnectionUri();
+  process.env.EMCP_REDIS_URL = `redis://localhost:${redisContainer.getMappedPort(6379)}`;
 
   await runMigrations();
 });

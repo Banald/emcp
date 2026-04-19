@@ -38,10 +38,10 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
     Object.assign(
       process.env,
       buildTestEnv({
-        DATABASE_URL: databaseUrl,
-        DATABASE_POOL_MAX: '2',
-        REDIS_URL: redisUrl,
-        SHUTDOWN_TIMEOUT_MS: '10000',
+        EMCP_DATABASE_URL: databaseUrl,
+        EMCP_DATABASE_POOL_MAX: '2',
+        EMCP_REDIS_URL: redisUrl,
+        EMCP_SHUTDOWN_TIMEOUT_MS: '10000',
       }),
     );
 
@@ -71,13 +71,13 @@ describe('graceful shutdown', { timeout: 120_000 }, () => {
 
   function buildEnv(port: number): Record<string, string> {
     return buildTestEnv({
-      PORT: String(port),
-      PUBLIC_HOST: `127.0.0.1:${port}`,
-      ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
-      DATABASE_URL: databaseUrl,
-      DATABASE_POOL_MAX: '2',
-      REDIS_URL: redisUrl,
-      SHUTDOWN_TIMEOUT_MS: '10000',
+      EMCP_PORT: String(port),
+      EMCP_PUBLIC_HOST: `127.0.0.1:${port}`,
+      EMCP_ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
+      EMCP_DATABASE_URL: databaseUrl,
+      EMCP_DATABASE_POOL_MAX: '2',
+      EMCP_REDIS_URL: redisUrl,
+      EMCP_SHUTDOWN_TIMEOUT_MS: '10000',
     });
   }
 

@@ -10,8 +10,8 @@ import type { ProxyEntry, ProxyPool } from './types.ts';
  * Singleton registration of the proxy pool.
  *
  * The pool lives for the lifetime of the process. First caller builds it
- * from `config.proxyUrls`; subsequent callers reuse it. When PROXY_URLS is
- * empty the singleton is `null` — `fetchExternal` treats this as the
+ * from `config.proxyUrls`; subsequent callers reuse it. When EMCP_PROXY_URLS
+ * is empty the singleton is `null` — `fetchExternal` treats this as the
  * fast-path "pool disabled" marker and calls `fetch` directly.
  *
  * `__setProxyPoolForTesting` matches the test seam used by

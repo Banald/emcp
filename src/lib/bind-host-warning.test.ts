@@ -53,7 +53,7 @@ describe('shouldWarnBareBindHost', () => {
     );
   });
 
-  it('stays silent when BIND_HOST is loopback-scoped', () => {
+  it('stays silent when EMCP_BIND_HOST is loopback-scoped', () => {
     assert.equal(
       shouldWarnBareBindHost({
         nodeEnv: 'production',

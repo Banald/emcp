@@ -6,8 +6,8 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-mcp}
-      POSTGRES_DB: ${POSTGRES_DB:-mcp}
+      POSTGRES_USER: ${EMCP_POSTGRES_USER:-mcp}
+      POSTGRES_DB: ${EMCP_POSTGRES_DB:-mcp}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
@@ -51,16 +51,16 @@ services:
       SEARXNG_BASE_URL: "http://localhost:8080/"
       # The image's own entrypoint substitutes the `ultrasecretkey` placeholder
       # in settings.yml with this value at startup.
-      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET missing — set it in .env}
+      SEARXNG_SECRET: ${EMCP_SEARXNG_SECRET:?EMCP_SEARXNG_SECRET missing — set it in .env}
       # Optional comma-separated proxy URLs the SearXNG engines rotate
       # through. Unset → direct egress. See docs/ARCHITECTURE.md "Proxy
       # egress" and infra/searxng/entrypoint.sh for the rendering logic.
-      SEARXNG_OUTGOING_PROXIES: ${SEARXNG_OUTGOING_PROXIES:-}
+      EMCP_SEARXNG_OUTGOING_PROXIES: ${EMCP_SEARXNG_OUTGOING_PROXIES:-}
     volumes:
       - ./infra/searxng/settings.template.yml:/etc/searxng/settings.template.yml:ro
       - ./infra/searxng/entrypoint.sh:/usr/local/bin/emcp-searxng-entrypoint.sh:ro
     # Chain through our wrapper entrypoint before the image's own. It
-    # renders the template (SEARXNG_OUTGOING_PROXIES → outgoing.proxies
+    # renders the template (EMCP_SEARXNG_OUTGOING_PROXIES → outgoing.proxies
     # YAML block) and then execs /usr/local/searxng/dockerfiles/
     # docker-entrypoint.sh so SEARXNG_SECRET substitution + signal
     # handling still run upstream.
@@ -75,7 +75,7 @@ services:
   migrate:
     # One-shot: applies pending migrations, then exits 0. mcp-server and
     # mcp-worker wait for this to complete successfully before starting.
-    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${EMCP_GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
@@ -83,19 +83,19 @@ services:
     command: ["node", "dist/db/migrate.js", "up"]
     environment:
       NODE_ENV: production
-      PORT: "3000"
-      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
-      DATABASE_USER: ${POSTGRES_USER:-mcp}
-      DATABASE_DB: ${POSTGRES_DB:-mcp}
-      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EMCP_PORT: "3000"
+      EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
+      EMCP_ALLOWED_ORIGINS: ${EMCP_ALLOWED_ORIGINS:-http://localhost}
+      EMCP_DATABASE_HOST: postgres
+      EMCP_DATABASE_PORT: "5432"
+      EMCP_DATABASE_USER: ${EMCP_POSTGRES_USER:-mcp}
+      EMCP_DATABASE_DB: ${EMCP_POSTGRES_DB:-mcp}
+      EMCP_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      EMCP_REDIS_HOST: redis
+      EMCP_REDIS_PORT: "6379"
+      EMCP_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      EMCP_API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
+      EMCP_LOG_LEVEL: ${EMCP_LOG_LEVEL:-info}
     secrets:
       - postgres_password
       - api_key_hmac_secret
@@ -105,7 +105,7 @@ services:
         condition: service_healthy
 
   mcp-server:
-    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${EMCP_GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
@@ -113,37 +113,37 @@ services:
     command: ["node", "dist/index.js"]
     environment:
       NODE_ENV: production
-      PORT: "3000"
-      BIND_HOST: "0.0.0.0"
-      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
-      DATABASE_USER: ${POSTGRES_USER:-mcp}
-      DATABASE_DB: ${POSTGRES_DB:-mcp}
-      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      SEARXNG_URL: http://searxng:8080
-      API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
+      EMCP_PORT: "3000"
+      EMCP_BIND_HOST: "0.0.0.0"
+      EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
+      EMCP_ALLOWED_ORIGINS: ${EMCP_ALLOWED_ORIGINS:-http://localhost}
+      EMCP_DATABASE_HOST: postgres
+      EMCP_DATABASE_PORT: "5432"
+      EMCP_DATABASE_USER: ${EMCP_POSTGRES_USER:-mcp}
+      EMCP_DATABASE_DB: ${EMCP_POSTGRES_DB:-mcp}
+      EMCP_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      EMCP_DATABASE_POOL_MAX: ${EMCP_DATABASE_POOL_MAX:-10}
+      EMCP_REDIS_HOST: redis
+      EMCP_REDIS_PORT: "6379"
+      EMCP_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      EMCP_SEARXNG_URL: http://searxng:8080
+      EMCP_API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
+      EMCP_LOG_LEVEL: ${EMCP_LOG_LEVEL:-info}
+      EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE: ${EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
       # Pre-auth defences (AUDIT H-3). Bridge-network CIDRs are trusted so
       # the Caddy container's X-Forwarded-For lands in the rate-limit key.
-      PRE_AUTH_RATE_LIMIT_PER_MINUTE: ${PRE_AUTH_RATE_LIMIT_PER_MINUTE:-600}
-      AUTH_NEG_CACHE_TTL_SECONDS: ${AUTH_NEG_CACHE_TTL_SECONDS:-60}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-30000}
+      EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE: ${EMCP_PRE_AUTH_RATE_LIMIT_PER_MINUTE:-600}
+      EMCP_AUTH_NEG_CACHE_TTL_SECONDS: ${EMCP_AUTH_NEG_CACHE_TTL_SECONDS:-60}
+      EMCP_TRUSTED_PROXY_CIDRS: ${EMCP_TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      EMCP_SHUTDOWN_TIMEOUT_MS: ${EMCP_SHUTDOWN_TIMEOUT_MS:-30000}
       # Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
-      # Empty PROXY_URLS keeps the feature disabled — no ProxyAgents are
-      # created and every external fetch behaves as before.
-      PROXY_URLS: ${PROXY_URLS:-}
-      PROXY_ROTATION: ${PROXY_ROTATION:-round-robin}
-      PROXY_FAILURE_COOLDOWN_MS: ${PROXY_FAILURE_COOLDOWN_MS:-60000}
-      PROXY_MAX_RETRIES_PER_REQUEST: ${PROXY_MAX_RETRIES_PER_REQUEST:-3}
-      PROXY_CONNECT_TIMEOUT_MS: ${PROXY_CONNECT_TIMEOUT_MS:-10000}
+      # Empty EMCP_PROXY_URLS keeps the feature disabled — no ProxyAgents
+      # are created and every external fetch behaves as before.
+      EMCP_PROXY_URLS: ${EMCP_PROXY_URLS:-}
+      EMCP_PROXY_ROTATION: ${EMCP_PROXY_ROTATION:-round-robin}
+      EMCP_PROXY_FAILURE_COOLDOWN_MS: ${EMCP_PROXY_FAILURE_COOLDOWN_MS:-60000}
+      EMCP_PROXY_MAX_RETRIES_PER_REQUEST: ${EMCP_PROXY_MAX_RETRIES_PER_REQUEST:-3}
+      EMCP_PROXY_CONNECT_TIMEOUT_MS: ${EMCP_PROXY_CONNECT_TIMEOUT_MS:-10000}
     secrets:
       - postgres_password
       - api_key_hmac_secret
@@ -170,12 +170,12 @@ services:
       timeout: 3s
       retries: 5
       start_period: 20s
-    # Matches SHUTDOWN_TIMEOUT_MS (30s) + 5s margin. Aligned with the PM2
-    # kill_timeout tuning in ecosystem.config.cjs.
+    # Matches EMCP_SHUTDOWN_TIMEOUT_MS (30s) + 5s margin. Aligned with the
+    # PM2 kill_timeout tuning in ecosystem.config.cjs.
     stop_grace_period: 35s
 
   mcp-worker:
-    image: ${EMCP_IMAGE:-ghcr.io/${GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
+    image: ${EMCP_IMAGE:-ghcr.io/${EMCP_GHCR_OWNER:-banald}/emcp:${EMCP_IMAGE_TAG:-latest}}
     build:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
@@ -183,35 +183,35 @@ services:
     command: ["node", "dist/workers/index.js"]
     environment:
       NODE_ENV: production
-      # PORT/BIND_HOST/PUBLIC_HOST/ALLOWED_ORIGINS are unused by the worker
-      # but required by config.ts validation.
-      PORT: "3001"
-      BIND_HOST: "0.0.0.0"
-      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
-      DATABASE_USER: ${POSTGRES_USER:-mcp}
-      DATABASE_DB: ${POSTGRES_DB:-mcp}
-      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      SEARXNG_URL: http://searxng:8080
-      API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      RATE_LIMIT_DEFAULT_PER_MINUTE: ${RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
-      SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-60000}
+      # EMCP_PORT/EMCP_BIND_HOST/EMCP_PUBLIC_HOST/EMCP_ALLOWED_ORIGINS are
+      # unused by the worker but required by config.ts validation.
+      EMCP_PORT: "3001"
+      EMCP_BIND_HOST: "0.0.0.0"
+      EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
+      EMCP_ALLOWED_ORIGINS: ${EMCP_ALLOWED_ORIGINS:-http://localhost}
+      EMCP_DATABASE_HOST: postgres
+      EMCP_DATABASE_PORT: "5432"
+      EMCP_DATABASE_USER: ${EMCP_POSTGRES_USER:-mcp}
+      EMCP_DATABASE_DB: ${EMCP_POSTGRES_DB:-mcp}
+      EMCP_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      EMCP_DATABASE_POOL_MAX: ${EMCP_DATABASE_POOL_MAX:-10}
+      EMCP_REDIS_HOST: redis
+      EMCP_REDIS_PORT: "6379"
+      EMCP_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      EMCP_SEARXNG_URL: http://searxng:8080
+      EMCP_API_KEY_HMAC_SECRET_FILE: /run/secrets/api_key_hmac_secret
+      EMCP_LOG_LEVEL: ${EMCP_LOG_LEVEL:-info}
+      EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE: ${EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE:-60}
+      EMCP_SHUTDOWN_TIMEOUT_MS: ${EMCP_WORKER_SHUTDOWN_TIMEOUT_MS:-60000}
       # Outbound proxy rotation (docs/ARCHITECTURE.md "Proxy egress").
       # The fetch-news worker's RSS + article fetches route through the
-      # same pool the server uses; empty PROXY_URLS keeps the worker on
-      # direct egress.
-      PROXY_URLS: ${PROXY_URLS:-}
-      PROXY_ROTATION: ${PROXY_ROTATION:-round-robin}
-      PROXY_FAILURE_COOLDOWN_MS: ${PROXY_FAILURE_COOLDOWN_MS:-60000}
-      PROXY_MAX_RETRIES_PER_REQUEST: ${PROXY_MAX_RETRIES_PER_REQUEST:-3}
-      PROXY_CONNECT_TIMEOUT_MS: ${PROXY_CONNECT_TIMEOUT_MS:-10000}
+      # same pool the server uses; empty EMCP_PROXY_URLS keeps the worker
+      # on direct egress.
+      EMCP_PROXY_URLS: ${EMCP_PROXY_URLS:-}
+      EMCP_PROXY_ROTATION: ${EMCP_PROXY_ROTATION:-round-robin}
+      EMCP_PROXY_FAILURE_COOLDOWN_MS: ${EMCP_PROXY_FAILURE_COOLDOWN_MS:-60000}
+      EMCP_PROXY_MAX_RETRIES_PER_REQUEST: ${EMCP_PROXY_MAX_RETRIES_PER_REQUEST:-3}
+      EMCP_PROXY_CONNECT_TIMEOUT_MS: ${EMCP_PROXY_CONNECT_TIMEOUT_MS:-10000}
     secrets:
       - postgres_password
       - api_key_hmac_secret
@@ -229,16 +229,16 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${EMCP_HTTP_PORT:-80}:80"
+      - "${EMCP_HTTPS_PORT:-443}:443"
     environment:
-      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
-      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
+      EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
+      EMCP_PUBLIC_SCHEME: ${EMCP_PUBLIC_SCHEME:-https}
     volumes:
-      # PUBLIC_SCHEME selects which Caddyfile is mounted: https (default,
+      # EMCP_PUBLIC_SCHEME selects which Caddyfile is mounted: https (default,
       # auto-TLS) or http (plaintext — trusted networks only). Typos fail
       # loudly with "no such file" on startup.
-      - ./infra/caddy/Caddyfile.${PUBLIC_SCHEME:-https}:/etc/caddy/Caddyfile:ro
+      - ./infra/caddy/Caddyfile.${EMCP_PUBLIC_SCHEME:-https}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

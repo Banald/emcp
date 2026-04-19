@@ -4,36 +4,36 @@
 
 export const DEFAULT_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
   NODE_ENV: 'test',
-  PORT: '3000',
-  BIND_HOST: '127.0.0.1',
-  PUBLIC_HOST: 'localhost:3000',
-  ALLOWED_ORIGINS: 'http://localhost:3000',
-  DATABASE_URL: 'postgres://mcp:mcp@localhost:5432/mcp_test',
-  DATABASE_POOL_MAX: '5',
-  REDIS_URL: 'redis://localhost:6379',
-  API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
-  LOG_LEVEL: 'silent',
-  RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
-  SHUTDOWN_TIMEOUT_MS: '5000',
-  SEARXNG_URL: 'http://localhost:8080',
+  EMCP_PORT: '3000',
+  EMCP_BIND_HOST: '127.0.0.1',
+  EMCP_PUBLIC_HOST: 'localhost:3000',
+  EMCP_ALLOWED_ORIGINS: 'http://localhost:3000',
+  EMCP_DATABASE_URL: 'postgres://mcp:mcp@localhost:5432/mcp_test',
+  EMCP_DATABASE_POOL_MAX: '5',
+  EMCP_REDIS_URL: 'redis://localhost:6379',
+  EMCP_API_KEY_HMAC_SECRET: 'dGVzdC1wZXBwZXItYXQtbGVhc3QtMzItYnl0ZXMtbG9uZw==',
+  EMCP_LOG_LEVEL: 'silent',
+  EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE: '60',
+  EMCP_SHUTDOWN_TIMEOUT_MS: '5000',
+  EMCP_SEARXNG_URL: 'http://localhost:8080',
   // Low session cap so the per-key cap test (AUDIT M-1) can exercise the
   // limit in a handful of requests. `rate-limit-http.test.ts` pushes 7
   // initialize POSTs through one key, so the cap has to sit above that
   // (rate-limit test scenarios can't silently trip the session cap).
-  MCP_MAX_SESSIONS_PER_KEY: '10',
+  EMCP_MCP_MAX_SESSIONS_PER_KEY: '10',
   // Low enough that the global-cap test can reach it across distinct
   // keys in a handful of requests, but high enough that no existing
   // single-key test tripping its per-key cap (10) brushes up against it.
-  MCP_MAX_SESSIONS_TOTAL: '20',
+  EMCP_MCP_MAX_SESSIONS_TOTAL: '20',
   // AUDIT L-5 — set explicitly so the server.test.ts assertion can
   // anchor on a known value independent of the Node default (300s).
-  HTTP_REQUEST_TIMEOUT_MS: '60000',
+  EMCP_HTTP_REQUEST_TIMEOUT_MS: '60000',
   // Outbound-proxy rotation (docs/ARCHITECTURE.md "Proxy egress"):
-  // empty PROXY_URLS keeps the feature disabled so every existing test
-  // runs fetchExternal's bypass path. Integration tests that exercise
-  // the pool-active path build their own pool explicitly — they don't
-  // rely on this env var.
-  PROXY_URLS: '',
+  // empty EMCP_PROXY_URLS keeps the feature disabled so every existing
+  // test runs fetchExternal's bypass path. Integration tests that
+  // exercise the pool-active path build their own pool explicitly —
+  // they don't rely on this env var.
+  EMCP_PROXY_URLS: '',
 });
 
 /**

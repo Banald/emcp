@@ -24,12 +24,12 @@ export interface EgressMetrics {
  * tools and workers.
  *
  * Behaviour:
- *   - Pool empty (PROXY_URLS unset) → plain global `fetch()`. Zero
+ *   - Pool empty (EMCP_PROXY_URLS unset) → plain global `fetch()`. Zero
  *     overhead; the feature is invisible to callers.
  *   - Pool non-empty → asks the pool for the next healthy proxy, threads
  *     its `undici.ProxyAgent` through `fetch()` via the `dispatcher`
  *     option, and on connect-level failure retries on the next proxy
- *     until the retry budget (`PROXY_MAX_RETRIES_PER_REQUEST`) is spent.
+ *     until the retry budget (`EMCP_PROXY_MAX_RETRIES_PER_REQUEST`) is spent.
  *
  * Failure taxonomy:
  *   - Any `Response` return is treated as a successful proxy round-trip;

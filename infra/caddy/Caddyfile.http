@@ -1,6 +1,6 @@
 # Caddy reverse proxy for eMCP — plain HTTP mode.
 #
-# Selected by PUBLIC_SCHEME=http in .env. TLS is disabled; the site only
+# Selected by EMCP_PUBLIC_SCHEME=http in .env. TLS is disabled; the site only
 # listens on port 80. Use this ONLY on trusted internal networks — bearer
 # tokens for /mcp travel in plaintext.
 #
@@ -9,13 +9,13 @@
 # scheme.
 #
 # Configure via .env:
-#   PUBLIC_HOST     — the hostname this server serves on
+#   EMCP_PUBLIC_HOST — the hostname this server serves on
 
 {
 	auto_https off
 }
 
-http://{$PUBLIC_HOST:localhost} {
+http://{$EMCP_PUBLIC_HOST:localhost} {
 	route {
 		# Block observability endpoints at the edge. Redundant with the
 		# server's loopback-only check in src/server.ts, but surfaces

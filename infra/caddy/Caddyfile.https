@@ -1,17 +1,17 @@
 # Caddy reverse proxy for eMCP.
 #
 # Behavior:
-#  - {$PUBLIC_HOST:localhost} is the site address. `localhost` or IP literals
-#    get Caddy's internal CA (self-signed TLS). Real hostnames trigger
-#    automatic Let's Encrypt.
+#  - {$EMCP_PUBLIC_HOST:localhost} is the site address. `localhost` or IP
+#    literals get Caddy's internal CA (self-signed TLS). Real hostnames
+#    trigger automatic Let's Encrypt.
 #  - Only the /mcp endpoint is forwarded. /health and /metrics are explicitly
 #    blocked here and also rejected by the app for non-loopback peers.
 #
 # Configure via .env:
-#   PUBLIC_HOST     — the hostname this server serves on
-#   ACME_EMAIL      — optional, used by Caddy global `email` directive if set
+#   EMCP_PUBLIC_HOST — the hostname this server serves on
+#   ACME_EMAIL       — optional, used by Caddy global `email` directive if set
 
-{$PUBLIC_HOST:localhost} {
+{$EMCP_PUBLIC_HOST:localhost} {
 	route {
 		# Block observability endpoints at the edge. Redundant with the
 		# server's loopback-only check in src/server.ts, but surfaces

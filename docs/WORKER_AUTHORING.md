@@ -160,7 +160,7 @@ On SIGTERM:
 
 1. The scheduler stops all cron handles (no new ticks).
 2. The shutdown abort controller fires — in-flight handlers receive the abort via `ctx.signal`.
-3. The scheduler waits up to `SHUTDOWN_TIMEOUT_MS` (default 30s) for in-flight runs to settle.
+3. The scheduler waits up to `EMCP_SHUTDOWN_TIMEOUT_MS` (default 30s) for in-flight runs to settle.
 4. The Postgres pool closes.
 5. Process exits 0.
 

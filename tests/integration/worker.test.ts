@@ -37,11 +37,11 @@ describe('worker process', { timeout: 120_000 }, () => {
     // what we need for log-based assertions.
     return buildTestEnv({
       NODE_ENV: 'production',
-      PUBLIC_HOST: '127.0.0.1:3000',
-      ALLOWED_ORIGINS: 'http://127.0.0.1:3000',
-      DATABASE_URL: databaseUrl,
-      DATABASE_POOL_MAX: '2',
-      LOG_LEVEL: 'info',
+      EMCP_PUBLIC_HOST: '127.0.0.1:3000',
+      EMCP_ALLOWED_ORIGINS: 'http://127.0.0.1:3000',
+      EMCP_DATABASE_URL: databaseUrl,
+      EMCP_DATABASE_POOL_MAX: '2',
+      EMCP_LOG_LEVEL: 'info',
     });
   }
 

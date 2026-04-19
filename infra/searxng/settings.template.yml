@@ -8,14 +8,14 @@ use_default_settings:
       - startpage
 
 # --- Outgoing proxy rotation (eMCP) ---
-# The SEARXNG_OUTGOING_PROXIES env var is expanded by
+# The EMCP_SEARXNG_OUTGOING_PROXIES env var is expanded by
 # infra/searxng/entrypoint.sh at container start. Empty var → this
 # marker line is removed and SearXNG makes direct requests. Non-empty
 # → the marker is replaced with an `outgoing.proxies.all://` block,
 # rotating engine scrapers across every URL in the list (SearXNG
 # picks one per request). Keep the marker unchanged; the entrypoint
 # matches it literally.
-# SEARXNG_OUTGOING_PROXIES_MARKER
+# EMCP_SEARXNG_OUTGOING_PROXIES_MARKER
 
 general:
   instance_name: "eMCP SearXNG"
@@ -30,7 +30,8 @@ search:
 server:
   # The literal "ultrasecretkey" placeholder is replaced at container start
   # by SearXNG's own entrypoint using the $SEARXNG_SECRET env var. That value
-  # comes from the SEARXNG_SECRET setting in .env (see .env.example). Do not
+  # is driven by EMCP_SEARXNG_SECRET in .env (see .env.example) — compose.yaml
+  # maps EMCP_SEARXNG_SECRET to SEARXNG_SECRET on this container. Do not
   # commit a real secret here.
   secret_key: "ultrasecretkey"
   bind_address: "0.0.0.0"

@@ -70,9 +70,9 @@ export function generateApiKey(prefix = 'mcp_live'): string {
 
 Every request to `/mcp` must have `Origin` and `Host` validated **before** any business logic.
 
-- **Allowed origins** are defined in config (`ALLOWED_ORIGINS=https://app.example.com,https://...`). Wildcards forbidden.
+- **Allowed origins** are defined in config (`EMCP_ALLOWED_ORIGINS=https://app.example.com,https://...`). Wildcards forbidden.
 - For requests without an Origin header (server-to-server, curl), apply a stricter policy: require a valid API key with the `allow_no_origin` flag set on it. Default new keys to `false`.
-- Reject mismatched `Host` (DNS rebinding defense). The expected host is in config (`PUBLIC_HOST=mcp.example.com`).
+- Reject mismatched `Host` (DNS rebinding defense). The expected host is in config (`EMCP_PUBLIC_HOST=mcp.example.com`).
 - Return **HTTP 403** for header validation failures. Do **not** reveal which header failed in the response body — log it, but respond with a generic "forbidden" message.
 
 ```typescript
@@ -203,29 +203,29 @@ Audit logs go to a separate Pino transport (file or external sink) and are retai
 
 ## Rule 13: Outbound proxy egress
 
-When `PROXY_URLS` is set, every external HTTP fetch from the server and worker goes through `fetchExternal` (`src/shared/net/egress.ts`), which hands requests to `undici.ProxyAgent`. This rule enforces the security properties that must hold regardless of what the operator configures.
+When `EMCP_PROXY_URLS` is set, every external HTTP fetch from the server and worker goes through `fetchExternal` (`src/shared/net/egress.ts`), which hands requests to `undici.ProxyAgent`. This rule enforces the security properties that must hold regardless of what the operator configures.
 
 **Credential redaction, always.** Any proxy URL bound for a log line, error message, metric label, CLI confirmation, or operator-facing output MUST pass through `maskProxyUrl` (`src/shared/net/proxy/redact.ts`) first. The function replaces the `user:pass@` portion with `***@` without changing the rest of the URL. The installer's prompts and the runtime config loader both use it.
 
-- **Never** embed `PROXY_URLS` / `SEARXNG_OUTGOING_PROXIES` values in a `ConfigError` message raw. The refinement messages in `src/config.ts` are crafted to describe the defect generically ("invalid proxy URL (cannot parse)", "proxy URL must use http: or https:") and must stay that way. A regression test asserts that `loadConfig` throws on a credentialed malformed URL without echoing the credentials — keep it.
+- **Never** embed `EMCP_PROXY_URLS` / `EMCP_SEARXNG_OUTGOING_PROXIES` values in a `ConfigError` message raw. The refinement messages in `src/config.ts` are crafted to describe the defect generically ("invalid proxy URL (cannot parse)", "proxy URL must use http: or https:") and must stay that way. A regression test asserts that `loadConfig` throws on a credentialed malformed URL without echoing the credentials — keep it.
 - **Never** label a Prometheus metric with a proxy URL. The `proxy_id` label uses the pool-index form (`p0`, `p1`, …) emitted by the pool itself. High-cardinality URLs would break Prometheus AND leak secrets at the `/metrics` endpoint.
 - **`/metrics` is loopback-only** (same binding rules as `/health`). Operators with shell access can view proxy latencies and cooldown counts; external scrapers cannot reach it.
 
 **DNS-rebinding TOCTOU trade-off in proxy mode.** `fetchSafe` normally pins the DNS lookup to the first resolved IP and reuses it for the connect, closing the classic rebinding TOCTOU window. That pinning is **not** possible when tunneling through a proxy via CONNECT — the proxy resolves the target itself. What we do instead:
 
 - `assertPublicHostname` still runs on the target hostname *client-side* before every hop. A hostname that resolves to a private/loopback/link-local address from the app's DNS is rejected before `fetchExternal` is even called.
-- An attacker who controls DNS and flips the target's A/AAAA record *between* the app's resolve and the proxy's resolve can bypass the client-side check. This is inherent to any proxied HTTP client and is the trade-off the operator accepts when setting `PROXY_URLS`.
+- An attacker who controls DNS and flips the target's A/AAAA record *between* the app's resolve and the proxy's resolve can bypass the client-side check. This is inherent to any proxied HTTP client and is the trade-off the operator accepts when setting `EMCP_PROXY_URLS`.
 - `fetchSafe` takes a `proxy: 'off'` option for diagnostic paths (probes against the proxy itself) that need the pinned flow. Tools and workers never set it.
 
-**Proxy-allowlist policy.** This codebase does NOT accept arbitrary proxy URLs from runtime input. `PROXY_URLS` is read at startup only (Zod-validated in `src/config.ts`); there is no per-request proxy-override API surface and no tool can introspect or inject proxy state. Adding runtime proxy control would require explicit threat-model review.
+**Proxy-allowlist policy.** This codebase does NOT accept arbitrary proxy URLs from runtime input. `EMCP_PROXY_URLS` is read at startup only (Zod-validated in `src/config.ts`); there is no per-request proxy-override API surface and no tool can introspect or inject proxy state. Adding runtime proxy control would require explicit threat-model review.
 
 **Internal-URL carve-out.** The external proxy pool MUST NOT handle internal traffic:
 
 - Postgres, Redis, and the internal SearXNG URL (`http://searxng:8080` on the compose bridge) never touch `fetchExternal`. Routing them through an external proxy creates a traffic loop and/or exposes internal service traffic to the proxy operator.
 - The `web-search` tool intentionally keeps a raw `fetch()` call with an inline comment explaining the carve-out; if a future "consistency fix" moves it onto `fetchExternal`, the compose stack breaks and SearXNG becomes unreachable. Reviewers MUST catch this.
-- SearXNG's own outbound (engine scrapers) has a separate env var (`SEARXNG_OUTGOING_PROXIES`) rendered into `settings.yml` by `infra/searxng/entrypoint.sh`. That path is deliberately independent of the Node-side pool.
+- SearXNG's own outbound (engine scrapers) has a separate env var (`EMCP_SEARXNG_OUTGOING_PROXIES`) rendered into `settings.yml` by `infra/searxng/entrypoint.sh`. That path is deliberately independent of the Node-side pool.
 
-**Forbidden URL schemes.** `PROXY_URLS` accepts only `http://` and `https://` schemes. SOCKS5 is intentionally unsupported in v1 — adding it requires additional validation (SOCKS5 authentication modes have their own pitfalls) and an explicit threat-model review. The Zod validator rejects any other scheme at startup.
+**Forbidden URL schemes.** `EMCP_PROXY_URLS` accepts only `http://` and `https://` schemes. SOCKS5 is intentionally unsupported in v1 — adding it requires additional validation (SOCKS5 authentication modes have their own pitfalls) and an explicit threat-model review. The Zod validator rejects any other scheme at startup.
 
 **Shutdown guarantee.** Every `ProxyAgent` is registered for close via `registerShutdown('proxy-pool', ...)` in `src/shared/net/proxy/registry.ts`. In-flight CONNECT tunnels drain during the normal shutdown sequence; orphaned sockets cannot persist past the grace window.
 

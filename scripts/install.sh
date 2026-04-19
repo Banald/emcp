@@ -70,14 +70,14 @@ MIN_FREE_GB=2
 
 INSTALL_DIR=""
 TAG=""
-PUBLIC_HOST=""
-PUBLIC_SCHEME=""
-ALLOWED_ORIGINS=""
-HTTP_PORT=""
-HTTPS_PORT=""
-LOG_LEVEL=""
-POSTGRES_USER=""
-POSTGRES_DB=""
+EMCP_PUBLIC_HOST=""
+EMCP_PUBLIC_SCHEME=""
+EMCP_ALLOWED_ORIGINS=""
+EMCP_HTTP_PORT=""
+EMCP_HTTPS_PORT=""
+EMCP_LOG_LEVEL=""
+EMCP_POSTGRES_USER=""
+EMCP_POSTGRES_DB=""
 IMAGE_TAG=""
 GHCR_TOKEN_FILE=""
 SKIP_FIRST_KEY=0
@@ -87,19 +87,19 @@ FROM_LOCAL=""
 UNINSTALL=0
 FORCE=0
 # Proxy wizard inputs. Empty means "not yet answered"; after the wizard
-# runs, PROXY_URLS/SEARXNG_OUTGOING_PROXIES hold the final CSV (possibly
-# empty), PROXY_ROTATION holds the strategy. NO_PROXY_FLAG=1 short-
-# circuits the prompt in --non-interactive mode.
-PROXY_URLS=""
-PROXY_ROTATION=""
-SEARXNG_OUTGOING_PROXIES=""
-SEARXNG_OUTGOING_PROXIES_SET=0  # 1 when the flag or existing env set it
+# runs, EMCP_PROXY_URLS/EMCP_SEARXNG_OUTGOING_PROXIES hold the final CSV
+# (possibly empty), EMCP_PROXY_ROTATION holds the strategy. NO_PROXY_FLAG=1
+# short-circuits the prompt in --non-interactive mode.
+EMCP_PROXY_URLS=""
+EMCP_PROXY_ROTATION=""
+EMCP_SEARXNG_OUTGOING_PROXIES=""
+EMCP_SEARXNG_OUTGOING_PROXIES_SET=0  # 1 when the flag or existing env set it
 NO_PROXY_FLAG=0
 
 # Filled during the run
 EMCP_HOME=""
 IS_UPGRADE=0
-SEARXNG_SECRET_EXISTING=""
+EMCP_SEARXNG_SECRET_EXISTING=""
 
 # --- Logging ---------------------------------------------------------------
 
@@ -138,14 +138,14 @@ parse_args() {
         case "$1" in
             --install-dir)      INSTALL_DIR="$2"; shift 2 ;;
             --tag)              TAG="$2"; shift 2 ;;
-            --public-host)      PUBLIC_HOST="$2"; shift 2 ;;
-            --public-scheme)    PUBLIC_SCHEME="$2"; shift 2 ;;
-            --allowed-origins)  ALLOWED_ORIGINS="$2"; shift 2 ;;
-            --http-port)        HTTP_PORT="$2"; shift 2 ;;
-            --https-port)       HTTPS_PORT="$2"; shift 2 ;;
-            --log-level)        LOG_LEVEL="$2"; shift 2 ;;
-            --postgres-user)    POSTGRES_USER="$2"; shift 2 ;;
-            --postgres-db)      POSTGRES_DB="$2"; shift 2 ;;
+            --public-host)      EMCP_PUBLIC_HOST="$2"; shift 2 ;;
+            --public-scheme)    EMCP_PUBLIC_SCHEME="$2"; shift 2 ;;
+            --allowed-origins)  EMCP_ALLOWED_ORIGINS="$2"; shift 2 ;;
+            --http-port)        EMCP_HTTP_PORT="$2"; shift 2 ;;
+            --https-port)       EMCP_HTTPS_PORT="$2"; shift 2 ;;
+            --log-level)        EMCP_LOG_LEVEL="$2"; shift 2 ;;
+            --postgres-user)    EMCP_POSTGRES_USER="$2"; shift 2 ;;
+            --postgres-db)      EMCP_POSTGRES_DB="$2"; shift 2 ;;
             --image-tag)        IMAGE_TAG="$2"; shift 2 ;;
             --ghcr-token-file)  GHCR_TOKEN_FILE="$2"; shift 2 ;;
             --skip-first-key)   SKIP_FIRST_KEY=1; shift ;;
@@ -154,11 +154,11 @@ parse_args() {
             --from-local)       FROM_LOCAL="$2"; shift 2 ;;
             --uninstall)        UNINSTALL=1; shift ;;
             --force)            FORCE=1; shift ;;
-            --proxy-urls)       PROXY_URLS="$2"; shift 2 ;;
-            --proxy-rotation)   PROXY_ROTATION="$2"; shift 2 ;;
+            --proxy-urls)       EMCP_PROXY_URLS="$2"; shift 2 ;;
+            --proxy-rotation)   EMCP_PROXY_ROTATION="$2"; shift 2 ;;
             --searxng-proxies)
-                SEARXNG_OUTGOING_PROXIES="$2"
-                SEARXNG_OUTGOING_PROXIES_SET=1
+                EMCP_SEARXNG_OUTGOING_PROXIES="$2"
+                EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
                 shift 2 ;;
             --no-proxy)         NO_PROXY_FLAG=1; shift ;;
             -h|--help)          usage 0 ;;
@@ -436,41 +436,41 @@ phase_env_wizard() {
     # Seed defaults from an existing .env so re-runs are non-destructive.
     load_existing_env_defaults
 
-    prompt PUBLIC_HOST "Public hostname — what clients will use to reach eMCP (e.g. emcp.example.com, or 'localhost' for local use)" "${PUBLIC_HOST:-localhost}" validate_host
+    prompt EMCP_PUBLIC_HOST "Public hostname — what clients will use to reach eMCP (e.g. emcp.example.com, or 'localhost' for local use)" "${EMCP_PUBLIC_HOST:-localhost}" validate_host
 
-    prompt PUBLIC_SCHEME "Use HTTPS (recommended) or HTTP? HTTP is plaintext; use only on fully trusted networks" "${PUBLIC_SCHEME:-https}" validate_scheme
+    prompt EMCP_PUBLIC_SCHEME "Use HTTPS (recommended) or HTTP? HTTP is plaintext; use only on fully trusted networks" "${EMCP_PUBLIC_SCHEME:-https}" validate_scheme
 
-    if [ -z "$ALLOWED_ORIGINS" ]; then
-        ALLOWED_ORIGINS="${PUBLIC_SCHEME}://${PUBLIC_HOST}"
-        if [ "$PUBLIC_HOST" = "localhost" ]; then
-            ALLOWED_ORIGINS="http://localhost,https://localhost"
+    if [ -z "$EMCP_ALLOWED_ORIGINS" ]; then
+        EMCP_ALLOWED_ORIGINS="${EMCP_PUBLIC_SCHEME}://${EMCP_PUBLIC_HOST}"
+        if [ "$EMCP_PUBLIC_HOST" = "localhost" ]; then
+            EMCP_ALLOWED_ORIGINS="http://localhost,https://localhost"
         fi
     fi
-    prompt ALLOWED_ORIGINS "Allowed Origin header values (comma-separated, include scheme)" "$ALLOWED_ORIGINS" validate_nonempty
+    prompt EMCP_ALLOWED_ORIGINS "Allowed Origin header values (comma-separated, include scheme)" "$EMCP_ALLOWED_ORIGINS" validate_nonempty
 
-    if [ -z "$HTTP_PORT" ]; then
-        HTTP_PORT=80
+    if [ -z "$EMCP_HTTP_PORT" ]; then
+        EMCP_HTTP_PORT=80
         if port_in_use 80; then
             log_warn "port 80 is already in use on this host"
-            resolve_port_conflict 80 && HTTP_PORT=8080
+            resolve_port_conflict 80 && EMCP_HTTP_PORT=8080
         fi
     fi
-    prompt HTTP_PORT "HTTP port on the host" "$HTTP_PORT" validate_port
+    prompt EMCP_HTTP_PORT "HTTP port on the host" "$EMCP_HTTP_PORT" validate_port
 
-    if [ -z "$HTTPS_PORT" ]; then
-        HTTPS_PORT=443
-        if [ "$PUBLIC_SCHEME" = "https" ] && port_in_use 443; then
+    if [ -z "$EMCP_HTTPS_PORT" ]; then
+        EMCP_HTTPS_PORT=443
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] && port_in_use 443; then
             log_warn "port 443 is already in use on this host"
-            resolve_port_conflict 443 && HTTPS_PORT=8443
+            resolve_port_conflict 443 && EMCP_HTTPS_PORT=8443
         fi
     fi
-    prompt HTTPS_PORT "HTTPS port on the host" "$HTTPS_PORT" validate_port
+    prompt EMCP_HTTPS_PORT "HTTPS port on the host" "$EMCP_HTTPS_PORT" validate_port
 
-    prompt LOG_LEVEL "Log level — leave 'info' unless debugging" "${LOG_LEVEL:-info}" validate_loglevel
-    prompt POSTGRES_USER "Postgres user for the mcp database" "${POSTGRES_USER:-mcp}" validate_nonempty
-    prompt POSTGRES_DB   "Postgres database name"              "${POSTGRES_DB:-mcp}"   validate_nonempty
+    prompt EMCP_LOG_LEVEL "Log level — leave 'info' unless debugging" "${EMCP_LOG_LEVEL:-info}" validate_loglevel
+    prompt EMCP_POSTGRES_USER "Postgres user for the mcp database" "${EMCP_POSTGRES_USER:-mcp}" validate_nonempty
+    prompt EMCP_POSTGRES_DB   "Postgres database name"              "${EMCP_POSTGRES_DB:-mcp}"   validate_nonempty
 
-    local searxng_secret="$SEARXNG_SECRET_EXISTING"
+    local searxng_secret="$EMCP_SEARXNG_SECRET_EXISTING"
     [ -n "$searxng_secret" ] || searxng_secret="$(openssl rand -hex 32)"
 
     write_env_file "$searxng_secret"
@@ -485,21 +485,21 @@ load_existing_env_defaults() {
     local k v
     while IFS='=' read -r k v; do
         case "$k" in
-            PUBLIC_HOST)       [ -z "$PUBLIC_HOST" ]      && PUBLIC_HOST="$(dequote "$v")" ;;
-            PUBLIC_SCHEME)     [ -z "$PUBLIC_SCHEME" ]    && PUBLIC_SCHEME="$(dequote "$v")" ;;
-            ALLOWED_ORIGINS)   [ -z "$ALLOWED_ORIGINS" ]  && ALLOWED_ORIGINS="$(dequote "$v")" ;;
-            HTTP_PORT)         [ -z "$HTTP_PORT" ]        && HTTP_PORT="$(dequote "$v")" ;;
-            HTTPS_PORT)        [ -z "$HTTPS_PORT" ]       && HTTPS_PORT="$(dequote "$v")" ;;
-            LOG_LEVEL)         [ -z "$LOG_LEVEL" ]        && LOG_LEVEL="$(dequote "$v")" ;;
-            POSTGRES_USER)     [ -z "$POSTGRES_USER" ]    && POSTGRES_USER="$(dequote "$v")" ;;
-            POSTGRES_DB)       [ -z "$POSTGRES_DB" ]      && POSTGRES_DB="$(dequote "$v")" ;;
-            SEARXNG_SECRET)    SEARXNG_SECRET_EXISTING="$(dequote "$v")" ;;
-            PROXY_URLS)        [ -z "$PROXY_URLS" ]       && PROXY_URLS="$(dequote "$v")" ;;
-            PROXY_ROTATION)    [ -z "$PROXY_ROTATION" ]   && PROXY_ROTATION="$(dequote "$v")" ;;
-            SEARXNG_OUTGOING_PROXIES)
-                if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
-                    SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
-                    SEARXNG_OUTGOING_PROXIES_SET=1
+            EMCP_PUBLIC_HOST)       [ -z "$EMCP_PUBLIC_HOST" ]      && EMCP_PUBLIC_HOST="$(dequote "$v")" ;;
+            EMCP_PUBLIC_SCHEME)     [ -z "$EMCP_PUBLIC_SCHEME" ]    && EMCP_PUBLIC_SCHEME="$(dequote "$v")" ;;
+            EMCP_ALLOWED_ORIGINS)   [ -z "$EMCP_ALLOWED_ORIGINS" ]  && EMCP_ALLOWED_ORIGINS="$(dequote "$v")" ;;
+            EMCP_HTTP_PORT)         [ -z "$EMCP_HTTP_PORT" ]        && EMCP_HTTP_PORT="$(dequote "$v")" ;;
+            EMCP_HTTPS_PORT)        [ -z "$EMCP_HTTPS_PORT" ]       && EMCP_HTTPS_PORT="$(dequote "$v")" ;;
+            EMCP_LOG_LEVEL)         [ -z "$EMCP_LOG_LEVEL" ]        && EMCP_LOG_LEVEL="$(dequote "$v")" ;;
+            EMCP_POSTGRES_USER)     [ -z "$EMCP_POSTGRES_USER" ]    && EMCP_POSTGRES_USER="$(dequote "$v")" ;;
+            EMCP_POSTGRES_DB)       [ -z "$EMCP_POSTGRES_DB" ]      && EMCP_POSTGRES_DB="$(dequote "$v")" ;;
+            EMCP_SEARXNG_SECRET)    EMCP_SEARXNG_SECRET_EXISTING="$(dequote "$v")" ;;
+            EMCP_PROXY_URLS)        [ -z "$EMCP_PROXY_URLS" ]       && EMCP_PROXY_URLS="$(dequote "$v")" ;;
+            EMCP_PROXY_ROTATION)    [ -z "$EMCP_PROXY_ROTATION" ]   && EMCP_PROXY_ROTATION="$(dequote "$v")" ;;
+            EMCP_SEARXNG_OUTGOING_PROXIES)
+                if [ "$EMCP_SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                    EMCP_SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
+                    EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
                 fi ;;
         esac
     done < <(grep -E '^[A-Z_]+=' "$f" || true)
@@ -590,45 +590,45 @@ write_env_file() {
 
 # --- Runtime ---
 NODE_ENV=production
-LOG_LEVEL=${LOG_LEVEL}
+EMCP_LOG_LEVEL=${EMCP_LOG_LEVEL}
 
 # --- Public identity ---
-PUBLIC_HOST=${PUBLIC_HOST}
-ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+EMCP_PUBLIC_HOST=${EMCP_PUBLIC_HOST}
+EMCP_ALLOWED_ORIGINS=${EMCP_ALLOWED_ORIGINS}
 
 # --- Postgres ---
-POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_DB=${POSTGRES_DB}
+EMCP_POSTGRES_USER=${EMCP_POSTGRES_USER}
+EMCP_POSTGRES_DB=${EMCP_POSTGRES_DB}
 
 # --- SearXNG ---
-SEARXNG_SECRET=${searxng_secret}
-SEARXNG_OUTGOING_PROXIES=${SEARXNG_OUTGOING_PROXIES}
+EMCP_SEARXNG_SECRET=${searxng_secret}
+EMCP_SEARXNG_OUTGOING_PROXIES=${EMCP_SEARXNG_OUTGOING_PROXIES}
 
 # --- Caddy / TLS ---
-PUBLIC_SCHEME=${PUBLIC_SCHEME}
-HTTP_PORT=${HTTP_PORT}
-HTTPS_PORT=${HTTPS_PORT}
+EMCP_PUBLIC_SCHEME=${EMCP_PUBLIC_SCHEME}
+EMCP_HTTP_PORT=${EMCP_HTTP_PORT}
+EMCP_HTTPS_PORT=${EMCP_HTTPS_PORT}
 
 # --- Image pinning ---
-GHCR_OWNER=banald
+EMCP_GHCR_OWNER=banald
 EMCP_IMAGE_TAG=${IMAGE_TAG}
 EMCP_PULL_POLICY=always
 
 # --- Limits (compose defaults are fine; override here if you need to) ---
-DATABASE_POOL_MAX=10
-RATE_LIMIT_DEFAULT_PER_MINUTE=60
-SHUTDOWN_TIMEOUT_MS=30000
+EMCP_DATABASE_POOL_MAX=10
+EMCP_RATE_LIMIT_DEFAULT_PER_MINUTE=60
+EMCP_SHUTDOWN_TIMEOUT_MS=30000
 
 # --- Outbound proxy rotation (optional) ---
-# PROXY_URLS is a comma-separated list of http(s) proxy URLs the
+# EMCP_PROXY_URLS is a comma-separated list of http(s) proxy URLs the
 # mcp-server + mcp-worker processes rotate across for every external
 # fetch. Empty = feature disabled. See docs/ARCHITECTURE.md "Proxy
 # egress" for the full semantics.
-PROXY_URLS=${PROXY_URLS}
-PROXY_ROTATION=${PROXY_ROTATION:-round-robin}
-PROXY_FAILURE_COOLDOWN_MS=60000
-PROXY_MAX_RETRIES_PER_REQUEST=3
-PROXY_CONNECT_TIMEOUT_MS=10000
+EMCP_PROXY_URLS=${EMCP_PROXY_URLS}
+EMCP_PROXY_ROTATION=${EMCP_PROXY_ROTATION:-round-robin}
+EMCP_PROXY_FAILURE_COOLDOWN_MS=60000
+EMCP_PROXY_MAX_RETRIES_PER_REQUEST=3
+EMCP_PROXY_CONNECT_TIMEOUT_MS=10000
 EOF
 }
 
@@ -638,25 +638,25 @@ phase_proxy_wizard() {
     log_step "Optional: outbound proxy rotation"
 
     # Flag short-circuits: --no-proxy or explicit --proxy-urls="" mean
-    # "don't enable proxies". An existing PROXY_URLS value is treated as
-    # the default answer in re-runs.
+    # "don't enable proxies". An existing EMCP_PROXY_URLS value is
+    # treated as the default answer in re-runs.
     if [ "$NO_PROXY_FLAG" -eq 1 ]; then
-        PROXY_URLS=""
-        PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
-        # Only clear SEARXNG_OUTGOING_PROXIES if the operator didn't
+        EMCP_PROXY_URLS=""
+        EMCP_PROXY_ROTATION="${EMCP_PROXY_ROTATION:-round-robin}"
+        # Only clear EMCP_SEARXNG_OUTGOING_PROXIES if the operator didn't
         # explicitly supply --searxng-proxies — that flag is allowed to
         # diverge from the server-side pool.
-        if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
-            SEARXNG_OUTGOING_PROXIES=""
+        if [ "$EMCP_SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+            EMCP_SEARXNG_OUTGOING_PROXIES=""
         fi
         log_info "proxy rotation disabled (--no-proxy)"
         return 0
     fi
 
-    # If PROXY_URLS is non-empty already (from a flag or existing .env),
-    # skip the yes/no prompt. The operator has already chosen.
+    # If EMCP_PROXY_URLS is non-empty already (from a flag or existing
+    # .env), skip the yes/no prompt. The operator has already chosen.
     local skip_prompt=0
-    if [ -n "$PROXY_URLS" ]; then
+    if [ -n "$EMCP_PROXY_URLS" ]; then
         skip_prompt=1
     fi
 
@@ -665,28 +665,28 @@ phase_proxy_wizard() {
             # --non-interactive with no --proxy-urls and no existing
             # value → feature stays off. The operator can always re-run
             # with --proxy-urls later.
-            PROXY_URLS=""
-            PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
-            if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
-                SEARXNG_OUTGOING_PROXIES=""
+            EMCP_PROXY_URLS=""
+            EMCP_PROXY_ROTATION="${EMCP_PROXY_ROTATION:-round-robin}"
+            if [ "$EMCP_SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                EMCP_SEARXNG_OUTGOING_PROXIES=""
             fi
             log_info "proxy rotation not configured (--non-interactive without --proxy-urls)"
             return 0
         fi
         if ! prompt_yesno "Route outbound HTTP through rotating proxies? Useful when SearXNG engines or upstream APIs rate-limit by IP." n; then
-            PROXY_URLS=""
-            PROXY_ROTATION="${PROXY_ROTATION:-round-robin}"
-            if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
-                SEARXNG_OUTGOING_PROXIES=""
+            EMCP_PROXY_URLS=""
+            EMCP_PROXY_ROTATION="${EMCP_PROXY_ROTATION:-round-robin}"
+            if [ "$EMCP_SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+                EMCP_SEARXNG_OUTGOING_PROXIES=""
             fi
             log_info "proxy rotation skipped"
             return 0
         fi
     fi
 
-    # Collect + validate PROXY_URLS.
+    # Collect + validate EMCP_PROXY_URLS.
     while true; do
-        local current="$PROXY_URLS"
+        local current="$EMCP_PROXY_URLS"
         # Prompt explicitly so the confirm line shows a masked default.
         if [ -n "$current" ]; then
             if ! prompt_yesno "Keep existing proxy list ($(mask_proxy_url_csv "$current"))?" y; then
@@ -704,39 +704,39 @@ phase_proxy_wizard() {
             continue
         fi
         if validate_proxy_csv "$current"; then
-            PROXY_URLS="$current"
+            EMCP_PROXY_URLS="$current"
             break
         fi
     done
-    log_info "proxies configured: $(mask_proxy_url_csv "$PROXY_URLS")"
+    log_info "proxies configured: $(mask_proxy_url_csv "$EMCP_PROXY_URLS")"
 
     # Rotation strategy.
-    local default_rotation="${PROXY_ROTATION:-round-robin}"
-    PROXY_ROTATION=""
-    prompt PROXY_ROTATION "Rotation strategy (round-robin | random)" "$default_rotation" validate_rotation
+    local default_rotation="${EMCP_PROXY_ROTATION:-round-robin}"
+    EMCP_PROXY_ROTATION=""
+    prompt EMCP_PROXY_ROTATION "Rotation strategy (round-robin | random)" "$default_rotation" validate_rotation
 
     # SearXNG proxies: default to the same list so the common "rotate
     # everything" case is a single prompt. Offer the operator a chance
     # to use a different list (or leave SearXNG on direct).
-    if [ "$SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
+    if [ "$EMCP_SEARXNG_OUTGOING_PROXIES_SET" -eq 0 ]; then
         if [ "$NON_INTERACTIVE" -eq 1 ]; then
-            SEARXNG_OUTGOING_PROXIES="$PROXY_URLS"
+            EMCP_SEARXNG_OUTGOING_PROXIES="$EMCP_PROXY_URLS"
         elif prompt_yesno "Use the same proxies for SearXNG's engine scrapers?" y; then
-            SEARXNG_OUTGOING_PROXIES="$PROXY_URLS"
+            EMCP_SEARXNG_OUTGOING_PROXIES="$EMCP_PROXY_URLS"
         else
             local searxng_input=""
             read -r -p "${C_CYAN}?${C_RESET} SearXNG proxy URLs (blank = direct egress): " searxng_input
             if [ -n "$searxng_input" ] && ! validate_proxy_csv "$searxng_input"; then
                 log_warn "invalid SearXNG proxy list; falling back to direct egress"
-                SEARXNG_OUTGOING_PROXIES=""
+                EMCP_SEARXNG_OUTGOING_PROXIES=""
             else
-                SEARXNG_OUTGOING_PROXIES="$searxng_input"
+                EMCP_SEARXNG_OUTGOING_PROXIES="$searxng_input"
             fi
         fi
-        SEARXNG_OUTGOING_PROXIES_SET=1
+        EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
     fi
-    if [ -n "$SEARXNG_OUTGOING_PROXIES" ]; then
-        log_info "SearXNG proxies: $(mask_proxy_url_csv "$SEARXNG_OUTGOING_PROXIES")"
+    if [ -n "$EMCP_SEARXNG_OUTGOING_PROXIES" ]; then
+        log_info "SearXNG proxies: $(mask_proxy_url_csv "$EMCP_SEARXNG_OUTGOING_PROXIES")"
     else
         log_info "SearXNG engines will egress directly (no proxy)"
     fi
@@ -958,12 +958,12 @@ remediate_port_conflict() {
             local new_port
             read -r -p "new port (e.g. 8443): " new_port
             validate_port "$new_port" || return 1
-            if [ "${collided_port:-0}" = "${HTTPS_PORT:-0}" ]; then
-                HTTPS_PORT="$new_port"
-                sed -i "s/^HTTPS_PORT=.*/HTTPS_PORT=${new_port}/" "$EMCP_HOME/.env"
+            if [ "${collided_port:-0}" = "${EMCP_HTTPS_PORT:-0}" ]; then
+                EMCP_HTTPS_PORT="$new_port"
+                sed -i "s/^EMCP_HTTPS_PORT=.*/EMCP_HTTPS_PORT=${new_port}/" "$EMCP_HOME/.env"
             else
-                HTTP_PORT="$new_port"
-                sed -i "s/^HTTP_PORT=.*/HTTP_PORT=${new_port}/" "$EMCP_HOME/.env"
+                EMCP_HTTP_PORT="$new_port"
+                sed -i "s/^EMCP_HTTP_PORT=.*/EMCP_HTTP_PORT=${new_port}/" "$EMCP_HOME/.env"
             fi
             log_info "updated .env; will retry compose up"
             return 0
@@ -1109,14 +1109,14 @@ phase_first_key() {
 phase_summary() {
     log_step "Done"
     local endpoint
-    if [ "$PUBLIC_SCHEME" = "https" ] && [ "${HTTPS_PORT:-443}" = "443" ]; then
-        endpoint="https://${PUBLIC_HOST}/mcp"
-    elif [ "$PUBLIC_SCHEME" = "https" ]; then
-        endpoint="https://${PUBLIC_HOST}:${HTTPS_PORT}/mcp"
-    elif [ "${HTTP_PORT:-80}" = "80" ]; then
-        endpoint="http://${PUBLIC_HOST}/mcp"
+    if [ "$EMCP_PUBLIC_SCHEME" = "https" ] && [ "${EMCP_HTTPS_PORT:-443}" = "443" ]; then
+        endpoint="https://${EMCP_PUBLIC_HOST}/mcp"
+    elif [ "$EMCP_PUBLIC_SCHEME" = "https" ]; then
+        endpoint="https://${EMCP_PUBLIC_HOST}:${EMCP_HTTPS_PORT}/mcp"
+    elif [ "${EMCP_HTTP_PORT:-80}" = "80" ]; then
+        endpoint="http://${EMCP_PUBLIC_HOST}/mcp"
     else
-        endpoint="http://${PUBLIC_HOST}:${HTTP_PORT}/mcp"
+        endpoint="http://${EMCP_PUBLIC_HOST}:${EMCP_HTTP_PORT}/mcp"
     fi
 
     cat <<EOF >&2

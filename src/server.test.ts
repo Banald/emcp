@@ -279,13 +279,13 @@ describe('HTTP server', () => {
     });
   });
 
-  // AUDIT L-5 — the test env sets HTTP_REQUEST_TIMEOUT_MS=60000 by
+  // AUDIT L-5 — the test env sets EMCP_HTTP_REQUEST_TIMEOUT_MS=60000 by
   // default (see tests/_helpers/env.ts). Node's out-of-the-box default
   // is 300_000, so this assertion proves the knob is wired end-to-end
   // from env → config → httpServer.
   describe('request-receipt timeout (AUDIT L-5)', () => {
-    it('applies HTTP_REQUEST_TIMEOUT_MS to httpServer.requestTimeout', () => {
-      // 60_000 matches `HTTP_REQUEST_TIMEOUT_MS` from DEFAULT_TEST_ENV.
+    it('applies EMCP_HTTP_REQUEST_TIMEOUT_MS to httpServer.requestTimeout', () => {
+      // 60_000 matches `EMCP_HTTP_REQUEST_TIMEOUT_MS` from DEFAULT_TEST_ENV.
       // Node's default is 300_000 — if we ever stop applying the config
       // this would silently revert.
       assert.equal(server.requestTimeout, 60_000);
@@ -1025,7 +1025,7 @@ describe('Stateful MCP sessions', () => {
 
   it('refuses a new session past the global cap with TransientError (AUDIT M-1)', async () => {
     // Distinct api_key id per call so the per-key cap never fires —
-    // this exercises the global backstop (`MCP_MAX_SESSIONS_TOTAL=20`
+    // this exercises the global backstop (`EMCP_MCP_MAX_SESSIONS_TOTAL=20`
     // from DEFAULT_TEST_ENV).
     let counter = 0;
     const rotatingRepo = {
@@ -1076,7 +1076,7 @@ describe('Stateful MCP sessions', () => {
   });
 
   it('refuses a new session past the per-key cap with RateLimitError (AUDIT M-1)', async () => {
-    // Default test env sets MCP_MAX_SESSIONS_PER_KEY=10. Create the cap,
+    // Default test env sets EMCP_MCP_MAX_SESSIONS_PER_KEY=10. Create the cap,
     // then assert the (cap+1)th initialize gets `-32029` with
     // `Retry-After` per SECURITY Rule 7.
     const { httpServer: s, close } = await startServer();

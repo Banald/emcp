@@ -7,7 +7,7 @@ import type { CallToolResult, ToolContext, ToolDefinition } from '../shared/tool
 // NOTE: web-search hits the internal SearXNG container (config.searxngUrl
 // points at the compose bridge). Routing it through the external proxy
 // pool would create a traffic loop (proxy → internet → SearXNG). SearXNG
-// itself proxies its engine scrapers via SEARXNG_OUTGOING_PROXIES; see
+// itself proxies its engine scrapers via EMCP_SEARXNG_OUTGOING_PROXIES; see
 // infra/searxng/ and docs/ARCHITECTURE.md "Proxy egress".
 
 const SEARXNG_ENGINES = 'google,brave,bing,qwant,startpage';
