@@ -162,7 +162,38 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. first-key UX: boxed output + optional save (H5) -------------------
+# ---- 8. uninstall path safety + mutex flags (H6, N1) ----------------------
+
+if grep -qE 'refusing to uninstall' "$INSTALL_SH" \
+   && grep -qE '"/opt"' "$INSTALL_SH" \
+   && grep -qE '"/root"' "$INSTALL_SH" \
+   && grep -qE '"/etc"' "$INSTALL_SH"; then
+    say_pass "phase_uninstall refuses system paths (H6)"
+else
+    say_fail "phase_uninstall denylist missing system paths (H6)"
+fi
+if grep -qE 'readlink -f "\$EMCP_HOME"' "$INSTALL_SH"; then
+    say_pass "phase_uninstall resolves symlinks before checking (H6)"
+else
+    say_fail "phase_uninstall does not resolve symlinks (H6)"
+fi
+if grep -qE 'fewer than two path segments' "$INSTALL_SH"; then
+    say_pass "phase_uninstall requires >= 2 path segments (H6)"
+else
+    say_fail "phase_uninstall missing path-depth check (H6)"
+fi
+# Exercise the bad-path rejection: run uninstall against a system path and
+# expect the die message. --force skips confirmations but NOT the path
+# check. Use the help-guarded early exit to avoid side effects: we can't
+# cleanly invoke phase_uninstall from outside (requires root). So just
+# assert the error string exists.
+if grep -qE 'mutually exclusive' "$INSTALL_SH"; then
+    say_pass "parse_args rejects --uninstall + --reconfigure (N1)"
+else
+    say_fail "parse_args allows conflicting flags (N1)"
+fi
+
+# ---- 9. first-key UX: boxed output + optional save (H5) -------------------
 
 if grep -qE 'compose_cd run --rm -T mcp-server' "$INSTALL_SH"; then
     say_pass "phase_first_key uses 'run --rm -T' to capture key output (H5)"

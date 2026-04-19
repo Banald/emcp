@@ -83,6 +83,10 @@ strip_ansi() { sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g'; }
 
 log_to_file() {
     [ -n "$INSTALL_LOG_PATH" ] || return 0
+    # Short-circuit if the log (or its parent) no longer exists; the
+    # uninstall path rm -rf's EMCP_HOME mid-run, and a bare `>>` would
+    # bypass the 2>/dev/null on the pipeline to leak a bash redirect error.
+    [ -e "$INSTALL_LOG_PATH" ] || return 0
     printf '%s\n' "$*" | strip_ansi >> "$INSTALL_LOG_PATH" 2>/dev/null || true
 }
 
@@ -98,7 +102,10 @@ init_install_log() {
     [ -n "${EMCP_HOME:-}" ] || return 0
     mkdir -p "$EMCP_HOME/bin" 2>/dev/null || return 0
     local path="$EMCP_HOME/bin/install-$(date -u +%Y%m%d-%H%M%S).log"
-    if ! : > "$path" 2>/dev/null; then
+    # Use `touch` so bash's own redirect-failure error (which bypasses the
+    # builtin's 2>/dev/null when `> path` fails at redirection setup) never
+    # leaks past this function. If create fails, we simply skip logging.
+    if ! touch "$path" 2>/dev/null; then
         return 0
     fi
     chmod 0600 "$path" 2>/dev/null || true
@@ -206,6 +213,16 @@ parse_args() {
 
     INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
     EMCP_HOME="$INSTALL_DIR"
+
+    # N1: reject combinations that don't make sense. main()'s uninstall
+    # branch short-circuits before reconfigure anyway, but asking the user
+    # to clarify is friendlier than a silent precedence.
+    if [ "$UNINSTALL" -eq 1 ] && [ "$RECONFIGURE" -eq 1 ]; then
+        die "--uninstall and --reconfigure are mutually exclusive"
+    fi
+    if [ "$UNINSTALL" -eq 1 ] && [ -n "$FROM_LOCAL" ]; then
+        die "--uninstall doesn't use a source tree; drop --from-local"
+    fi
 
     if [ -z "$TAG" ]; then
         TAG="$EMCP_INSTALLER_VERSION"
@@ -1461,16 +1478,47 @@ EOF
 
 phase_uninstall() {
     log_step "Uninstall eMCP"
-    if ! prompt_yesno "this will stop the stack, delete $EMCP_HOME, remove $EMCP_BIN_PATH, and wipe all data volumes. Continue?" n; then
-        die "aborted"
+
+    # Resolve symlinks + strip trailing slash so /opt/emcp/../ or a symlink
+    # to / can't slip past the denylist. `readlink -f` follows everything;
+    # if it fails we fall back to the raw path (safer to refuse than to
+    # guess).
+    local resolved
+    resolved="$(readlink -f "$EMCP_HOME" 2>/dev/null || printf '%s' "$EMCP_HOME")"
+    resolved="${resolved%/}"
+
+    case "$resolved" in
+        ""|"/"|"/root"|"/home"|"/etc"|"/usr"|"/var"|"/opt" \
+            |"/bin"|"/sbin"|"/lib"|"/lib64" \
+            |"/boot"|"/sys"|"/proc"|"/dev"|"/tmp")
+            die "refusing to uninstall — EMCP_HOME=${resolved:-<empty>} is a system path. Pass an explicit --install-dir pointing at the eMCP install directory." ;;
+    esac
+    # Require at least two path segments (e.g. /opt/emcp is fine, /opt is
+    # not). `case` patterns anchor on '/' for the first segment; `/*/*` only
+    # matches when there's a second '/' with at least one char after it.
+    case "$resolved" in
+        /*/*) : ;;
+        *) die "refusing to uninstall — EMCP_HOME=${resolved} has fewer than two path segments." ;;
+    esac
+
+    if [ "$FORCE" -eq 1 ]; then
+        log_warn "--force set; skipping confirmation for destructive uninstall of $resolved"
+    else
+        if ! prompt_yesno "this will stop the stack, delete $resolved, remove $EMCP_BIN_PATH, and wipe all data volumes. Continue?" n; then
+            die "aborted"
+        fi
+        if ! prompt_yesno "are you SURE? This destroys the database." n; then
+            die "aborted"
+        fi
     fi
-    if ! prompt_yesno "are you SURE? This destroys the database." n; then
-        die "aborted"
+    if [ -f "$resolved/compose.yaml" ]; then
+        ( cd "$resolved" && docker compose down -v ) || log_warn "compose down -v returned non-zero"
     fi
-    if [ -f "$EMCP_HOME/compose.yaml" ]; then
-        ( cd "$EMCP_HOME" && docker compose down -v ) || log_warn "compose down -v returned non-zero"
-    fi
-    rm -rf "$EMCP_HOME"
+    rm -rf "$resolved"
+    # We just deleted the install log's parent directory; further log_*
+    # calls would try to write into nonexistent paths. Clear the pointer
+    # so the remaining log_ok lands only on the terminal.
+    INSTALL_LOG_PATH=""
     rm -f "$EMCP_BIN_PATH" "$EMCP_CONFIG_PATH"
     rmdir "$(dirname "$EMCP_CONFIG_PATH")" 2>/dev/null || true
     log_ok "eMCP uninstalled."
