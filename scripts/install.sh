@@ -1388,12 +1388,32 @@ phase_first_key() {
     name="${USER:-operator}@${host}"
     prompt name "name for this key" "$name" validate_nonempty
 
-    ( cd "$EMCP_HOME" && docker compose run --rm mcp-server \
-        node dist/cli/keys.js create --name "$name" ) || {
-        log_error "key creation failed; you can retry with: emcp key create --name \"$name\""
+    # -T disables TTY allocation so we can capture stdout cleanly. We still
+    # want stderr mixed in so the "SAVE THIS KEY NOW" warning from keys.ts
+    # shows up inside our box, not separately scrolling.
+    local key_out
+    if ! key_out="$(compose_cd run --rm -T mcp-server \
+        node dist/cli/keys.js create --name "$name" 2>&1)"; then
+        log_error "key creation failed; retry with: emcp key create --name \"$name\""
+        printf '%s\n' "$key_out" >&2
         return 0
-    }
-    log_warn "the raw key above is shown ONCE — save it now."
+    fi
+
+    printf '\n%s%s%s\n' "$C_BOLD" "┌──────────────────────────────────────────────────────────────┐" "$C_RESET" >&2
+    printf '%s%s%s\n'   "$C_BOLD" "│  SAVE THIS KEY NOW — IT WILL NEVER BE SHOWN AGAIN            │" "$C_RESET" >&2
+    printf '%s%s%s\n'   "$C_BOLD" "└──────────────────────────────────────────────────────────────┘" "$C_RESET" >&2
+    printf '%s\n' "$key_out" >&2
+    printf '%s\n\n' "────────────────────────────────────────────────────────────────" >&2
+    # Don't mirror the raw key into the install log.
+    log_to_file "(first-key created; raw key not logged)"
+
+    local raw_key
+    raw_key="$(printf '%s\n' "$key_out" | grep -oE '^mcp_live_[A-Za-z0-9_-]{43}$' | head -n1 || true)"
+    if [ -n "$raw_key" ] \
+       && prompt_yesno "Also save the raw key to $EMCP_HOME/first-key.txt (0600)?" n; then
+        ( umask 077 && printf '%s\n' "$raw_key" > "$EMCP_HOME/first-key.txt" )
+        log_info "saved → $EMCP_HOME/first-key.txt (delete after you've stored it elsewhere)"
+    fi
 }
 
 # --- Summary ---------------------------------------------------------------

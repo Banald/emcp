@@ -162,7 +162,26 @@ else
     say_fail "mask_proxy_url altered a credential-less URL: $no_creds"
 fi
 
-# ---- 8. smoke test after compose up (H4) ----------------------------------
+# ---- 8. first-key UX: boxed output + optional save (H5) -------------------
+
+if grep -qE 'compose_cd run --rm -T mcp-server' "$INSTALL_SH"; then
+    say_pass "phase_first_key uses 'run --rm -T' to capture key output (H5)"
+else
+    say_fail "phase_first_key missing -T in docker compose run (H5)"
+fi
+if grep -qE 'SAVE THIS KEY NOW' "$INSTALL_SH" \
+   && grep -qE 'first-key\.txt' "$INSTALL_SH"; then
+    say_pass "phase_first_key boxes the key and offers first-key.txt (H5)"
+else
+    say_fail "phase_first_key missing box or save-to-file offer (H5)"
+fi
+if grep -qE 'raw key not logged' "$INSTALL_SH"; then
+    say_pass "phase_first_key does not mirror raw key into install log (H5)"
+else
+    say_fail "phase_first_key may leak raw key into install log (H5)"
+fi
+
+# ---- 9. smoke test after compose up (H4) ----------------------------------
 
 if grep -qE '^phase_smoke_test\(\)' "$INSTALL_SH"; then
     say_pass "install.sh defines phase_smoke_test (H4)"
