@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import type { Dispatcher } from 'undici';
+import type { ProxyAgentFactory } from './dispatcher.ts';
 import {
   __setProxyPoolForTesting,
   buildPoolEntries,
@@ -12,6 +13,7 @@ import type { ProxyPool } from './types.ts';
 
 const stubDispatcher = (): Dispatcher =>
   ({ close: () => Promise.resolve() }) as unknown as Dispatcher;
+const makeFactory = () => mock.fn<ProxyAgentFactory>(() => stubDispatcher());
 
 const baseCfg: PoolBuildConfig = Object.freeze({
   proxyUrls: Object.freeze(['http://p0.example.com:8080', 'http://p1.example.com:8080']),
@@ -22,7 +24,7 @@ const baseCfg: PoolBuildConfig = Object.freeze({
 
 describe('buildPoolEntries', () => {
   it('assigns sequential p<index> ids to each URL', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     const entries = buildPoolEntries(['http://a:80', 'http://b:80', 'http://c:80'], 500, {
       factory,
     });
@@ -38,13 +40,13 @@ describe('buildPoolEntries', () => {
   });
 
   it('returns an empty array when given an empty URL list', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     assert.deepEqual(buildPoolEntries([], 500, { factory }), []);
     assert.equal(factory.mock.callCount(), 0);
   });
 
   it('wires the same connectTimeoutMs to every factory call', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     buildPoolEntries(['http://a:80', 'http://b:80'], 1234, { factory });
     assert.equal(factory.mock.calls[0].arguments[1], 1234);
     assert.equal(factory.mock.calls[1].arguments[1], 1234);
@@ -58,7 +60,7 @@ describe('buildPoolFromConfig', () => {
   });
 
   it('returns a working pool when URLs are present', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     const pool = buildPoolFromConfig(baseCfg, { factory });
     assert.ok(pool !== null);
     assert.equal(pool.size, 2);
@@ -68,13 +70,13 @@ describe('buildPoolFromConfig', () => {
   });
 
   it('threads proxyRotation through to the constructed pool', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     const pool = buildPoolFromConfig({ ...baseCfg, proxyRotation: 'random' }, { factory });
     assert.equal(pool?.strategy, 'random');
   });
 
   it('threads failureCooldownMs through so cooldown uses the configured window', () => {
-    const factory = mock.fn(() => stubDispatcher());
+    const factory = makeFactory();
     const pool = buildPoolFromConfig({ ...baseCfg, proxyFailureCooldownMs: 2000 }, { factory });
     assert.ok(pool !== null);
     pool.report('p0', 'connect_failure');
