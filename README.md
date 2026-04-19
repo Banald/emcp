@@ -92,26 +92,46 @@ Once installed, drive the stack with `emcp` from anywhere — no `cd` into
 the compose directory, no long `docker compose run …` recitations:
 
 ```bash
-emcp status                               # show container status
-emcp logs                                 # tail all services
-emcp logs mcp-server                      # tail one
-emcp key create --name "my-client"        # issue an API key
-emcp key list
-emcp key delete <id-or-prefix>
-emcp migrate                              # apply pending migrations
-emcp restart                              # restart the stack
-emcp update                               # pull latest image tag, recreate
-emcp update v0.12.0                       # pin a specific tag
+# Lifecycle
+emcp up                                   # start the stack (docker compose up -d)
 emcp down                                 # stop (preserves data)
-emcp config                               # re-run the env wizard
+emcp down -v                              # stop + wipe volumes (destroys data)
+emcp restart                              # restart all services
+emcp restart mcp-server                   # restart a single service
+emcp status                               # show container status  (alias: emcp ps)
+emcp version                              # installer + image tag currently running
+
+# Observability
+emcp logs                                 # tail all services, follow, last 100 lines
+emcp logs mcp-server                      # tail one                (alias: emcp log)
+emcp health                               # one-shot /health probe via the server container
+
+# Data
+emcp migrate                              # apply pending migrations
+emcp migrate status                       # show migration status
+emcp migrate down 1                       # roll back the most recent migration
+
+# API keys — passthrough to the bundled keys.ts CLI
+emcp key create --name "my-client"        # issue an API key (shown once — save it)
+emcp key list                             # list all keys (prefixes only)
+emcp key list --status active             # filter: active | blacklisted | deleted | all
+emcp key show <id-or-prefix>              # details and metrics for one key
+emcp key blacklist <id-or-prefix>         # reject future requests, preserve history
+emcp key unblacklist <id-or-prefix>
+emcp key delete <id-or-prefix>            # soft-delete (never recoverable as active)
+emcp key set-rate-limit <id-or-prefix> 120
+
+# Maintenance
+emcp update                               # pull the current image tag, recreate
+emcp update v0.13.2                       # pin a specific tag in .env, then pull
+emcp config                               # re-run the env wizard (inc. proxy prompts)
 emcp uninstall                            # stop + remove everything (destroys data)
-emcp help                                 # full command list
+emcp help                                 # full command list with aliases
 ```
 
 `emcp key …` is a transparent passthrough to the bundled
-[`keys.ts` CLI](./docs/OPERATIONS.md#api-key-management-cli) — any
-subcommand documented there works, including `show`, `blacklist`,
-`unblacklist`, and `set-rate-limit`.
+[`keys.ts` CLI](./docs/OPERATIONS.md#api-key-management-cli) — every
+subcommand and flag documented there works here too.
 
 ### TLS
 

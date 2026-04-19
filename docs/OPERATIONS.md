@@ -11,22 +11,64 @@ and `emcp key …` is a full passthrough to the `keys.ts` subcommands
 documented below. The raw `docker compose run …` forms remain supported
 and are the escape hatch when the wrapper doesn't fit.
 
+`emcp help` prints the full command list at runtime. Source of truth is
+`scripts/emcp` — the tables below are the same list, with the equivalent
+raw compose invocation spelled out.
+
+### Lifecycle
+
 | Task | `emcp` form | Equivalent raw form |
 |--|--|--|
 | Start the stack | `emcp up` | `docker compose up -d` |
 | Stop the stack | `emcp down` | `docker compose down` |
-| Restart | `emcp restart [svc…]` | `docker compose restart [svc…]` |
-| Status | `emcp status` / `emcp ps` | `docker compose ps` |
-| Logs | `emcp logs [svc…]` | `docker compose logs -f [svc…]` |
-| Health probe | `emcp health` | `docker compose exec mcp-server node -e 'fetch("http://127.0.0.1:3000/health")…'` |
-| Apply migrations | `emcp migrate` | `docker compose run --rm migrate` |
+| Stop + wipe volumes (destructive) | `emcp down -v` | `docker compose down -v` |
+| Restart all services | `emcp restart` | `docker compose restart` |
+| Restart named services | `emcp restart <svc…>` | `docker compose restart <svc…>` |
+| Status | `emcp status` (alias `emcp ps`) | `docker compose ps` |
+| Show installer + image-tag versions | `emcp version` | n/a (reads `install.sh` + `.env`) |
+
+### Observability
+
+| Task | `emcp` form | Equivalent raw form |
+|--|--|--|
+| Tail all service logs (follow, last 100) | `emcp logs` (alias `emcp log`) | `docker compose logs -f --tail 100` |
+| Tail one service | `emcp logs <svc>` | `docker compose logs -f --tail 100 <svc>` |
+| One-shot `/health` probe | `emcp health` | `docker compose exec mcp-server node -e 'fetch("http://127.0.0.1:3000/health")…'` |
+
+### Data
+
+| Task | `emcp` form | Equivalent raw form |
+|--|--|--|
+| Apply pending migrations | `emcp migrate` | `docker compose run --rm migrate` |
 | Migration status | `emcp migrate status` | `docker compose run --rm migrate node dist/db/migrate.js status` |
-| Roll back N | `emcp migrate down 1` | `docker compose run --rm migrate node dist/db/migrate.js down 1` |
-| Create API key | `emcp key create --name "..."` | `docker compose run --rm mcp-server node dist/cli/keys.js create --name "..."` |
-| List API keys | `emcp key list` | `docker compose run --rm mcp-server node dist/cli/keys.js list` |
-| Pull new image | `emcp update [tag]` | edit `ECHO_IMAGE_TAG` in `.env`, `docker compose pull && docker compose up -d` |
-| Re-run env wizard | `emcp config` | edit `.env` by hand, `docker compose up -d` |
-| Uninstall | `emcp uninstall` | `docker compose down -v && rm -rf /opt/echo` |
+| Roll back N migrations | `emcp migrate down <n>` | `docker compose run --rm migrate node dist/db/migrate.js down <n>` |
+
+### API keys (passthrough to `keys.ts`)
+
+| Task | `emcp` form |
+|--|--|
+| Create | `emcp key create --name "..." [--rate-limit N] [--allow-no-origin]` |
+| List | `emcp key list [--status active\|blacklisted\|deleted\|all]` |
+| Show | `emcp key show <id-or-prefix>` |
+| Blacklist | `emcp key blacklist <id-or-prefix> [--reason "..."] [--yes]` |
+| Unblacklist | `emcp key unblacklist <id-or-prefix> [--yes]` |
+| Soft-delete | `emcp key delete <id-or-prefix> [--yes]` |
+| Set rate limit | `emcp key set-rate-limit <id-or-prefix> <per-minute>` |
+
+Every flag documented in the [API key management (CLI)](#api-key-management-cli)
+section below works here too — `emcp key <cmd> <args>` is a transparent
+passthrough to `docker compose run --rm mcp-server node dist/cli/keys.js <cmd> <args>`.
+
+### Maintenance
+
+| Task | `emcp` form | Equivalent raw form |
+|--|--|--|
+| Pull current pinned image and recreate | `emcp update` | `docker compose pull && docker compose up -d` |
+| Pin a specific tag and update | `emcp update <tag>` (alias `emcp upgrade <tag>`) | edit `ECHO_IMAGE_TAG` in `.env`, then `docker compose pull && docker compose up -d` |
+| Re-run the interactive env wizard | `emcp config` | edit `.env` by hand, `docker compose up -d` |
+| Uninstall (destroys data) | `emcp uninstall` | `docker compose down -v && rm -rf /opt/echo` |
+| Print help | `emcp help` (aliases `--help` / `-h`; bare `emcp` with no args) | n/a |
+| Print version | `emcp version` (aliases `--version` / `-V`) | n/a |
 
 `emcp` resolves the install directory from `/etc/echo/config` (written by
 `install.sh`) and falls back to `/opt/echo`. Override per-invocation with
