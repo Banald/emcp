@@ -205,6 +205,23 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: mode=max
           sbom: true
+      - name: Install cosign
+        # OWASP #13 — keyless image signing via the workflow's OIDC
+        # identity. Installs only the cosign binary; no long-lived keys
+        # ever live in the repo or as a secret.
+        uses: sigstore/cosign-installer@d7d6e113b16d7d6f3bbe7e3b5c3e03dcd06be7f8 # v3.7.0
+      - name: Sign the image with cosign
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          # Sign each tag that was pushed, all pointing at the same
+          # digest. `--yes` skips the Fulcio confirmation prompt; the
+          # signature is recorded in Rekor's public transparency log.
+          for tag in ${{ steps.meta.outputs.tags }}; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
       - name: Attest build provenance
         # attest-build-provenance needs a public repo or GHAS on the org.
         # User-owned private repos get a 400 with "Feature not available".
@@ -259,18 +276,20 @@ jobs:
           fi
           NOTES_FILE=$(mktemp)
           cat > "$NOTES_FILE" <<EOF
-          ## Install with one command
+          ## Install with one command (no sudo)
 
           \`\`\`bash
-          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${TAG}/install.sh | sudo bash
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${TAG}/install.sh | bash
           \`\`\`
 
-          The installer pulls this release's image, generates secrets,
-          walks you through the \`.env\` interactively, and installs the
-          \`emcp\` CLI at \`/usr/local/bin/emcp\` for day-2 ops (\`emcp up\`,
-          \`emcp logs\`, \`emcp key create --name "..."\`, etc.).
+          Runs as your unprivileged user against a rootless Docker
+          daemon. The installer validates every rootless precondition
+          (subuid range, linger, kernel), walks you through \`.env\`,
+          and installs the \`emcp\` CLI at
+          \`\$XDG_BIN_HOME/emcp\` (default \`\$HOME/.local/bin/emcp\`) for
+          day-2 ops (\`emcp up\`, \`emcp logs\`, \`emcp key create …\`).
 
-          See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md#quick-install) for details.
+          See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md) for details.
 
           ## Container image
 
@@ -282,6 +301,24 @@ jobs:
 
           \`\`\`
           ${IMAGE}@${DIGEST}
+          \`\`\`
+
+          ### Verify the signature (cosign keyless, OWASP #13)
+
+          \`\`\`
+          cosign verify ${IMAGE}@${DIGEST} \\
+            --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@' \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          \`\`\`
+
+          ### SBOM + provenance
+
+          SBOM and SLSA provenance attestations are attached to the
+          image manifest. Inspect with:
+
+          \`\`\`
+          docker buildx imagetools inspect ${IMAGE}@${DIGEST} --format '{{ json .SBOM }}'
+          docker buildx imagetools inspect ${IMAGE}@${DIGEST} --format '{{ json .Provenance }}'
           \`\`\`
           EOF
           gh release create "$TAG" \
