@@ -99,25 +99,51 @@ check_kernel() {
 check_packages() {
     # Rootless Docker's slirp4netns network + uidmap shadow-utils +
     # user-level dbus are the three package dependencies that matter.
-    # Debian/Ubuntu names shown here are the most common; Fedora/Alpine
-    # use different names but the binaries are what we check.
+    # Package names differ by distro; binaries are what we actually
+    # probe, and the remediation string is tailored to the host's
+    # /etc/os-release.
     local missing=()
-    command -v newuidmap >/dev/null 2>&1 || missing+=("uidmap (provides newuidmap/newgidmap)")
-    command -v newgidmap >/dev/null 2>&1 || true  # same package
+    command -v newuidmap >/dev/null 2>&1 || missing+=("uidmap")
     command -v slirp4netns >/dev/null 2>&1 || missing+=("slirp4netns")
-    # dbus-user-session ships /usr/lib/systemd/user/dbus.service; no
-    # binary to probe, so check for the unit file directly.
-    if [ ! -f /usr/lib/systemd/user/dbus.service ] \
+    # dbus-user-session ships /usr/lib/systemd/user/dbus.service. Skip
+    # this probe on non-systemd hosts (Alpine/runit) — rootless docker
+    # still works there, dbus-user-session is a systemd concern only.
+    if command -v systemctl >/dev/null 2>&1 \
+       && [ ! -f /usr/lib/systemd/user/dbus.service ] \
        && [ ! -f /usr/share/dbus-1/services ]; then
         missing+=("dbus-user-session")
     fi
-    if [ ${#missing[@]} -gt 0 ]; then
-        record_fail \
-            "missing rootless deps: ${missing[*]}" \
-            "install them (Debian/Ubuntu): sudo apt install -y uidmap slirp4netns dbus-user-session"
+    if [ ${#missing[@]} -eq 0 ]; then
+        log_ok "rootless deps present: uidmap, slirp4netns, (dbus-user-session on systemd)"
         return
     fi
-    log_ok "rootless deps present: uidmap, slirp4netns, dbus-user-session"
+
+    # Per-distro remediation. Matches both ID and ID_LIKE so derivatives
+    # (Rocky Linux, AlmaLinux, Pop!_OS, EndeavourOS, etc.) pick up the
+    # right hint even when ID itself isn't in the list. Mirrors the
+    # dispatch in install.sh's suggest_docker_install.
+    local id="" id_like="" fix=""
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        id="$(. /etc/os-release >/dev/null 2>&1; printf '%s' "${ID:-}")"
+        id_like="$(. /etc/os-release >/dev/null 2>&1; printf '%s' "${ID_LIKE:-}")"
+    fi
+    local haystack=" $id $id_like "
+    case "$haystack" in
+        *\ debian\ *|*\ ubuntu\ *|*\ linuxmint\ *|*\ pop\ *)
+            fix="sudo apt install -y uidmap slirp4netns dbus-user-session" ;;
+        *\ fedora\ *|*\ rhel\ *|*\ centos\ *|*\ rocky\ *|*\ almalinux\ *)
+            fix="sudo dnf install -y shadow-utils slirp4netns dbus-daemon" ;;
+        *\ arch\ *|*\ manjaro\ *|*\ endeavouros\ *)
+            fix="sudo pacman -S --noconfirm shadow slirp4netns dbus" ;;
+        *\ alpine\ *)
+            fix="sudo apk add shadow-uidmap slirp4netns" ;;
+        *)
+            fix="install 'uidmap' (newuidmap/newgidmap), 'slirp4netns', and — on systemd hosts — 'dbus-user-session' via your package manager" ;;
+    esac
+    record_fail \
+        "missing rootless deps: ${missing[*]}" \
+        "$fix"
 }
 
 check_subid_ranges() {
