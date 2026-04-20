@@ -105,6 +105,32 @@ else
     say_fail "installer missing v2 no-root refusal"
 fi
 
+# ---- 4c. unprivileged port defaults (v2) ---------------------------------
+# compose.yaml must publish 8080/8443 as the default so a fresh rootless
+# install comes up without a setcap. install.sh's env wizard must seed
+# the same defaults.
+COMPOSE_YAML="$SCRIPT_DIR/../compose.yaml"
+if grep -qE '\$\{EMCP_HTTP_PORT:-8080\}:80' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml publishes \${EMCP_HTTP_PORT:-8080}:80 (v2)"
+else
+    say_fail "compose.yaml default HTTP port is not 8080 (rootless regression)"
+fi
+if grep -qE '\$\{EMCP_HTTPS_PORT:-8443\}:443' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml publishes \${EMCP_HTTPS_PORT:-8443}:443 (v2)"
+else
+    say_fail "compose.yaml default HTTPS port is not 8443 (rootless regression)"
+fi
+if grep -qE 'EMCP_HTTP_PORT=8080' "$INSTALL_SH"; then
+    say_pass "install.sh env wizard defaults EMCP_HTTP_PORT to 8080"
+else
+    say_fail "install.sh env wizard still defaults HTTP port to 80 (rootless regression)"
+fi
+if grep -qE 'EMCP_HTTPS_PORT=8443' "$INSTALL_SH"; then
+    say_pass "install.sh env wizard defaults EMCP_HTTPS_PORT to 8443"
+else
+    say_fail "install.sh env wizard still defaults HTTPS port to 443 (rootless regression)"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
@@ -518,9 +544,9 @@ if grep -qE '^caddy_holds_port\(\)' "$INSTALL_SH"; then
 else
     say_fail "install.sh missing caddy_holds_port (C3)"
 fi
-if grep -qE 'port_in_use 80 && ! caddy_holds_port' "$INSTALL_SH" \
-   && grep -qE 'port_in_use 443 && ! caddy_holds_port' "$INSTALL_SH"; then
-    say_pass "phase_env_wizard skips port conflict when caddy owns the port (C3)"
+if grep -qE 'port_in_use 8080 && ! caddy_holds_port' "$INSTALL_SH" \
+   && grep -qE 'port_in_use 8443 && ! caddy_holds_port' "$INSTALL_SH"; then
+    say_pass "phase_env_wizard skips port conflict when caddy owns the port (C3, v2 ports)"
 else
     say_fail "phase_env_wizard still prompts on port conflict even when caddy owns it (C3)"
 fi

@@ -228,9 +228,14 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # v2 defaults: unprivileged host ports. Rootless Docker cannot bind
+    # <1024 on the host without a one-time `sudo setcap` on rootlesskit;
+    # the installer offers that setup explicitly. Container-internal :80
+    # and :443 are still bound (Caddy retains CAP_NET_BIND_SERVICE inside
+    # its userns).
     ports:
-      - "${EMCP_HTTP_PORT:-80}:80"
-      - "${EMCP_HTTPS_PORT:-443}:443"
+      - "${EMCP_HTTP_PORT:-8080}:80"
+      - "${EMCP_HTTPS_PORT:-8443}:443"
     environment:
       EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
       EMCP_PUBLIC_SCHEME: ${EMCP_PUBLIC_SCHEME:-https}

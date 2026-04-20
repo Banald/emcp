@@ -651,32 +651,46 @@ phase_env_wizard() {
 
     prompt EMCP_PUBLIC_SCHEME "Use HTTPS (recommended) or HTTP? HTTP is plaintext; use only on fully trusted networks" "${EMCP_PUBLIC_SCHEME:-https}" validate_scheme
 
+    # Port defaults are 8080/8443 in v2: rootless Docker cannot publish
+    # <1024 without a one-time `sudo setcap` on rootlesskit. Operators
+    # who need :80/:443 publicly have three documented options
+    # (front-proxy, setcap, DNS-01 ACME); see README.md "Public port
+    # binding in rootless mode".
+    if [ -z "$EMCP_HTTP_PORT" ]; then
+        EMCP_HTTP_PORT=8080
+        if port_in_use 8080 && ! caddy_holds_port 8080; then
+            log_warn "port 8080 is already in use on this host"
+            resolve_port_conflict 8080 && EMCP_HTTP_PORT=18080
+        fi
+    fi
+    prompt EMCP_HTTP_PORT "HTTP port on the host (default 8080 — rootless)" "$EMCP_HTTP_PORT" validate_port
+
+    if [ -z "$EMCP_HTTPS_PORT" ]; then
+        EMCP_HTTPS_PORT=8443
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] \
+           && port_in_use 8443 && ! caddy_holds_port 8443; then
+            log_warn "port 8443 is already in use on this host"
+            resolve_port_conflict 8443 && EMCP_HTTPS_PORT=18443
+        fi
+    fi
+    prompt EMCP_HTTPS_PORT "HTTPS port on the host (default 8443 — rootless)" "$EMCP_HTTPS_PORT" validate_port
+
+    # Default Origin allowlist derives from the resolved host + port so
+    # browser CORS works out of the box without the operator needing to
+    # figure it out. Localhost gets both schemes on the default ports.
     if [ -z "$EMCP_ALLOWED_ORIGINS" ]; then
-        EMCP_ALLOWED_ORIGINS="${EMCP_PUBLIC_SCHEME}://${EMCP_PUBLIC_HOST}"
+        local origin_port_suffix=""
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] && [ "$EMCP_HTTPS_PORT" != "443" ]; then
+            origin_port_suffix=":${EMCP_HTTPS_PORT}"
+        elif [ "$EMCP_PUBLIC_SCHEME" = "http" ] && [ "$EMCP_HTTP_PORT" != "80" ]; then
+            origin_port_suffix=":${EMCP_HTTP_PORT}"
+        fi
+        EMCP_ALLOWED_ORIGINS="${EMCP_PUBLIC_SCHEME}://${EMCP_PUBLIC_HOST}${origin_port_suffix}"
         if [ "$EMCP_PUBLIC_HOST" = "localhost" ]; then
-            EMCP_ALLOWED_ORIGINS="http://localhost,https://localhost"
+            EMCP_ALLOWED_ORIGINS="http://localhost:${EMCP_HTTP_PORT},https://localhost:${EMCP_HTTPS_PORT}"
         fi
     fi
     prompt EMCP_ALLOWED_ORIGINS "Allowed Origin header values (comma-separated, include scheme)" "$EMCP_ALLOWED_ORIGINS" validate_nonempty
-
-    if [ -z "$EMCP_HTTP_PORT" ]; then
-        EMCP_HTTP_PORT=80
-        if port_in_use 80 && ! caddy_holds_port 80; then
-            log_warn "port 80 is already in use on this host"
-            resolve_port_conflict 80 && EMCP_HTTP_PORT=8080
-        fi
-    fi
-    prompt EMCP_HTTP_PORT "HTTP port on the host" "$EMCP_HTTP_PORT" validate_port
-
-    if [ -z "$EMCP_HTTPS_PORT" ]; then
-        EMCP_HTTPS_PORT=443
-        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] \
-           && port_in_use 443 && ! caddy_holds_port 443; then
-            log_warn "port 443 is already in use on this host"
-            resolve_port_conflict 443 && EMCP_HTTPS_PORT=8443
-        fi
-    fi
-    prompt EMCP_HTTPS_PORT "HTTPS port on the host" "$EMCP_HTTPS_PORT" validate_port
 
     prompt EMCP_LOG_LEVEL "Log level — leave 'info' unless debugging" "${EMCP_LOG_LEVEL:-info}" validate_loglevel
     prompt EMCP_POSTGRES_USER "Postgres user for the mcp database" "${EMCP_POSTGRES_USER:-mcp}" validate_nonempty
@@ -1459,9 +1473,9 @@ phase_smoke_test() {
     local host="${EMCP_PUBLIC_HOST:-localhost}"
     local port
     if [ "$scheme" = "https" ]; then
-        port="${EMCP_HTTPS_PORT:-443}"
+        port="${EMCP_HTTPS_PORT:-8443}"
     else
-        port="${EMCP_HTTP_PORT:-80}"
+        port="${EMCP_HTTP_PORT:-8080}"
     fi
     local url="${scheme}://${host}:${port}/mcp"
 
