@@ -146,6 +146,36 @@ jobs:
           EMCP_DATABASE_URL: postgres://placeholder/placeholder
           EMCP_REDIS_URL: redis://placeholder
 
+  image-scan:
+    # OWASP Docker Cheat Sheet #9 — scan the built runtime image for
+    # CVEs before the PR lands. Fails the build on CRITICAL or HIGH
+    # severity unfixed vulnerabilities. `.trivyignore` (checked in) is
+    # the operator-reviewed allowlist for accepted exceptions.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Build runtime image
+        run: docker build -t emcp:ci .
+      - name: Trivy CVE scan
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with:
+          image-ref: emcp:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          trivyignores: .trivyignore
+
   dep-review:
     # Dependency Review requires GitHub Advanced Security on private repos.
     # Auto-activates when the repo becomes public (or GHAS is enabled).
