@@ -176,16 +176,31 @@ jobs:
             uidmap slirp4netns dbus-user-session fuse-overlayfs
       - name: Stop the runner's rootful daemon
         run: |
+          # GHA's rootful docker.service holds /var/run/docker.sock; we
+          # need the rootless daemon to own the DOCKER_HOST we export
+          # below so testcontainers + install.sh target the right one.
           sudo systemctl disable --now docker.service docker.socket || true
           sudo rm -f /var/run/docker.sock
       - name: Set up rootless Docker as the runner user
+        # GHA's ubuntu-latest ships docker.io, which doesn't include
+        # dockerd-rootless-setuptool.sh. The upstream installer at
+        # get.docker.com/rootless drops static binaries + the setup
+        # script under $HOME/bin, then runs the setup itself — no
+        # system package dependency.
         run: |
-          dockerd-rootless-setuptool.sh install --skip-iptables
+          curl -fsSL https://get.docker.com/rootless | sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
           # Linger so the user-level systemd unit survives the shell exit.
           sudo loginctl enable-linger "$(id -un)"
-          systemctl --user enable --now docker
-          echo "DOCKER_HOST=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock" >> "$GITHUB_ENV"
-          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
+          # Export DOCKER_HOST + PATH so subsequent steps hit the
+          # rootless socket. The get.docker.com installer already
+          # launches `systemctl --user start docker` at tail; we still
+          # `enable` it here so the unit sticks across reboots-in-runner
+          # (rare but observed on self-hosted).
+          XDG_RT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          "$HOME/bin/systemctl" --user enable docker 2>/dev/null \
+            || systemctl --user enable docker 2>/dev/null || true
+          echo "DOCKER_HOST=unix://${XDG_RT}/docker.sock" >> "$GITHUB_ENV"
       - name: Confirm rootless daemon is active
         run: |
           docker info --format '{{.SecurityOptions}}' | grep -q rootless \
@@ -219,7 +234,7 @@ jobs:
       - name: Build runtime image
         run: docker build -t emcp:ci .
       - name: Trivy CVE scan
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: emcp:ci
           format: table
