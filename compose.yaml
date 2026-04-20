@@ -5,12 +5,43 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # OWASP #7 — resource caps sized 3–5x expected steady state. Tunable
+    # per-service via .env; the default is lenient enough for a typical
+    # small deployment but still prevents a DoS from eating the host.
+    mem_limit: ${EMCP_POSTGRES_MEM_LIMIT:-512m}
+    pids_limit: ${EMCP_POSTGRES_PIDS_LIMIT:-200}
+    cpus: ${EMCP_POSTGRES_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP Docker Cheat Sheet #3, #4). cap_add is the minimum
+    # the postgres image needs at startup: CHOWN + FOWNER for pgdata
+    # permissions, SETUID/SETGID for `gosu postgres`, DAC_READ_SEARCH so
+    # initdb can probe locale files under a restrictive umask.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER", "SETUID", "SETGID", "DAC_READ_SEARCH"]
+    # OWASP #8 — read-only rootfs with targeted tmpfs overlays. The
+    # pgdata volume below is the only persistent surface; sockets (/run
+    # and /var/run/postgresql) and locks (/tmp) stay in-memory.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/postgresql
+      - /var/run/postgresql
     environment:
       POSTGRES_USER: ${EMCP_POSTGRES_USER:-mcp}
       POSTGRES_DB: ${EMCP_POSTGRES_DB:-mcp}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
+    # OWASP #5 — data plane only. No egress; reachable from app services
+    # that dual-home on emcp_data.
+    networks:
+      - emcp_data
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,6 +54,29 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # OWASP #7 — resource caps. Redis is the rate-limit cache; memory
+    # stays small on purpose (`maxmemory` is not set because the cache
+    # is ephemeral; the container limit is the ceiling).
+    mem_limit: ${EMCP_REDIS_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_REDIS_PIDS_LIMIT:-100}
+    cpus: ${EMCP_REDIS_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). redis drops to the `redis` user in the
+    # entrypoint; CHOWN/SETUID/SETGID are the only caps it needs.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — redis WORKDIR is /data and the image always touches it
+    # at startup even with persistence disabled. tmpfs it so the rootfs
+    # can still be read-only while the cache stays ephemeral.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
     # Rate-limit cache is intentionally ephemeral (docs/ARCHITECTURE.md): no
     # RDB snapshotting, no AOF. Losing it has no durability consequence.
     # `requirepass` is sourced from a Docker secret (AUDIT M-4) so the
@@ -33,6 +87,9 @@ services:
       - "redis-server --save '' --appendonly no --requirepass \"$$(cat /run/secrets/redis_password)\""
     secrets:
       - redis_password
+    # OWASP #5 — data plane only.
+    networks:
+      - emcp_data
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -47,6 +104,30 @@ services:
     # Bump this deliberately; do not revert to `:latest`.
     image: searxng/searxng:2026.4.17-8579974f5
     restart: unless-stopped
+    # OWASP #7 — resource caps. SearXNG scrapes upstream engines in
+    # parallel; bump cpus if the deployment runs a heavy web-search load.
+    mem_limit: ${EMCP_SEARXNG_MEM_LIMIT:-512m}
+    pids_limit: ${EMCP_SEARXNG_PIDS_LIMIT:-200}
+    cpus: ${EMCP_SEARXNG_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). SearXNG's entrypoint chowns
+    # /etc/searxng and switches to the `searxng` user via uwsgi.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — read-only rootfs. The wrapper entrypoint renders
+    # settings.yml into /etc/searxng (tmpfs); upstream uwsgi needs /tmp
+    # and /var/cache/searxng for its own bookkeeping.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /etc/searxng
+      - /var/cache/searxng
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"
       # The image's own entrypoint substitutes the `ultrasecretkey` placeholder
@@ -57,7 +138,11 @@ services:
       # egress" and infra/searxng/entrypoint.sh for the rendering logic.
       EMCP_SEARXNG_OUTGOING_PROXIES: ${EMCP_SEARXNG_OUTGOING_PROXIES:-}
     volumes:
-      - ./infra/searxng/settings.template.yml:/etc/searxng/settings.template.yml:ro
+      # Template lives under /usr/local/share/emcp-searxng so the
+      # compose-level tmpfs on /etc/searxng (OWASP #8) doesn't shadow
+      # it. The wrapper entrypoint renders from this path into
+      # /etc/searxng/settings.yml (tmpfs-backed) at container start.
+      - ./infra/searxng/settings.template.yml:/usr/local/share/emcp-searxng/settings.template.yml:ro
       - ./infra/searxng/entrypoint.sh:/usr/local/bin/emcp-searxng-entrypoint.sh:ro
     # Chain through our wrapper entrypoint before the image's own. It
     # renders the template (EMCP_SEARXNG_OUTGOING_PROXIES → outgoing.proxies
@@ -65,6 +150,9 @@ services:
     # docker-entrypoint.sh so SEARXNG_SECRET substitution + signal
     # handling still run upstream.
     entrypoint: ["/bin/sh", "/usr/local/bin/emcp-searxng-entrypoint.sh"]
+    # OWASP #5 — app plane (egress allowed for engine scraping).
+    networks:
+      - emcp_internal
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -80,6 +168,24 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: "no"
+    # OWASP #7 — migrate is a one-shot; limits are small on purpose.
+    mem_limit: ${EMCP_MIGRATE_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_MIGRATE_PIDS_LIMIT:-50}
+    cpus: ${EMCP_MIGRATE_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). Runs as USER emcp (uid 10001) per the
+    # Dockerfile. Needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    # OWASP #8 — node-pg-migrate never writes to disk; only /tmp for
+    # V8's optional code-cache, hence the single tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/db/migrate.js", "up"]
     environment:
       NODE_ENV: production
@@ -100,6 +206,9 @@ services:
       - postgres_password
       - api_key_hmac_secret
       - redis_password
+    # OWASP #5 — migrate needs to reach postgres (data plane only).
+    networks:
+      - emcp_data
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,6 +219,25 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # OWASP #7 — the hot path. 1 GiB mem + 500 PIDs gives headroom for
+    # concurrent MCP sessions without being a DoS target. Bump via .env
+    # if your deployment needs more.
+    mem_limit: ${EMCP_SERVER_MEM_LIMIT:-1g}
+    pids_limit: ${EMCP_SERVER_PIDS_LIMIT:-500}
+    cpus: ${EMCP_SERVER_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). Listens on :3000 (unprivileged); runs as
+    # USER emcp (uid 10001). Needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    # OWASP #8 — Node + pino + undici don't write outside /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/index.js"]
     environment:
       NODE_ENV: production
@@ -148,6 +276,11 @@ services:
       - postgres_password
       - api_key_hmac_secret
       - redis_password
+    # OWASP #5 — dual-homed: emcp_internal reaches searxng + gives the
+    # ProxyAgent egress; emcp_data reaches postgres + redis.
+    networks:
+      - emcp_internal
+      - emcp_data
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,6 +313,24 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # OWASP #7 — workers hold parallel HTTP fetchers and Postgres
+    # connections; size to match mcp-server.
+    mem_limit: ${EMCP_WORKER_MEM_LIMIT:-1g}
+    pids_limit: ${EMCP_WORKER_PIDS_LIMIT:-500}
+    cpus: ${EMCP_WORKER_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). No network listener; runs as USER emcp
+    # (uid 10001); needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    # OWASP #8 — croner + pg + pino all stay within /tmp for scratch.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/workers/index.js"]
     environment:
       NODE_ENV: production
@@ -216,6 +367,11 @@ services:
       - postgres_password
       - api_key_hmac_secret
       - redis_password
+    # OWASP #5 — dual-homed like mcp-server: egress for proxy rotation,
+    # data plane for postgres.
+    networks:
+      - emcp_internal
+      - emcp_data
     depends_on:
       postgres:
         condition: service_healthy
@@ -228,9 +384,36 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # OWASP #7 — reverse proxy with small footprint.
+    mem_limit: ${EMCP_CADDY_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_CADDY_PIDS_LIMIT:-100}
+    cpus: ${EMCP_CADDY_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+    # Hardening (OWASP #3, #4). Caddy's image runs as root inside the
+    # container; under rootless userns that maps to a subuid on the
+    # host. NET_BIND_SERVICE is required so Caddy can bind :80/:443
+    # internally even after cap_drop: ALL. CHOWN/SETUID/SETGID are used
+    # when initializing /data and /config volumes.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — ACME state + config live on named volumes
+    # (caddy-data, caddy-config); everything else stays in-memory.
+    read_only: true
+    tmpfs:
+      - /tmp
+    # v2 defaults: unprivileged host ports. Rootless Docker cannot bind
+    # <1024 on the host without a one-time `sudo setcap` on rootlesskit;
+    # the installer offers that setup explicitly. Container-internal :80
+    # and :443 are still bound (NET_BIND_SERVICE above + CAP_NET_BIND
+    # inside the userns).
     ports:
-      - "${EMCP_HTTP_PORT:-80}:80"
-      - "${EMCP_HTTPS_PORT:-443}:443"
+      - "${EMCP_HTTP_PORT:-8080}:80"
+      - "${EMCP_HTTPS_PORT:-8443}:443"
     environment:
       EMCP_PUBLIC_HOST: ${EMCP_PUBLIC_HOST:-localhost}
       EMCP_PUBLIC_SCHEME: ${EMCP_PUBLIC_SCHEME:-https}
@@ -241,6 +424,10 @@ services:
       - ./infra/caddy/Caddyfile.${EMCP_PUBLIC_SCHEME:-https}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    # OWASP #5 — only the app plane (reaches mcp-server:3000 + needs
+    # egress for Let's Encrypt when EMCP_PUBLIC_HOST is real).
+    networks:
+      - emcp_internal
     depends_on:
       mcp-server:
         condition: service_healthy
@@ -249,6 +436,17 @@ volumes:
   pgdata:
   caddy-data:
   caddy-config:
+
+# Two separate bridge networks (OWASP #5 — deliberate inter-container
+# connectivity). emcp_data is `internal: true`, which means postgres +
+# redis have no route to the outside; any breach there cannot egress.
+# The app services dual-home so they can still reach the database.
+networks:
+  emcp_internal:
+    driver: bridge
+  emcp_data:
+    driver: bridge
+    internal: true
 
 secrets:
   postgres_password:

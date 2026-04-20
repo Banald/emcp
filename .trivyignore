@@ -1,0 +1,11 @@
+# Trivy allow-list — accepted CVE exceptions for the runtime image.
+#
+# Every entry MUST have:
+#   1. The CVE identifier.
+#   2. A one-line note: why it's accepted and the expected expiry/review date.
+#   3. A maintainer sign-off line (git author) so provenance is visible.
+#
+# No unexplained suppressions. If a CVE can be fixed by bumping a package
+# or a base digest, do that instead — Dependabot opens the PR for you.
+
+# (Intentionally empty at v2.0.0 release — no accepted exceptions.)

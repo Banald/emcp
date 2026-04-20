@@ -62,6 +62,367 @@ else
     say_fail "EMCP_INSTALLER_VERSION line missing or malformed (release.yml depends on exact prefix)"
 fi
 
+# ---- 4b. XDG install paths (v2) ------------------------------------------
+# v2 relocated every install path under the operator's $HOME. Assert the
+# defaults reference XDG_DATA_HOME / XDG_CONFIG_HOME / XDG_BIN_HOME rather
+# than /opt /etc /usr/local.
+if grep -qE '^DEFAULT_INSTALL_DIR="\$_XDG_DATA_HOME/emcp"' "$INSTALL_SH"; then
+    say_pass "DEFAULT_INSTALL_DIR points at \$XDG_DATA_HOME/emcp (v2)"
+else
+    say_fail "DEFAULT_INSTALL_DIR is not XDG_DATA_HOME-based (v2 regression)"
+fi
+if grep -qE '^EMCP_BIN_PATH="\$_XDG_BIN_HOME/emcp"' "$INSTALL_SH"; then
+    say_pass "EMCP_BIN_PATH points at \$XDG_BIN_HOME/emcp (v2)"
+else
+    say_fail "EMCP_BIN_PATH is not XDG_BIN_HOME-based (v2 regression)"
+fi
+if grep -qE '^EMCP_CONFIG_PATH="\$_XDG_CONFIG_HOME/emcp/config"' "$INSTALL_SH"; then
+    say_pass "EMCP_CONFIG_PATH points at \$XDG_CONFIG_HOME/emcp/config (v2)"
+else
+    say_fail "EMCP_CONFIG_PATH is not XDG_CONFIG_HOME-based (v2 regression)"
+fi
+# Anti-regression: v1's system paths must not come back.
+if grep -qE '(DEFAULT_INSTALL_DIR|EMCP_BIN_PATH|EMCP_CONFIG_PATH)=.?(/opt/emcp|/usr/local/bin/emcp|/etc/emcp/config)' "$INSTALL_SH"; then
+    say_fail "install.sh still references v1 system paths (/opt/emcp | /usr/local/bin/emcp | /etc/emcp/config)"
+else
+    say_pass "no v1 system paths hard-coded as defaults"
+fi
+# emcp reads the config from XDG_CONFIG_HOME too.
+if grep -qE 'EMCP_CONFIG_PATH="\$\{EMCP_CONFIG_PATH:-\$\{XDG_CONFIG_HOME:-\$HOME/\.config\}/emcp/config\}"' "$EMCP_BIN"; then
+    say_pass "emcp reads config from XDG_CONFIG_HOME (v2)"
+else
+    say_fail "emcp does not read config from XDG_CONFIG_HOME"
+fi
+if grep -qE 'EMCP_HOME="\$\{EMCP_HOME:-\$\{XDG_DATA_HOME:-\$HOME/\.local/share\}/emcp\}"' "$EMCP_BIN"; then
+    say_pass "emcp defaults EMCP_HOME to XDG_DATA_HOME/emcp (v2)"
+else
+    say_fail "emcp does not default EMCP_HOME to XDG_DATA_HOME/emcp"
+fi
+# Installer refuses to run as root (v2).
+if grep -qE 'refusing to run as root' "$INSTALL_SH"; then
+    say_pass "installer refuses to run as root (v2)"
+else
+    say_fail "installer missing v2 no-root refusal"
+fi
+
+# ---- 4c. unprivileged port defaults (v2) ---------------------------------
+# compose.yaml must publish 8080/8443 as the default so a fresh rootless
+# install comes up without a setcap. install.sh's env wizard must seed
+# the same defaults.
+COMPOSE_YAML="$SCRIPT_DIR/../compose.yaml"
+if grep -qE '\$\{EMCP_HTTP_PORT:-8080\}:80' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml publishes \${EMCP_HTTP_PORT:-8080}:80 (v2)"
+else
+    say_fail "compose.yaml default HTTP port is not 8080 (rootless regression)"
+fi
+if grep -qE '\$\{EMCP_HTTPS_PORT:-8443\}:443' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml publishes \${EMCP_HTTPS_PORT:-8443}:443 (v2)"
+else
+    say_fail "compose.yaml default HTTPS port is not 8443 (rootless regression)"
+fi
+if grep -qE 'EMCP_HTTP_PORT=8080' "$INSTALL_SH"; then
+    say_pass "install.sh env wizard defaults EMCP_HTTP_PORT to 8080"
+else
+    say_fail "install.sh env wizard still defaults HTTP port to 80 (rootless regression)"
+fi
+if grep -qE 'EMCP_HTTPS_PORT=8443' "$INSTALL_SH"; then
+    say_pass "install.sh env wizard defaults EMCP_HTTPS_PORT to 8443"
+else
+    say_fail "install.sh env wizard still defaults HTTPS port to 443 (rootless regression)"
+fi
+
+# ---- 4d. rootless preflight (v2) -----------------------------------------
+PREFLIGHT_SH="$SCRIPT_DIR/preflight-rootless.sh"
+if [ -x "$PREFLIGHT_SH" ]; then
+    say_pass "scripts/preflight-rootless.sh exists and is executable"
+else
+    say_fail "scripts/preflight-rootless.sh missing or not executable (v2)"
+fi
+if [ -f "$PREFLIGHT_SH" ] && bash -n "$PREFLIGHT_SH"; then
+    say_pass "bash -n preflight-rootless.sh"
+else
+    say_fail "bash -n preflight-rootless.sh failed"
+fi
+if command -v shellcheck >/dev/null 2>&1; then
+    if shellcheck -S warning "$PREFLIGHT_SH"; then
+        say_pass "shellcheck preflight-rootless.sh"
+    else
+        say_fail "shellcheck preflight-rootless.sh"
+    fi
+fi
+# Preflight must cover each of the v2 preconditions.
+for probe in 'check_not_root' 'check_platform' 'check_kernel' \
+             'check_packages' 'check_subid_ranges' 'check_linger' \
+             'check_docker_daemon'; do
+    if grep -qE "^${probe}\(\)" "$PREFLIGHT_SH"; then
+        continue
+    fi
+    say_fail "preflight-rootless.sh missing function: $probe"
+    preflight_funcs_fail=1
+done
+if [ -z "${preflight_funcs_fail:-}" ]; then
+    say_pass "preflight-rootless.sh defines every v2 precondition check"
+fi
+# install.sh must define phase_rootless_preflight and call it before
+# phase_preflight inside main(). awk scans the main() function body
+# only; every "phase_preflight" call line must be preceded by a
+# "phase_rootless_preflight" call line in the same branch. Emits
+# "miss" on any violation, nothing on success.
+pre_check="$(awk '
+    /^main\(\)/ { inmain = 1 }
+    inmain && /phase_rootless_preflight$/ { pre = 1 }
+    inmain && /phase_preflight$/          { if (!pre) { print "miss"; exit }; pre = 0 }
+    inmain && /^}/                         { exit }
+' "$INSTALL_SH")"
+if grep -qE '^phase_rootless_preflight\(\)' "$INSTALL_SH" && [ -z "$pre_check" ]; then
+    say_pass "main() runs phase_rootless_preflight before phase_preflight"
+else
+    say_fail "main() does not gate on phase_rootless_preflight"
+fi
+# The preflight must honor EMCP_SKIP_ROOTLESS_CHECK so edge-case hosts
+# can opt out.
+if grep -qE 'EMCP_SKIP_ROOTLESS_CHECK' "$PREFLIGHT_SH" \
+   && grep -qE 'EMCP_SKIP_ROOTLESS_CHECK' "$INSTALL_SH"; then
+    say_pass "preflight-rootless.sh + install.sh honor EMCP_SKIP_ROOTLESS_CHECK"
+else
+    say_fail "EMCP_SKIP_ROOTLESS_CHECK bypass hook missing"
+fi
+# copy_source_tree carries the preflight helper into $EMCP_HOME/bin so
+# `emcp config` can re-run it.
+if grep -qE 'preflight-rootless\.sh' "$INSTALL_SH"; then
+    say_pass "copy_source_tree installs preflight-rootless.sh into \$EMCP_HOME/bin"
+else
+    say_fail "copy_source_tree does not propagate preflight-rootless.sh"
+fi
+
+# ---- 4e. compose hardening: no-new-privileges + cap_drop ALL (v2) --------
+# Every service must refuse new privileges (OWASP #4) and start from
+# cap_drop: ALL (OWASP #3). cap_add is per-service and enforced
+# downstream via the e2e test's docker-inspect assertions — here we
+# only guarantee the scaffolding is in place so nobody ships a service
+# that silently inherits the daemon's default capability set.
+COMPOSE_SERVICES=("postgres" "redis" "searxng" "migrate" "mcp-server" "mcp-worker" "caddy")
+hardening_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    if [ -z "$block" ]; then
+        say_fail "compose.yaml service block for $svc not found"
+        hardening_fail=1
+        continue
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *- "no-new-privileges:true"'; then
+        say_fail "$svc is missing security_opt: no-new-privileges:true"
+        hardening_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *cap_drop: *\[ *"?ALL"? *\]'; then
+        say_fail "$svc is missing cap_drop: [ALL]"
+        hardening_fail=1
+    fi
+done
+if [ "$hardening_fail" -eq 0 ]; then
+    say_pass "every compose service sets no-new-privileges:true (OWASP #4)"
+    say_pass "every compose service sets cap_drop: [ALL] (OWASP #3)"
+fi
+# Caddy alone must add back NET_BIND_SERVICE so it can bind internal
+# :80/:443 after dropping everything else.
+caddy_block="$(awk '
+    /^  caddy:/           { inside = 1; next }
+    inside && /^  [a-z]/  { inside = 0 }
+    inside                { print }
+' "$COMPOSE_YAML")"
+if printf '%s\n' "$caddy_block" | grep -qE 'cap_add:.*NET_BIND_SERVICE'; then
+    say_pass "caddy keeps NET_BIND_SERVICE (required to bind internal :80/:443)"
+else
+    say_fail "caddy did not cap_add: NET_BIND_SERVICE after cap_drop: ALL"
+fi
+# Anti-regression: nothing ever sets privileged: true, seccomp=unconfined,
+# or apparmor=unconfined.
+if grep -qE 'privileged: *true|seccomp=unconfined|apparmor=unconfined' "$COMPOSE_YAML"; then
+    say_fail "compose.yaml contains a privileged/unconfined hazard"
+else
+    say_pass "no privileged/unconfined security_opt in compose.yaml (OWASP #6)"
+fi
+# Anti-regression: no docker socket is ever bind-mounted.
+if grep -qE '/var/run/docker\.sock|docker\.sock' "$COMPOSE_YAML"; then
+    say_fail "compose.yaml references /var/run/docker.sock (OWASP #1 violation)"
+else
+    say_pass "no docker.sock reference in compose.yaml (OWASP #1)"
+fi
+
+# ---- 4f. compose hardening: read_only rootfs + /tmp tmpfs (v2) -----------
+# OWASP #8 — every service runs on a read-only rootfs with explicit
+# tmpfs mounts for the paths it must write at runtime. The per-service
+# tmpfs list is validated by the e2e test (C13) via docker-inspect; here
+# we only assert that the scaffold is present on every service.
+readonly_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    if ! printf '%s\n' "$block" | grep -qE '^ *read_only: *true'; then
+        say_fail "$svc is missing read_only: true"
+        readonly_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *tmpfs:'; then
+        say_fail "$svc is missing a tmpfs: overlay (needs at least /tmp)"
+        readonly_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *- /tmp'; then
+        say_fail "$svc is missing tmpfs /tmp"
+        readonly_fail=1
+    fi
+done
+if [ "$readonly_fail" -eq 0 ]; then
+    say_pass "every compose service sets read_only: true + tmpfs /tmp (OWASP #8)"
+fi
+# SearXNG's template bind-mount must not land under /etc/searxng —
+# that path is tmpfs so a mount there would be shadowed.
+if grep -qE '/etc/searxng/settings\.template\.yml' "$COMPOSE_YAML"; then
+    say_fail "searxng template bind-mount still targets /etc/searxng (shadowed by tmpfs)"
+else
+    say_pass "searxng template bind-mount moved outside the /etc/searxng tmpfs"
+fi
+if grep -qE '/usr/local/share/emcp-searxng/settings\.template\.yml' "$COMPOSE_YAML"; then
+    say_pass "searxng template lives at /usr/local/share/emcp-searxng/ (not tmpfs-shadowed)"
+else
+    say_fail "searxng template path is missing or relocated again"
+fi
+
+# ---- 4g. compose hardening: resource limits (v2) -------------------------
+# OWASP #7 — every service must declare mem_limit, pids_limit, cpus, and
+# an ulimits nofile block. Per-service sizing lives in .env via the
+# EMCP_<SVC>_* tunables, so we just verify the scaffolding is present.
+resource_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    for key in 'mem_limit' 'pids_limit' 'cpus' 'ulimits'; do
+        if ! printf '%s\n' "$block" | grep -qE "^ *${key}:"; then
+            say_fail "$svc is missing ${key}"
+            resource_fail=1
+        fi
+    done
+    if ! printf '%s\n' "$block" | grep -qE '^ *nofile:'; then
+        say_fail "$svc is missing ulimits.nofile"
+        resource_fail=1
+    fi
+done
+if [ "$resource_fail" -eq 0 ]; then
+    say_pass "every compose service sets mem_limit/pids_limit/cpus/ulimits (OWASP #7)"
+fi
+
+# ---- 4h. split networks: data plane vs app plane (v2) --------------------
+# OWASP #5 — emcp_data is `internal: true` so postgres + redis have no
+# route off the host. App services dual-home to reach them.
+if grep -qE '^networks:' "$COMPOSE_YAML" \
+   && grep -qE '^  emcp_data:' "$COMPOSE_YAML" \
+   && grep -qE '^  emcp_internal:' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml declares emcp_internal + emcp_data networks"
+else
+    say_fail "compose.yaml missing named networks (emcp_internal + emcp_data)"
+fi
+if awk '/^  emcp_data:/ {inside=1; next} inside && /^  [a-z]/ {inside=0} inside' "$COMPOSE_YAML" \
+   | grep -qE '^ *internal: *true'; then
+    say_pass "emcp_data is declared with internal: true (no egress from data plane)"
+else
+    say_fail "emcp_data is NOT internal: true (postgres/redis could egress)"
+fi
+declare -A EXPECTED_NETWORKS=(
+    [postgres]="emcp_data"
+    [redis]="emcp_data"
+    [searxng]="emcp_internal"
+    [migrate]="emcp_data"
+    [mcp-server]="emcp_internal,emcp_data"
+    [mcp-worker]="emcp_internal,emcp_data"
+    [caddy]="emcp_internal"
+)
+net_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    expected="${EXPECTED_NETWORKS[$svc]}"
+    IFS=',' read -r -a want <<<"$expected"
+    for n in "${want[@]}"; do
+        if ! printf '%s\n' "$block" | awk '/^ *networks:/ {inside=1; next} inside && /^ *[a-z]/ {inside=0} inside' \
+             | grep -qE "^ *- *${n}\$"; then
+            say_fail "$svc is not attached to $n"
+            net_fail=1
+        fi
+    done
+done
+if [ "$net_fail" -eq 0 ]; then
+    say_pass "every service attaches to the expected network plane(s) (OWASP #5)"
+fi
+
+# ---- 4i. supply chain: base image pinned by digest (OWASP #13) -----------
+DOCKERFILE="$SCRIPT_DIR/../Dockerfile"
+if grep -cE '^FROM node:24-bookworm-slim@sha256:[a-f0-9]{64}' "$DOCKERFILE" | grep -qE '^[1-9]'; then
+    say_pass "Dockerfile pins the base image by @sha256 digest (OWASP #13)"
+else
+    say_fail "Dockerfile FROM line is not digest-pinned (OWASP #13 regression)"
+fi
+# Dependabot must include the docker ecosystem so the digest doesn't rot.
+DEPENDABOT="$SCRIPT_DIR/../.github/dependabot.yml"
+if grep -qE '^ *- *package-ecosystem:[[:space:]]*docker' "$DEPENDABOT"; then
+    say_pass "dependabot.yml watches Dockerfile base-image pins"
+else
+    say_fail "dependabot.yml missing package-ecosystem: docker"
+fi
+
+# ---- 4j. rootless e2e test + ci-rootless workflow job (v2) ---------------
+E2E_SH="$SCRIPT_DIR/../tests/e2e/install-rootless.test.sh"
+if [ -x "$E2E_SH" ] && bash -n "$E2E_SH"; then
+    say_pass "tests/e2e/install-rootless.test.sh exists, executable, parses"
+else
+    say_fail "tests/e2e/install-rootless.test.sh missing/broken"
+fi
+# The e2e script must actually check every rule it claims to.
+for needle in 'no-new-privileges' 'CapDrop' 'ReadonlyRootfs' 'HostConfig.Memory' 'sudo shim'; do
+    if grep -qF "$needle" "$E2E_SH"; then
+        continue
+    fi
+    say_fail "e2e script missing check for: $needle"
+    e2e_assert_fail=1
+done
+if [ -z "${e2e_assert_fail:-}" ]; then
+    say_pass "e2e script asserts OWASP #3/#4/#7/#8 + sudo-free posture"
+fi
+# The CI workflow must gate on a ci-rootless job that runs the e2e.
+CI_YAML="$SCRIPT_DIR/../.github/workflows/ci.yml"
+if grep -qE '^  ci-rootless:' "$CI_YAML" \
+   && grep -qE 'tests/e2e/install-rootless\.test\.sh' "$CI_YAML"; then
+    say_pass "ci.yml defines a ci-rootless job that runs the e2e"
+else
+    say_fail "ci.yml does not define a ci-rootless job for the e2e test"
+fi
+# image-scan (Trivy) must also be wired up.
+if grep -qE '^  image-scan:' "$CI_YAML" \
+   && grep -qE 'aquasecurity/trivy-action' "$CI_YAML"; then
+    say_pass "ci.yml defines an image-scan job that runs Trivy"
+else
+    say_fail "ci.yml missing Trivy image-scan job (OWASP #9)"
+fi
+# release.yml must sign with cosign.
+RELEASE_YAML="$SCRIPT_DIR/../.github/workflows/release.yml"
+if grep -qE 'cosign sign' "$RELEASE_YAML" \
+   && grep -qE 'sigstore/cosign-installer' "$RELEASE_YAML"; then
+    say_pass "release.yml signs images with cosign (OWASP #13)"
+else
+    say_fail "release.yml does not sign images with cosign"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
@@ -189,13 +550,28 @@ else
 fi
 rm -f "$t_pkg"
 
-# ---- 9. gh CLI detection works under sudo --------------------------------
+# ---- 9. v2 has no sudo fallbacks ----------------------------------------
+# The installer + emcp wrapper run as the operator's unprivileged user,
+# targeting a rootless Docker daemon. Any `exec sudo` / `sudo -u` path
+# would mean we slipped back toward the v1 posture.
 
-if grep -qE 'SUDO_USER.*gh auth status' "$INSTALL_SH" \
-   && grep -qE 'sudo -u "\$SUDO_USER" -- gh' "$INSTALL_SH"; then
-    say_pass "phase_ghcr_login falls back to SUDO_USER when root lacks gh"
+# Catch real invocations (`exec sudo`, `sudo -flag`, `| sudo …`) without
+# tripping on prose inside heredocs ("No sudo is ever required at
+# runtime.").
+if grep -qE '(\bexec[[:space:]]+sudo\b|\bsudo[[:space:]]+-|[|&;][[:space:]]*sudo[[:space:]])' "$EMCP_BIN"; then
+    say_fail "emcp still invokes sudo (v2 regression)"
 else
-    say_fail "phase_ghcr_login does not re-run gh as SUDO_USER under sudo"
+    say_pass "emcp has zero sudo invocations (v2)"
+fi
+if grep -qE 'exec sudo' "$INSTALL_SH"; then
+    say_fail "install.sh still execs sudo (v2 regression)"
+else
+    say_pass "install.sh has no 'exec sudo' paths (v2)"
+fi
+if grep -qE 'sudo -u "\$SUDO_USER"' "$INSTALL_SH"; then
+    say_fail "install.sh still re-runs gh via sudo -u SUDO_USER (v2 regression)"
+else
+    say_pass "phase_ghcr_login no longer needs SUDO_USER fallback (v2)"
 fi
 
 # ---- 9. summary snippet + EXIT trap (L4, N2) ------------------------------
@@ -321,6 +697,12 @@ if grep -qE 'fewer than two path segments' "$INSTALL_SH"; then
     say_pass "phase_uninstall requires >= 2 path segments (H6)"
 else
     say_fail "phase_uninstall missing path-depth check (H6)"
+fi
+# v2: uninstall must also refuse $HOME itself.
+if grep -qE 'EMCP_HOME=\$\{resolved\} equals \\\$HOME|equals \\\$HOME' "$INSTALL_SH"; then
+    say_pass "phase_uninstall refuses \$HOME itself (v2)"
+else
+    say_fail "phase_uninstall missing \$HOME refusal (v2 regression)"
 fi
 # Exercise the bad-path rejection: run uninstall against a system path and
 # expect the die message. --force skips confirmations but NOT the path
@@ -454,9 +836,9 @@ if grep -qE '^caddy_holds_port\(\)' "$INSTALL_SH"; then
 else
     say_fail "install.sh missing caddy_holds_port (C3)"
 fi
-if grep -qE 'port_in_use 80 && ! caddy_holds_port' "$INSTALL_SH" \
-   && grep -qE 'port_in_use 443 && ! caddy_holds_port' "$INSTALL_SH"; then
-    say_pass "phase_env_wizard skips port conflict when caddy owns the port (C3)"
+if grep -qE 'port_in_use 8080 && ! caddy_holds_port' "$INSTALL_SH" \
+   && grep -qE 'port_in_use 8443 && ! caddy_holds_port' "$INSTALL_SH"; then
+    say_pass "phase_env_wizard skips port conflict when caddy owns the port (C3, v2 ports)"
 else
     say_fail "phase_env_wizard still prompts on port conflict even when caddy owns it (C3)"
 fi

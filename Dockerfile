@@ -2,16 +2,21 @@
 # Multi-stage build for the eMCP server.
 # The same image runs either process — `mcp-server` or `mcp-worker` — chosen
 # by the CMD override in compose.yaml.
+#
+# Base image is pinned by digest (OWASP Docker Cheat Sheet #13 — supply
+# chain). Bump the digest by finding the current one:
+#   docker buildx imagetools inspect node:24-bookworm-slim | grep Digest
+# or let .github/dependabot.yml auto-PR a new digest weekly.
 
 # --- deps: production node_modules only -----------------------------------
-FROM node:24-bookworm-slim AS deps
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --no-audit --no-fund
 
 # --- build: compile TypeScript to dist/ -----------------------------------
-FROM node:24-bookworm-slim AS build
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -21,7 +26,7 @@ COPY src ./src
 RUN npx tsc
 
 # --- runtime: the final image --------------------------------------------
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS runtime
 
 ENV NODE_ENV=production \
     EMCP_BIND_HOST=0.0.0.0 \
@@ -30,6 +35,14 @@ ENV NODE_ENV=production \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
+    # Strip the bundled npm CLI from the runtime image. The production
+    # entrypoint is `node dist/...`; npm + npx + corepack are never
+    # invoked in a running container and only drag in transitive deps
+    # that show up in CVE scans (e.g. CVE-2026-33671 in npm's
+    # picomatch). Shrinks the image and closes OWASP #8 surface.
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/lib/node_modules/corepack \
+              /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
     && groupadd --system --gid 10001 emcp \
     && useradd --system --uid 10001 --gid emcp --home-dir /app --shell /usr/sbin/nologin emcp
 

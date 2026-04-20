@@ -1,5 +1,23 @@
 version: 2
 updates:
+  # Dockerfile base-image digest pins (OWASP #13). When node:24-bookworm-slim
+  # ships a new digest, Dependabot opens a PR bumping both the Dockerfile
+  # pin and any reference to the same digest in docs.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Stockholm
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+      - docker
+
   # Keep SHA-pinned action refs fresh. Grouped so one PR bumps all actions
   # together — reviewing one SHA diff per week is cheaper than eight.
   - package-ecosystem: github-actions

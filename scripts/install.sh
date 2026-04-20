@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # eMCP one-shot installer. Run `install.sh --help` for the full flag list;
 # usage() below is the single source of truth so `--help` still works when
-# piped via `curl | sudo bash` (where $0 is "bash", not a file path).
+# piped via `curl | bash` (where $0 is "bash", not a file path).
+#
+# v2.0.0: this installer runs as an unprivileged user and targets a
+# rootless Docker daemon. All install paths live under the operator's
+# $HOME (XDG dirs). No sudo is required at runtime.
 
 set -euo pipefail
 
@@ -15,9 +19,15 @@ REPO_NAME="emcp"
 # image name" step).
 IMAGE_REPO="ghcr.io/banald/emcp"
 
-DEFAULT_INSTALL_DIR="/opt/emcp"
-EMCP_BIN_PATH="/usr/local/bin/emcp"
-EMCP_CONFIG_PATH="/etc/emcp/config"
+# XDG-aware defaults. All three dirs are per-user; none live in /opt,
+# /etc, or /usr/local anymore. $HOME-relative fallbacks match the XDG
+# Base Directory Spec for hosts that don't export the variables.
+_XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+_XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+_XDG_BIN_HOME="${XDG_BIN_HOME:-$HOME/.local/bin}"
+DEFAULT_INSTALL_DIR="$_XDG_DATA_HOME/emcp"
+EMCP_BIN_PATH="$_XDG_BIN_HOME/emcp"
+EMCP_CONFIG_PATH="$_XDG_CONFIG_HOME/emcp/config"
 INSTALLER_SAVE_PATH_REL="bin/install.sh"  # copied into $EMCP_HOME for `emcp config`
 HEALTHCHECK_TIMEOUT_SECONDS=180
 MIN_FREE_GB=2
@@ -139,29 +149,34 @@ compose_cd() ( cd "$EMCP_HOME" && docker compose "$@"; )
 # --- Arg parsing -----------------------------------------------------------
 
 usage() {
-    cat <<'USAGE' >&2
-eMCP one-shot installer.
+    cat <<USAGE >&2
+eMCP one-shot installer (v2 — rootless, no sudo).
 
 Downloads the matched-tag source tarball, generates Docker secrets, walks
 you through .env interactively, logs in to ghcr.io, brings the compose
-stack up, and installs the permanent `emcp` CLI at /usr/local/bin/emcp.
+stack up against your rootless Docker daemon, and installs the permanent
+\`emcp\` CLI at \$XDG_BIN_HOME/emcp (default $EMCP_BIN_PATH).
+
+Runs as an unprivileged user. A one-time \`sudo\` may be required to
+bootstrap rootless Docker itself (package installs, subuid ranges,
+\`loginctl enable-linger\`) — the preflight prints the exact commands.
 
 USAGE:
-  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
+  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | bash
   # or, to inspect first:
   curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
   less install.sh
-  sudo bash install.sh
+  bash install.sh
 
 FLAGS (all optional — the interactive wizard fills the gaps):
-  --install-dir <path>     default: /opt/emcp
+  --install-dir <path>     default: \$XDG_DATA_HOME/emcp ($DEFAULT_INSTALL_DIR)
   --tag <ref>              override the release tag (default: stamped
                            installer version; rejected for dev builds)
   --public-host <host>     hostname clients will use to reach eMCP
   --public-scheme <s>      https (default) | http
   --allowed-origins <csv>  Origin allowlist, comma-separated
-  --http-port <n>          host port for plain HTTP (default 80)
-  --https-port <n>         host port for HTTPS (default 443)
+  --http-port <n>          host port for plain HTTP (default 8080)
+  --https-port <n>         host port for HTTPS (default 8443)
   --log-level <level>      fatal|error|warn|info|debug|trace|silent
   --postgres-user <name>   database user (default: mcp)
   --postgres-db <name>     database name (default: mcp)
@@ -171,7 +186,7 @@ FLAGS (all optional — the interactive wizard fills the gaps):
   --non-interactive        fail fast instead of prompting
   --reconfigure            re-run the wizard against an existing install
   --from-local <path>      use a local repo checkout as the source tree
-  --uninstall              stop the stack and remove /opt/emcp
+  --uninstall              stop the stack and remove the install dir
   --force                  skip confirmation prompts
   --proxy-urls <csv>       rotating-proxy pool (http/https URLs)
   --proxy-rotation <mode>  round-robin (default) | random
@@ -179,7 +194,7 @@ FLAGS (all optional — the interactive wizard fills the gaps):
   --no-proxy               disable proxy routing explicitly
   -h, --help               show this help and exit
 
-See docs/OPERATIONS.md for day-2 operations via the `emcp` CLI.
+See docs/OPERATIONS.md for day-2 operations via the \`emcp\` CLI.
 USAGE
     exit "${1:-0}"
 }
@@ -405,13 +420,56 @@ validate_loglevel() {
     esac
 }
 
+# --- Rootless preflight ---------------------------------------------------
+
+# Sources scripts/preflight-rootless.sh from the same directory this
+# installer lives in, OR (when piped via curl | bash) fetches the tagged
+# copy from GitHub. The preflight script is read-only and prints any
+# remediation commands itself — we just honor its exit code.
+phase_rootless_preflight() {
+    log_step "Rootless Docker preflight"
+
+    local preflight=""
+    if [ -n "$FROM_LOCAL" ] && [ -f "$FROM_LOCAL/scripts/preflight-rootless.sh" ]; then
+        preflight="$FROM_LOCAL/scripts/preflight-rootless.sh"
+    elif [ -f "$(dirname "$0")/preflight-rootless.sh" ]; then
+        preflight="$(dirname "$0")/preflight-rootless.sh"
+    fi
+
+    if [ -z "$preflight" ]; then
+        # curl | bash path: $0 is "bash", the script is gone. Fetch the
+        # tagged copy. Keep this best-effort; the installer still runs
+        # phase_preflight afterwards and will catch docker-not-installed
+        # etc. via the existing checks.
+        local url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${TAG}/scripts/preflight-rootless.sh"
+        preflight="$(mktemp)"
+        INSTALLER_TMP_ROOTS+=("$preflight")
+        if ! curl -fsSL "$url" -o "$preflight" 2>/dev/null; then
+            log_warn "could not fetch rootless preflight from $url — skipping"
+            return 0
+        fi
+    fi
+
+    if bash "$preflight"; then
+        log_ok "rootless preflight passed"
+        return 0
+    fi
+    # Preflight prints its own remediation block to stderr. We just
+    # refuse to proceed — installing against a rootful daemon or a
+    # half-configured rootless host silently corrupts state.
+    die "rootless preflight failed. Fix the items above, then re-run the installer. To bypass (not recommended) set EMCP_SKIP_ROOTLESS_CHECK=1."
+}
+
 # --- Preflight -------------------------------------------------------------
 
 phase_preflight() {
     log_step "Preflight"
 
-    if [ "$(id -u)" -ne 0 ]; then
-        die "must run as root (try: sudo bash $0 ...)"
+    # v2: refuse to run as root. Rootless Docker expects an unprivileged
+    # user, install paths live under $HOME, and running as root would
+    # silently write to /root/.local/... which nobody wants.
+    if [ "$(id -u)" -eq 0 ]; then
+        die "refusing to run as root. eMCP v2 installs into the current user's \$HOME and targets a rootless Docker daemon. Re-run without sudo as the user who will operate the stack."
     fi
 
     if [ "$(uname -s)" != "Linux" ]; then
@@ -571,6 +629,7 @@ phase_fetch_source() {
 copy_source_tree() {
     local src="$1" dst="$2"
     mkdir -p "$dst"
+    # Operational files — always copied.
     local paths=(compose.yaml Dockerfile .dockerignore .env.example)
     for p in "${paths[@]}"; do
         [ -e "$src/$p" ] && cp -f "$src/$p" "$dst/$p"
@@ -581,6 +640,27 @@ copy_source_tree() {
             cp -r "$src/$d" "$dst/$d"
         fi
     done
+    # Build context — copied only when the operator has the source tree
+    # (every --from-local run, the tarball download, and anything else
+    # that routes through copy_source_tree). This lets
+    # EMCP_PULL_POLICY=build work without a separate checkout: compose's
+    # `build.context: .` resolves to $EMCP_HOME and needs these files.
+    # The extra ~2 MiB is worth the "it just works" UX. When pull_policy
+    # is the default `always`/`missing`, they sit unused.
+    local build_paths=(package.json package-lock.json tsconfig.json .nvmrc)
+    for p in "${build_paths[@]}"; do
+        [ -e "$src/$p" ] && cp -f "$src/$p" "$dst/$p"
+    done
+    if [ -d "$src/src" ]; then
+        rm -rf "${dst:?}/src"
+        cp -r "$src/src" "$dst/src"
+    fi
+    # Install helper scripts under $EMCP_HOME/bin so `emcp config` can
+    # re-run the rootless preflight without needing the source tree.
+    mkdir -p "$dst/bin"
+    if [ -f "$src/scripts/preflight-rootless.sh" ]; then
+        install -m 0755 "$src/scripts/preflight-rootless.sh" "$dst/bin/preflight-rootless.sh"
+    fi
     mkdir -p "$dst/secrets"
     [ -f "$src/secrets/README.md" ] && cp -f "$src/secrets/README.md" "$dst/secrets/README.md"
 }
@@ -633,32 +713,46 @@ phase_env_wizard() {
 
     prompt EMCP_PUBLIC_SCHEME "Use HTTPS (recommended) or HTTP? HTTP is plaintext; use only on fully trusted networks" "${EMCP_PUBLIC_SCHEME:-https}" validate_scheme
 
+    # Port defaults are 8080/8443 in v2: rootless Docker cannot publish
+    # <1024 without a one-time `sudo setcap` on rootlesskit. Operators
+    # who need :80/:443 publicly have three documented options
+    # (front-proxy, setcap, DNS-01 ACME); see README.md "Public port
+    # binding in rootless mode".
+    if [ -z "$EMCP_HTTP_PORT" ]; then
+        EMCP_HTTP_PORT=8080
+        if port_in_use 8080 && ! caddy_holds_port 8080; then
+            log_warn "port 8080 is already in use on this host"
+            resolve_port_conflict 8080 && EMCP_HTTP_PORT=18080
+        fi
+    fi
+    prompt EMCP_HTTP_PORT "HTTP port on the host (default 8080 — rootless)" "$EMCP_HTTP_PORT" validate_port
+
+    if [ -z "$EMCP_HTTPS_PORT" ]; then
+        EMCP_HTTPS_PORT=8443
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] \
+           && port_in_use 8443 && ! caddy_holds_port 8443; then
+            log_warn "port 8443 is already in use on this host"
+            resolve_port_conflict 8443 && EMCP_HTTPS_PORT=18443
+        fi
+    fi
+    prompt EMCP_HTTPS_PORT "HTTPS port on the host (default 8443 — rootless)" "$EMCP_HTTPS_PORT" validate_port
+
+    # Default Origin allowlist derives from the resolved host + port so
+    # browser CORS works out of the box without the operator needing to
+    # figure it out. Localhost gets both schemes on the default ports.
     if [ -z "$EMCP_ALLOWED_ORIGINS" ]; then
-        EMCP_ALLOWED_ORIGINS="${EMCP_PUBLIC_SCHEME}://${EMCP_PUBLIC_HOST}"
+        local origin_port_suffix=""
+        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] && [ "$EMCP_HTTPS_PORT" != "443" ]; then
+            origin_port_suffix=":${EMCP_HTTPS_PORT}"
+        elif [ "$EMCP_PUBLIC_SCHEME" = "http" ] && [ "$EMCP_HTTP_PORT" != "80" ]; then
+            origin_port_suffix=":${EMCP_HTTP_PORT}"
+        fi
+        EMCP_ALLOWED_ORIGINS="${EMCP_PUBLIC_SCHEME}://${EMCP_PUBLIC_HOST}${origin_port_suffix}"
         if [ "$EMCP_PUBLIC_HOST" = "localhost" ]; then
-            EMCP_ALLOWED_ORIGINS="http://localhost,https://localhost"
+            EMCP_ALLOWED_ORIGINS="http://localhost:${EMCP_HTTP_PORT},https://localhost:${EMCP_HTTPS_PORT}"
         fi
     fi
     prompt EMCP_ALLOWED_ORIGINS "Allowed Origin header values (comma-separated, include scheme)" "$EMCP_ALLOWED_ORIGINS" validate_nonempty
-
-    if [ -z "$EMCP_HTTP_PORT" ]; then
-        EMCP_HTTP_PORT=80
-        if port_in_use 80 && ! caddy_holds_port 80; then
-            log_warn "port 80 is already in use on this host"
-            resolve_port_conflict 80 && EMCP_HTTP_PORT=8080
-        fi
-    fi
-    prompt EMCP_HTTP_PORT "HTTP port on the host" "$EMCP_HTTP_PORT" validate_port
-
-    if [ -z "$EMCP_HTTPS_PORT" ]; then
-        EMCP_HTTPS_PORT=443
-        if [ "$EMCP_PUBLIC_SCHEME" = "https" ] \
-           && port_in_use 443 && ! caddy_holds_port 443; then
-            log_warn "port 443 is already in use on this host"
-            resolve_port_conflict 443 && EMCP_HTTPS_PORT=8443
-        fi
-    fi
-    prompt EMCP_HTTPS_PORT "HTTPS port on the host" "$EMCP_HTTPS_PORT" validate_port
 
     prompt EMCP_LOG_LEVEL "Log level — leave 'info' unless debugging" "${EMCP_LOG_LEVEL:-info}" validate_loglevel
     prompt EMCP_POSTGRES_USER "Postgres user for the mcp database" "${EMCP_POSTGRES_USER:-mcp}" validate_nonempty
@@ -717,6 +811,13 @@ load_existing_env_defaults() {
                     EMCP_SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
                     EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
                 fi ;;
+            # phase_ghcr_login short-circuits when EMCP_PULL_POLICY is
+            # build/never; export the existing .env value so re-runs
+            # (emcp config) don't fall back to `always` and prompt for
+            # a PAT the operator doesn't need.
+            EMCP_PULL_POLICY)
+                : "${EMCP_PULL_POLICY:=$(dequote "$v")}"
+                export EMCP_PULL_POLICY ;;
         esac
     done < <(grep -E '^[A-Z_]+=' "$f" || true)
 }
@@ -887,7 +988,7 @@ EMCP_HTTPS_PORT=${EMCP_HTTPS_PORT}
 # --- Image pinning ---
 EMCP_GHCR_OWNER=banald
 EMCP_IMAGE_TAG=${IMAGE_TAG}
-EMCP_PULL_POLICY=always
+EMCP_PULL_POLICY=${EMCP_PULL_POLICY:-always}
 
 # --- Limits (compose defaults are fine; override here if you need to) ---
 EMCP_DATABASE_POOL_MAX=10
@@ -1090,6 +1191,15 @@ resolve_port_conflict() {
 phase_ghcr_login() {
     log_step "Authenticate to ghcr.io"
 
+    # Build-from-source and never-pull policies don't need registry auth.
+    # Honoring the env var here keeps CI (and any fork that builds
+    # locally) from hitting the PAT prompt.
+    local pull_policy="${EMCP_PULL_POLICY:-always}"
+    if [ "$pull_policy" = "build" ] || [ "$pull_policy" = "never" ]; then
+        log_info "EMCP_PULL_POLICY=${pull_policy} — skipping ghcr.io authentication"
+        return 0
+    fi
+
     local image="${IMAGE_REPO}:${IMAGE_TAG}"
 
     # Cheap probe: can we already pull it? (Public image, or docker login already cached.)
@@ -1109,36 +1219,15 @@ phase_ghcr_login() {
         return 0
     fi
 
-    # Try the gh CLI. The installer runs as root (sudo), so `$HOME=/root`
-    # and root's PATH typically doesn't include `gh` from the invoking
-    # user's profile. Even when it does, `gh auth status` reads
-    # /root/.config/gh/hosts.yml which isn't where the token lives. Detect
-    # both shapes: running-as-current-user and invoked-via-sudo.
-    local gh_cmd=()
+    # Try the gh CLI. v2 runs as the operator's own user, so if `gh auth
+    # status` works here, we can mint a read:packages token directly —
+    # no sudo dance needed.
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        gh_cmd=(gh)
-    elif [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] \
-         && command -v sudo >/dev/null 2>&1; then
-        # Invoked via sudo: re-run gh as the real user. Try caller's PATH
-        # first; fall back to a login environment if gh isn't reachable
-        # without one (e.g. installed under ~/.local/bin).
-        if sudo -u "$SUDO_USER" -- gh auth status >/dev/null 2>&1; then
-            gh_cmd=(sudo -u "$SUDO_USER" -- gh)
-        elif sudo -iu "$SUDO_USER" -- gh auth status >/dev/null 2>&1; then
-            gh_cmd=(sudo -iu "$SUDO_USER" -- gh)
-        fi
-    fi
-
-    if [ "${#gh_cmd[@]}" -gt 0 ]; then
-        if [ "${gh_cmd[0]}" = "sudo" ]; then
-            log_info "using gh CLI via sudo -u $SUDO_USER to mint a read:packages token"
-        else
-            log_info "using gh CLI to mint a read:packages token"
-        fi
-        "${gh_cmd[@]}" auth refresh -s read:packages >/dev/null 2>&1 || true
+        log_info "using gh CLI to mint a read:packages token"
+        gh auth refresh -s read:packages >/dev/null 2>&1 || true
         local gh_user gh_token
-        gh_user="$("${gh_cmd[@]}" api user -q .login 2>/dev/null || true)"
-        gh_token="$("${gh_cmd[@]}" auth token 2>/dev/null || true)"
+        gh_user="$(gh api user -q .login 2>/dev/null || true)"
+        gh_token="$(gh auth token 2>/dev/null || true)"
         if [ -n "$gh_token" ] && [ -n "$gh_user" ]; then
             docker_login_with_token "$gh_token" "$gh_user"
             return 0
@@ -1154,11 +1243,6 @@ phase_ghcr_login() {
     fi
 
     log_info "no reachable gh CLI — falling back to manual PAT entry"
-    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-        log_info "hint: if your non-root user has gh set up,"
-        log_info "  gh auth token | sudo bash install.sh --ghcr-token-file /dev/stdin --from-local \"\$(pwd)\""
-        log_info "works in one shot. Otherwise:"
-    fi
     log_info "create a token with 'read:packages' scope at:"
     log_info "  https://github.com/settings/tokens/new?scopes=read:packages"
     local pat
@@ -1467,9 +1551,9 @@ phase_smoke_test() {
     local host="${EMCP_PUBLIC_HOST:-localhost}"
     local port
     if [ "$scheme" = "https" ]; then
-        port="${EMCP_HTTPS_PORT:-443}"
+        port="${EMCP_HTTPS_PORT:-8443}"
     else
-        port="${EMCP_HTTP_PORT:-80}"
+        port="${EMCP_HTTP_PORT:-8080}"
     fi
     local url="${scheme}://${host}:${port}/mcp"
 
@@ -1517,12 +1601,14 @@ phase_smoke_test() {
 phase_install_emcp() {
     log_step "Install the 'emcp' command"
 
+    # Config lives under $XDG_CONFIG_HOME/emcp/config. Mode 0600 because
+    # it only holds this user's EMCP_HOME path; no need to be world-readable.
     mkdir -p "$(dirname "$EMCP_CONFIG_PATH")"
     cat > "$EMCP_CONFIG_PATH" <<EOF
 # Managed by install.sh ($EMCP_INSTALLER_VERSION).
 EMCP_HOME=${EMCP_HOME}
 EOF
-    chmod 0644 "$EMCP_CONFIG_PATH"
+    chmod 0600 "$EMCP_CONFIG_PATH"
 
     local emcp_src
     if [ -n "$FROM_LOCAL" ] && [ -f "$FROM_LOCAL/scripts/emcp" ]; then
@@ -1538,13 +1624,25 @@ EOF
         fi
     fi
 
+    # install(1)'s -D creates the parent dir if missing — keeps the
+    # XDG_BIN_HOME default ($HOME/.local/bin) working on hosts that
+    # haven't set it up yet.
     install -D -m 0755 "$emcp_src" "$EMCP_BIN_PATH"
 
     # Also save this installer inside $EMCP_HOME so `emcp config` and
-    # `emcp uninstall` can re-run it later. `curl | sudo bash` streams the
+    # `emcp uninstall` can re-run it later. `curl | bash` streams the
     # script from stdin and `$0` is the shell itself (not a file on disk),
     # so refetch from the release in that case.
     save_installer_copy
+
+    # Warn when XDG_BIN_HOME isn't on $PATH — common on fresh systems.
+    case ":$PATH:" in
+        *":$(dirname "$EMCP_BIN_PATH"):"*) : ;;
+        *)
+            log_warn "$(dirname "$EMCP_BIN_PATH") is not on your \$PATH."
+            log_warn "Add to your shell rc: export PATH=\"$(dirname "$EMCP_BIN_PATH"):\$PATH\""
+            ;;
+    esac
 
     log_ok "emcp installed at $EMCP_BIN_PATH (config at $EMCP_CONFIG_PATH)"
 }
@@ -1679,13 +1777,15 @@ EOF
 phase_uninstall() {
     log_step "Uninstall eMCP"
 
-    # Resolve symlinks + strip trailing slash so /opt/emcp/../ or a symlink
-    # to / can't slip past the denylist. `readlink -f` follows everything;
-    # if it fails we fall back to the raw path (safer to refuse than to
-    # guess).
-    local resolved
+    # Resolve symlinks + strip trailing slash so ../ or a symlink to a
+    # system path can't slip past the denylist. `readlink -f` follows
+    # everything; if it fails we fall back to the raw path (safer to
+    # refuse than to guess).
+    local resolved resolved_home
     resolved="$(readlink -f "$EMCP_HOME" 2>/dev/null || printf '%s' "$EMCP_HOME")"
     resolved="${resolved%/}"
+    resolved_home="$(readlink -f "$HOME" 2>/dev/null || printf '%s' "$HOME")"
+    resolved_home="${resolved_home%/}"
 
     case "$resolved" in
         ""|"/"|"/root"|"/home"|"/etc"|"/usr"|"/var"|"/opt" \
@@ -1693,9 +1793,15 @@ phase_uninstall() {
             |"/boot"|"/sys"|"/proc"|"/dev"|"/tmp")
             die "refusing to uninstall — EMCP_HOME=${resolved:-<empty>} is a system path. Pass an explicit --install-dir pointing at the eMCP install directory." ;;
     esac
-    # Require at least two path segments (e.g. /opt/emcp is fine, /opt is
-    # not). `case` patterns anchor on '/' for the first segment; `/*/*` only
-    # matches when there's a second '/' with at least one char after it.
+    # Refuse $HOME itself (v2 runs as an unprivileged user; a stale
+    # EMCP_HOME="$HOME" would wipe the operator's home directory).
+    if [ -n "$resolved_home" ] && [ "$resolved" = "$resolved_home" ]; then
+        die "refusing to uninstall — EMCP_HOME=${resolved} equals \$HOME."
+    fi
+    # Require at least two path segments (e.g. /home/user/emcp is fine,
+    # /home is not). `case` patterns anchor on '/' for the first segment;
+    # `/*/*` only matches when there's a second '/' with at least one
+    # char after it.
     case "$resolved" in
         /*/*) : ;;
         *) die "refusing to uninstall — EMCP_HOME=${resolved} has fewer than two path segments." ;;
@@ -1803,11 +1909,13 @@ main() {
     fi
 
     if [ "$RECONFIGURE" -eq 1 ]; then
+        phase_rootless_preflight
         phase_preflight
         phase_reconfigure
         return 0
     fi
 
+    phase_rootless_preflight
     phase_preflight
     phase_fetch_source
     phase_generate_secrets

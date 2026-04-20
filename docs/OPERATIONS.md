@@ -4,12 +4,16 @@ This document covers operational tasks: managing API keys, running migrations, g
 
 ## The `emcp` command (preferred entry point)
 
-Hosts provisioned by `scripts/install.sh` have `/usr/local/bin/emcp`, a
-thin wrapper around `docker compose` in the install directory (default
-`/opt/emcp`). Every operation in this document can be driven through it,
-and `emcp key …` is a full passthrough to the `keys.ts` subcommands
-documented below. The raw `docker compose run …` forms remain supported
-and are the escape hatch when the wrapper doesn't fit.
+Hosts provisioned by `scripts/install.sh` have `emcp` installed at
+`${XDG_BIN_HOME:-$HOME/.local/bin}/emcp`, a thin wrapper around
+`docker compose` in the install directory (default
+`${XDG_DATA_HOME:-$HOME/.local/share}/emcp`). Every command runs as
+the operator's unprivileged user against their rootless Docker
+daemon; **no sudo at runtime**. Every operation in this document can
+be driven through `emcp`, and `emcp key …` is a full passthrough to
+the `keys.ts` subcommands documented below. The raw `docker compose run …`
+forms remain supported and are the escape hatch when the wrapper
+doesn't fit.
 
 `emcp help` prints the full command list at runtime. Source of truth is
 `scripts/emcp` — the tables below are the same list, with the equivalent
@@ -66,13 +70,14 @@ passthrough to `docker compose run --rm mcp-server node dist/cli/keys.js <cmd> <
 | Pull current pinned image and recreate | `emcp update` | `docker compose pull && docker compose up -d` |
 | Pin a specific tag and update | `emcp update <tag>` (alias `emcp upgrade <tag>`) | edit `EMCP_IMAGE_TAG` in `.env`, then `docker compose pull && docker compose up -d` |
 | Re-run the interactive env wizard | `emcp config` | edit `.env` by hand, `docker compose up -d` |
-| Uninstall (destroys data) | `emcp uninstall` | `docker compose down -v && rm -rf /opt/emcp` |
+| Uninstall (destroys data) | `emcp uninstall` | `docker compose down -v && rm -rf $EMCP_HOME` |
 | Print help | `emcp help` (aliases `--help` / `-h`; bare `emcp` with no args) | n/a |
 | Print version | `emcp version` (aliases `--version` / `-V`) | n/a |
 
-`emcp` resolves the install directory from `/etc/emcp/config` (written by
-`install.sh`) and falls back to `/opt/emcp`. Override per-invocation with
-`EMCP_HOME=/alt/path emcp …`.
+`emcp` resolves the install directory from
+`${XDG_CONFIG_HOME:-$HOME/.config}/emcp/config` (written by `install.sh`)
+and falls back to `${XDG_DATA_HOME:-$HOME/.local/share}/emcp`. Override
+per-invocation with `EMCP_HOME=/alt/path emcp …`.
 
 ## API key management (CLI)
 
@@ -370,11 +375,11 @@ The installer's `phase_proxy_wizard` is the happy path:
 
 ```bash
 # Interactive: the wizard asks whether to enable, collects URLs, validates each.
-sudo bash install.sh                         # fresh install
+bash install.sh                              # fresh install (no sudo)
 emcp config                                  # existing install
 
 # Non-interactive: CSV + rotation + SearXNG proxies all supplied.
-sudo bash install.sh --non-interactive \
+bash install.sh --non-interactive \
   --public-host emcp.example.com --public-scheme https \
   --allowed-origins https://emcp.example.com \
   --proxy-urls "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080" \
@@ -382,13 +387,13 @@ sudo bash install.sh --non-interactive \
   --searxng-proxies "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080"
 ```
 
-To turn it off later, either `emcp config` → decline the proxy prompt, or edit `/opt/emcp/.env` and clear `EMCP_PROXY_URLS=` (and `EMCP_SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
+To turn it off later, either `emcp config` → decline the proxy prompt, or edit `$EMCP_HOME/.env` and clear `EMCP_PROXY_URLS=` (and `EMCP_SEARXNG_OUTGOING_PROXIES=`), then `emcp restart`.
 
 Operator-facing prints mask the credentials (`http://***@host:port`). The raw `.env` file is written at `0600` and the credentials never appear in `docker compose logs`.
 
 ### Knobs
 
-Set in `/opt/emcp/.env`; compose rebuilds on `emcp restart`:
+Set in `$EMCP_HOME/.env`; compose rebuilds on `emcp restart`:
 
 | Variable | Default | Purpose |
 |--|--|--|
@@ -444,6 +449,55 @@ Toggle SearXNG back to direct by setting `EMCP_SEARXNG_OUTGOING_PROXIES=` and `e
 - **No per-tool proxy routing.** The pool is global; every tool and the fetch-news worker share the same rotation. If a specific tool should egress differently, that's a code change (introducing a secondary pool) and is out of scope for the current design.
 - **No health probing.** The pool learns about proxy failures lazily — from real requests. A freshly-down proxy won't be detected until the next request lands on it, at which point the cooldown path fires. If this turns into a problem in practice, a probing worker is a natural follow-up.
 - **Single-process rotation state.** Server and worker each own a pool instance. That's fine because their request streams are independent; the scale-out constraint is the same as the rest of the worker process (`instances: 1`).
+
+## Bootstrapping rootless Docker (v2 prerequisite)
+
+v2 refuses to install against a rootful daemon. `scripts/preflight-rootless.sh` prints the exact remediation for any missing precondition; the full happy-path bootstrap on a fresh Ubuntu / Debian host is:
+
+```bash
+# One-time package install (needs sudo — the last time you'll use it).
+sudo apt install -y uidmap slirp4netns dbus-user-session fuse-overlayfs
+
+# Subordinate UID/GID range (skip if `grep "^$USER:" /etc/subuid` already shows
+# a range >= 65536 — Ubuntu seeds one automatically for useradd).
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"
+
+# Rootless daemon survives logout.
+sudo loginctl enable-linger "$USER"
+
+# Install + start the rootless daemon as the current user.
+curl -fsSL https://get.docker.com/rootless | sh
+systemctl --user enable --now docker
+
+# Point docker CLI at the user daemon for subsequent shells (add to .bashrc).
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+export PATH=$HOME/bin:$PATH
+```
+
+Re-run the preflight to confirm:
+
+```bash
+bash scripts/preflight-rootless.sh
+```
+
+Expect every line to be `[ok]`. Then run the installer — no sudo from here on.
+
+### Verifying the image signature (cosign keyless)
+
+Every release image is signed with the release workflow's OIDC identity (OWASP Docker Cheat Sheet rule #13). Consumers verify:
+
+```bash
+cosign verify ghcr.io/banald/emcp:v2.0.0 \
+  --certificate-identity-regexp '^https://github.com/Banald/emcp/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+SBOM and SLSA provenance attestations are attached to the image manifest:
+
+```bash
+docker buildx imagetools inspect ghcr.io/banald/emcp:v2.0.0 --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/banald/emcp:v2.0.0 --format '{{ json .Provenance }}'
+```
 
 ## Backup considerations (deferred)
 

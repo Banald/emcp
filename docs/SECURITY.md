@@ -229,6 +229,23 @@ When `EMCP_PROXY_URLS` is set, every external HTTP fetch from the server and wor
 
 **Shutdown guarantee.** Every `ProxyAgent` is registered for close via `registerShutdown('proxy-pool', ...)` in `src/shared/net/proxy/registry.ts`. In-flight CONNECT tunnels drain during the normal shutdown sequence; orphaned sockets cannot persist past the grace window.
 
+## Rule 14: Container runtime posture (OWASP Docker Cheat Sheet)
+
+v2 runs exclusively on a **rootless Docker daemon**. Every compose service measurably satisfies the relevant rules of the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html). These are enforced — not aspirational:
+
+- **MUST NOT** bind-mount `/var/run/docker.sock` or any docker socket into any container (rule #1). `scripts/install.test.sh` asserts this.
+- **MUST** run the host Docker daemon in rootless mode. `scripts/preflight-rootless.sh` refuses to continue if `docker info` doesn't report the `rootless` SecurityOption (rule #11). The installer itself refuses to run as root.
+- **MUST** set `security_opt: [no-new-privileges:true]` on every compose service (rule #4).
+- **MUST** start from `cap_drop: [ALL]` on every service; `cap_add` only the minimum the image empirically needs (rule #3). The e2e test inspects every container's `HostConfig.CapDrop` and fails if `ALL` is missing.
+- **MUST** run with `read_only: true` plus explicit `tmpfs` overlays for paths the image writes (rule #8). Volumes for genuine persistence (`pgdata`, `caddy-data`, `caddy-config`) are allowed.
+- **MUST** set `mem_limit`, `pids_limit`, `cpus`, and `ulimits.nofile` on every service (rule #7). Values live in compose.yaml and are tunable via `.env`.
+- **MUST NOT** use `security_opt: seccomp=unconfined`, `apparmor=unconfined`, or `privileged: true` anywhere. `scripts/install.test.sh` enforces.
+- **MUST** pin every base image by sha256 digest. Dependabot (`.github/dependabot.yml` `package-ecosystem: docker`) keeps the pin fresh.
+- **MUST** sign released images with cosign keyless (rule #13). The release workflow's OIDC identity is the signing authority; consumers verify with the `cosign verify` incantation in the release notes.
+- Postgres + Redis attach to a bridge network with `internal: true` — there is no egress from the data plane (rule #5).
+
+**`EMCP_SEARXNG_SECRET` stays in `.env`, not in a docker secret.** The SearXNG secret salts session cookies and the bot limiter, both of which are irrelevant in this deployment (no user sessions, no limiter). The three secrets that DO protect security-relevant data (`postgres_password`, `redis_password`, `api_key_hmac_secret`) live under `secrets/` and ship via compose `secrets:` (rule #12).
+
 ## Security checklist (run before merging anything in security-adjacent paths)
 
 - [ ] No `===` on credentials; `timingSafeEqual` used.

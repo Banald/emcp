@@ -2,6 +2,8 @@
 
 Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, drop-in scheduled background workers, drop-in tool authoring.
 
+**v2 is rootless-first.** The installer and every `emcp …` command run as your unprivileged user against your own rootless Docker daemon. The compose stack enforces every relevant rule of the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html) (see [CHANGELOG.md](CHANGELOG.md#owasp-compliance-matrix) for the full accounting).
+
 ## Stack
 
 Node.js 24 LTS · TypeScript · PostgreSQL · Redis · croner · Pino · Prometheus
@@ -38,12 +40,12 @@ See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
 - `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - `migrations/` — SQL migrations.
 
-## Quick install
+## Quick install (no sudo)
 
-The fastest way to run eMCP on a Linux host with Docker:
+The fastest way to run eMCP on a Linux host with **rootless Docker** already set up:
 
 ```bash
-curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | bash
 ```
 
 Or, to inspect before running (recommended):
@@ -51,13 +53,34 @@ Or, to inspect before running (recommended):
 ```bash
 curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
 less install.sh
-sudo bash install.sh
+bash install.sh
 ```
+
+### First-time rootless setup (one-time sudo)
+
+If rootless Docker isn't set up on the host yet, the installer's preflight prints the exact commands. The full bootstrap is:
+
+```bash
+sudo apt install -y uidmap slirp4netns dbus-user-session         # OWASP #11 deps
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER
+sudo loginctl enable-linger $USER                                  # daemon survives logout
+curl -fsSL https://get.docker.com/rootless | sh                    # rootless daemon
+systemctl --user enable --now docker
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+```
+
+After that, `bash install.sh` runs sudo-free from start to finish.
 
 The installer:
 
-- checks prerequisites (Docker 24+, Compose v2, daemon running, free disk)
-- downloads the matched-release source tarball into `/opt/emcp`
+- runs `scripts/preflight-rootless.sh` — verifies kernel ≥ 5.13,
+  uidmap / slirp4netns / dbus-user-session packages, `/etc/subuid`
+  + `/etc/subgid` range ≥ 65536 for `$USER`, `loginctl enable-linger`,
+  and that `docker info` reports the `rootless` SecurityOption. Prints
+  the exact remediation command for every failing check
+- checks prerequisites (Docker 24+, Compose v2, free disk)
+- downloads the matched-release source tarball into
+  `${XDG_DATA_HOME:-$HOME/.local/share}/emcp`
 - generates the three Docker secrets (`postgres_password.txt`,
   `redis_password.txt`, `api_key_hmac_secret.txt`)
 - walks you through `.env` with plain-English prompts
@@ -67,17 +90,19 @@ The installer:
   URLs. Server + worker + SearXNG all rotate across the list with
   transparent failover. Full details in
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#outbound-proxy-rotation).
-- logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT)
+- logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT) —
+  skipped entirely when `EMCP_PULL_POLICY=build`
 - brings the stack up and waits for health
 - detects common failures (port already in use, stale `pgdata` volume
   with mismatched password) and offers a remediation
-- installs the `emcp` command at `/usr/local/bin/emcp` for day-2 ops
+- installs the `emcp` command at `${XDG_BIN_HOME:-$HOME/.local/bin}/emcp`
+  for day-2 ops (warns if that dir isn't on your `$PATH`)
 - creates your first API key (optional, interactive)
 
 Non-interactive install (for CI / automation):
 
 ```bash
-sudo GHCR_TOKEN="$PAT" bash install.sh \
+GHCR_TOKEN="$PAT" bash install.sh \
   --non-interactive \
   --public-host emcp.example.com --public-scheme https \
   --allowed-origins https://emcp.example.com \
@@ -133,11 +158,20 @@ emcp help                                 # full command list with aliases
 [`keys.ts` CLI](./docs/OPERATIONS.md#api-key-management-cli) — every
 subcommand and flag documented there works here too.
 
+### Public port binding in rootless mode
+
+Rootless Docker cannot publish host ports `<1024` by default. v2 therefore defaults to `EMCP_HTTP_PORT=8080` and `EMCP_HTTPS_PORT=8443`. Caddy still binds `:80` and `:443` **inside** the container, so only the host-side publish port is affected. Three ways to serve public `:80` / `:443` anyway:
+
+1. **Front-proxy (default, recommended).** Keep 8080/8443 and run nginx / HAProxy / your existing ingress on 80/443, forwarding to those ports. Zero rootless friction.
+2. **One-time setcap.** Run `sudo setcap cap_net_bind_service=+ep $(readlink -f $(which rootlesskit))`. Afterwards rootless can publish privileged ports; set `EMCP_HTTP_PORT=80` and `EMCP_HTTPS_PORT=443` in `.env` and `emcp restart`.
+3. **DNS-01 ACME.** Switch Caddy to DNS-based TLS validation using a DNS provider token. Port 80 is no longer needed on the internet; public clients reach you over 443 exclusively, which you publish via option 1 or 2.
+
 ### TLS
 
 Controlled by `EMCP_PUBLIC_SCHEME` in `.env` (default `https`). The
 installer sets this for you; you can change it later with `emcp config`
-or by editing `/opt/emcp/.env` directly and running `emcp restart`.
+or by editing `$EMCP_HOME/.env` directly (default
+`${XDG_DATA_HOME:-$HOME/.local/share}/emcp/.env`) and running `emcp restart`.
 
 **HTTPS mode (`EMCP_PUBLIC_SCHEME=https`, default).** Caddy picks a
 strategy based on `EMCP_PUBLIC_HOST`:
@@ -159,7 +193,7 @@ internal networks. Caveats:
   will send.
 
 Switching modes is a restart, not a rebuild: `emcp config` → pick the new
-scheme, or edit `/opt/emcp/.env` and `emcp restart`.
+scheme, or edit `$EMCP_HOME/.env` and `emcp restart`.
 
 ## Advanced / manual deploy
 
