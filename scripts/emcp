@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# emcp — eMCP day-2 CLI.
+# emcp — eMCP day-2 CLI (v2 — rootless, no sudo).
 #
 # Thin wrapper around `docker compose` in $EMCP_HOME plus passthrough to the
-# bundled key-management CLI. Installed by scripts/install.sh.
+# bundled key-management CLI. Installed by scripts/install.sh under
+# $XDG_BIN_HOME/emcp. Runs as the unprivileged user against the user's
+# rootless Docker daemon.
 #
 # Run `emcp help` for the full command list.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-EMCP_CONFIG_PATH="${EMCP_CONFIG_PATH:-/etc/emcp/config}"
+EMCP_CONFIG_PATH="${EMCP_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/emcp/config}"
 
-# Env overrides config: allow `EMCP_HOME=/alt/path emcp …` without editing /etc.
+# Env overrides config: allow `EMCP_HOME=/alt/path emcp …` without editing the config.
 if [ -z "${EMCP_HOME:-}" ] && [ -r "$EMCP_CONFIG_PATH" ]; then
     # Config is a simple KEY=VALUE file written by install.sh. Source it in a
     # subshell so we never leak unexpected assignments into the parent shell.
     # shellcheck disable=SC1090
     EMCP_HOME="$(. "$EMCP_CONFIG_PATH" >/dev/null 2>&1; printf '%s' "${EMCP_HOME:-}")"
 fi
-EMCP_HOME="${EMCP_HOME:-/opt/emcp}"
+EMCP_HOME="${EMCP_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/emcp}"
 
 if [ -t 2 ]; then
     C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
@@ -84,8 +86,12 @@ ${C_BOLD}MAINTENANCE${C_RESET}
     uninstall       stop the stack, remove everything (destroys data)
 
 ${C_BOLD}CONFIG${C_RESET}
-    \$EMCP_HOME      ${EMCP_HOME}
+    \$EMCP_HOME        ${EMCP_HOME}
     \$EMCP_CONFIG_PATH ${EMCP_CONFIG_PATH}
+
+All commands run as the unprivileged user against your rootless Docker
+daemon (\$DOCKER_HOST=${DOCKER_HOST:-<not set — using default user socket>}).
+No sudo is ever required at runtime.
 
 EOF
 }

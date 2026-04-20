@@ -62,6 +62,49 @@ else
     say_fail "EMCP_INSTALLER_VERSION line missing or malformed (release.yml depends on exact prefix)"
 fi
 
+# ---- 4b. XDG install paths (v2) ------------------------------------------
+# v2 relocated every install path under the operator's $HOME. Assert the
+# defaults reference XDG_DATA_HOME / XDG_CONFIG_HOME / XDG_BIN_HOME rather
+# than /opt /etc /usr/local.
+if grep -qE '^DEFAULT_INSTALL_DIR="\$_XDG_DATA_HOME/emcp"' "$INSTALL_SH"; then
+    say_pass "DEFAULT_INSTALL_DIR points at \$XDG_DATA_HOME/emcp (v2)"
+else
+    say_fail "DEFAULT_INSTALL_DIR is not XDG_DATA_HOME-based (v2 regression)"
+fi
+if grep -qE '^EMCP_BIN_PATH="\$_XDG_BIN_HOME/emcp"' "$INSTALL_SH"; then
+    say_pass "EMCP_BIN_PATH points at \$XDG_BIN_HOME/emcp (v2)"
+else
+    say_fail "EMCP_BIN_PATH is not XDG_BIN_HOME-based (v2 regression)"
+fi
+if grep -qE '^EMCP_CONFIG_PATH="\$_XDG_CONFIG_HOME/emcp/config"' "$INSTALL_SH"; then
+    say_pass "EMCP_CONFIG_PATH points at \$XDG_CONFIG_HOME/emcp/config (v2)"
+else
+    say_fail "EMCP_CONFIG_PATH is not XDG_CONFIG_HOME-based (v2 regression)"
+fi
+# Anti-regression: v1's system paths must not come back.
+if grep -qE '(DEFAULT_INSTALL_DIR|EMCP_BIN_PATH|EMCP_CONFIG_PATH)=.?(/opt/emcp|/usr/local/bin/emcp|/etc/emcp/config)' "$INSTALL_SH"; then
+    say_fail "install.sh still references v1 system paths (/opt/emcp | /usr/local/bin/emcp | /etc/emcp/config)"
+else
+    say_pass "no v1 system paths hard-coded as defaults"
+fi
+# emcp reads the config from XDG_CONFIG_HOME too.
+if grep -qE 'EMCP_CONFIG_PATH="\$\{EMCP_CONFIG_PATH:-\$\{XDG_CONFIG_HOME:-\$HOME/\.config\}/emcp/config\}"' "$EMCP_BIN"; then
+    say_pass "emcp reads config from XDG_CONFIG_HOME (v2)"
+else
+    say_fail "emcp does not read config from XDG_CONFIG_HOME"
+fi
+if grep -qE 'EMCP_HOME="\$\{EMCP_HOME:-\$\{XDG_DATA_HOME:-\$HOME/\.local/share\}/emcp\}"' "$EMCP_BIN"; then
+    say_pass "emcp defaults EMCP_HOME to XDG_DATA_HOME/emcp (v2)"
+else
+    say_fail "emcp does not default EMCP_HOME to XDG_DATA_HOME/emcp"
+fi
+# Installer refuses to run as root (v2).
+if grep -qE 'refusing to run as root' "$INSTALL_SH"; then
+    say_pass "installer refuses to run as root (v2)"
+else
+    say_fail "installer missing v2 no-root refusal"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
@@ -321,6 +364,12 @@ if grep -qE 'fewer than two path segments' "$INSTALL_SH"; then
     say_pass "phase_uninstall requires >= 2 path segments (H6)"
 else
     say_fail "phase_uninstall missing path-depth check (H6)"
+fi
+# v2: uninstall must also refuse $HOME itself.
+if grep -qE 'EMCP_HOME=\$\{resolved\} equals \\\$HOME|equals \\\$HOME' "$INSTALL_SH"; then
+    say_pass "phase_uninstall refuses \$HOME itself (v2)"
+else
+    say_fail "phase_uninstall missing \$HOME refusal (v2 regression)"
 fi
 # Exercise the bad-path rejection: run uninstall against a system path and
 # expect the die message. --force skips confirmations but NOT the path

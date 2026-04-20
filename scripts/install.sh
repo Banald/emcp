@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # eMCP one-shot installer. Run `install.sh --help` for the full flag list;
 # usage() below is the single source of truth so `--help` still works when
-# piped via `curl | sudo bash` (where $0 is "bash", not a file path).
+# piped via `curl | bash` (where $0 is "bash", not a file path).
+#
+# v2.0.0: this installer runs as an unprivileged user and targets a
+# rootless Docker daemon. All install paths live under the operator's
+# $HOME (XDG dirs). No sudo is required at runtime.
 
 set -euo pipefail
 
@@ -15,9 +19,15 @@ REPO_NAME="emcp"
 # image name" step).
 IMAGE_REPO="ghcr.io/banald/emcp"
 
-DEFAULT_INSTALL_DIR="/opt/emcp"
-EMCP_BIN_PATH="/usr/local/bin/emcp"
-EMCP_CONFIG_PATH="/etc/emcp/config"
+# XDG-aware defaults. All three dirs are per-user; none live in /opt,
+# /etc, or /usr/local anymore. $HOME-relative fallbacks match the XDG
+# Base Directory Spec for hosts that don't export the variables.
+_XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+_XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+_XDG_BIN_HOME="${XDG_BIN_HOME:-$HOME/.local/bin}"
+DEFAULT_INSTALL_DIR="$_XDG_DATA_HOME/emcp"
+EMCP_BIN_PATH="$_XDG_BIN_HOME/emcp"
+EMCP_CONFIG_PATH="$_XDG_CONFIG_HOME/emcp/config"
 INSTALLER_SAVE_PATH_REL="bin/install.sh"  # copied into $EMCP_HOME for `emcp config`
 HEALTHCHECK_TIMEOUT_SECONDS=180
 MIN_FREE_GB=2
@@ -139,29 +149,34 @@ compose_cd() ( cd "$EMCP_HOME" && docker compose "$@"; )
 # --- Arg parsing -----------------------------------------------------------
 
 usage() {
-    cat <<'USAGE' >&2
-eMCP one-shot installer.
+    cat <<USAGE >&2
+eMCP one-shot installer (v2 — rootless, no sudo).
 
 Downloads the matched-tag source tarball, generates Docker secrets, walks
 you through .env interactively, logs in to ghcr.io, brings the compose
-stack up, and installs the permanent `emcp` CLI at /usr/local/bin/emcp.
+stack up against your rootless Docker daemon, and installs the permanent
+\`emcp\` CLI at \$XDG_BIN_HOME/emcp (default $EMCP_BIN_PATH).
+
+Runs as an unprivileged user. A one-time \`sudo\` may be required to
+bootstrap rootless Docker itself (package installs, subuid ranges,
+\`loginctl enable-linger\`) — the preflight prints the exact commands.
 
 USAGE:
-  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | sudo bash
+  curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | bash
   # or, to inspect first:
   curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
   less install.sh
-  sudo bash install.sh
+  bash install.sh
 
 FLAGS (all optional — the interactive wizard fills the gaps):
-  --install-dir <path>     default: /opt/emcp
+  --install-dir <path>     default: \$XDG_DATA_HOME/emcp ($DEFAULT_INSTALL_DIR)
   --tag <ref>              override the release tag (default: stamped
                            installer version; rejected for dev builds)
   --public-host <host>     hostname clients will use to reach eMCP
   --public-scheme <s>      https (default) | http
   --allowed-origins <csv>  Origin allowlist, comma-separated
-  --http-port <n>          host port for plain HTTP (default 80)
-  --https-port <n>         host port for HTTPS (default 443)
+  --http-port <n>          host port for plain HTTP (default 8080)
+  --https-port <n>         host port for HTTPS (default 8443)
   --log-level <level>      fatal|error|warn|info|debug|trace|silent
   --postgres-user <name>   database user (default: mcp)
   --postgres-db <name>     database name (default: mcp)
@@ -171,7 +186,7 @@ FLAGS (all optional — the interactive wizard fills the gaps):
   --non-interactive        fail fast instead of prompting
   --reconfigure            re-run the wizard against an existing install
   --from-local <path>      use a local repo checkout as the source tree
-  --uninstall              stop the stack and remove /opt/emcp
+  --uninstall              stop the stack and remove the install dir
   --force                  skip confirmation prompts
   --proxy-urls <csv>       rotating-proxy pool (http/https URLs)
   --proxy-rotation <mode>  round-robin (default) | random
@@ -179,7 +194,7 @@ FLAGS (all optional — the interactive wizard fills the gaps):
   --no-proxy               disable proxy routing explicitly
   -h, --help               show this help and exit
 
-See docs/OPERATIONS.md for day-2 operations via the `emcp` CLI.
+See docs/OPERATIONS.md for day-2 operations via the \`emcp\` CLI.
 USAGE
     exit "${1:-0}"
 }
@@ -410,8 +425,11 @@ validate_loglevel() {
 phase_preflight() {
     log_step "Preflight"
 
-    if [ "$(id -u)" -ne 0 ]; then
-        die "must run as root (try: sudo bash $0 ...)"
+    # v2: refuse to run as root. Rootless Docker expects an unprivileged
+    # user, install paths live under $HOME, and running as root would
+    # silently write to /root/.local/... which nobody wants.
+    if [ "$(id -u)" -eq 0 ]; then
+        die "refusing to run as root. eMCP v2 installs into the current user's \$HOME and targets a rootless Docker daemon. Re-run without sudo as the user who will operate the stack."
     fi
 
     if [ "$(uname -s)" != "Linux" ]; then
@@ -1517,12 +1535,14 @@ phase_smoke_test() {
 phase_install_emcp() {
     log_step "Install the 'emcp' command"
 
+    # Config lives under $XDG_CONFIG_HOME/emcp/config. Mode 0600 because
+    # it only holds this user's EMCP_HOME path; no need to be world-readable.
     mkdir -p "$(dirname "$EMCP_CONFIG_PATH")"
     cat > "$EMCP_CONFIG_PATH" <<EOF
 # Managed by install.sh ($EMCP_INSTALLER_VERSION).
 EMCP_HOME=${EMCP_HOME}
 EOF
-    chmod 0644 "$EMCP_CONFIG_PATH"
+    chmod 0600 "$EMCP_CONFIG_PATH"
 
     local emcp_src
     if [ -n "$FROM_LOCAL" ] && [ -f "$FROM_LOCAL/scripts/emcp" ]; then
@@ -1538,13 +1558,25 @@ EOF
         fi
     fi
 
+    # install(1)'s -D creates the parent dir if missing — keeps the
+    # XDG_BIN_HOME default ($HOME/.local/bin) working on hosts that
+    # haven't set it up yet.
     install -D -m 0755 "$emcp_src" "$EMCP_BIN_PATH"
 
     # Also save this installer inside $EMCP_HOME so `emcp config` and
-    # `emcp uninstall` can re-run it later. `curl | sudo bash` streams the
+    # `emcp uninstall` can re-run it later. `curl | bash` streams the
     # script from stdin and `$0` is the shell itself (not a file on disk),
     # so refetch from the release in that case.
     save_installer_copy
+
+    # Warn when XDG_BIN_HOME isn't on $PATH — common on fresh systems.
+    case ":$PATH:" in
+        *":$(dirname "$EMCP_BIN_PATH"):"*) : ;;
+        *)
+            log_warn "$(dirname "$EMCP_BIN_PATH") is not on your \$PATH."
+            log_warn "Add to your shell rc: export PATH=\"$(dirname "$EMCP_BIN_PATH"):\$PATH\""
+            ;;
+    esac
 
     log_ok "emcp installed at $EMCP_BIN_PATH (config at $EMCP_CONFIG_PATH)"
 }
@@ -1679,13 +1711,15 @@ EOF
 phase_uninstall() {
     log_step "Uninstall eMCP"
 
-    # Resolve symlinks + strip trailing slash so /opt/emcp/../ or a symlink
-    # to / can't slip past the denylist. `readlink -f` follows everything;
-    # if it fails we fall back to the raw path (safer to refuse than to
-    # guess).
-    local resolved
+    # Resolve symlinks + strip trailing slash so ../ or a symlink to a
+    # system path can't slip past the denylist. `readlink -f` follows
+    # everything; if it fails we fall back to the raw path (safer to
+    # refuse than to guess).
+    local resolved resolved_home
     resolved="$(readlink -f "$EMCP_HOME" 2>/dev/null || printf '%s' "$EMCP_HOME")"
     resolved="${resolved%/}"
+    resolved_home="$(readlink -f "$HOME" 2>/dev/null || printf '%s' "$HOME")"
+    resolved_home="${resolved_home%/}"
 
     case "$resolved" in
         ""|"/"|"/root"|"/home"|"/etc"|"/usr"|"/var"|"/opt" \
@@ -1693,9 +1727,15 @@ phase_uninstall() {
             |"/boot"|"/sys"|"/proc"|"/dev"|"/tmp")
             die "refusing to uninstall — EMCP_HOME=${resolved:-<empty>} is a system path. Pass an explicit --install-dir pointing at the eMCP install directory." ;;
     esac
-    # Require at least two path segments (e.g. /opt/emcp is fine, /opt is
-    # not). `case` patterns anchor on '/' for the first segment; `/*/*` only
-    # matches when there's a second '/' with at least one char after it.
+    # Refuse $HOME itself (v2 runs as an unprivileged user; a stale
+    # EMCP_HOME="$HOME" would wipe the operator's home directory).
+    if [ -n "$resolved_home" ] && [ "$resolved" = "$resolved_home" ]; then
+        die "refusing to uninstall — EMCP_HOME=${resolved} equals \$HOME."
+    fi
+    # Require at least two path segments (e.g. /home/user/emcp is fine,
+    # /home is not). `case` patterns anchor on '/' for the first segment;
+    # `/*/*` only matches when there's a second '/' with at least one
+    # char after it.
     case "$resolved" in
         /*/*) : ;;
         *) die "refusing to uninstall — EMCP_HOME=${resolved} has fewer than two path segments." ;;
