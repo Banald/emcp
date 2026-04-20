@@ -220,9 +220,10 @@ jobs:
           # Sign each tag that was pushed, all pointing at the same
           # digest. `--yes` skips the Fulcio confirmation prompt; the
           # signature is recorded in Rekor's public transparency log.
-          # `metadata-action` emits tags newline-separated; pass via env
+          # metadata-action emits tags newline-separated; pass via env
           # so bash word-splitting (on whitespace incl. newlines) iterates
-          # correctly — direct ${{ }} interpolation broke the `for` line.
+          # correctly. Direct action-expression interpolation into the
+          # `for` header collapsed newlines and broke the shell.
           for tag in $TAGS; do
             cosign sign --yes "${tag}@${DIGEST}"
           done
