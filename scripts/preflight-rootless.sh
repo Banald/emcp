@@ -182,6 +182,24 @@ check_subid_ranges() {
         "grant a subuid range: sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $user"
 }
 
+check_apparmor_userns() {
+    # Ubuntu 23.10+ ships with kernel.apparmor_restrict_unprivileged_userns=1,
+    # which blocks rootlesskit from fork/exec'ing /proc/self/exe.
+    # Symptom: `rootlesskit: failed to start the child: permission denied`.
+    # Either install a per-binary AppArmor profile or flip the sysctl.
+    local sysctl_path="/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+    [ -r "$sysctl_path" ] || return 0  # kernel too old or AppArmor disabled — no issue
+    local value
+    value="$(cat "$sysctl_path" 2>/dev/null || echo 0)"
+    if [ "$value" = "1" ]; then
+        record_fail \
+            "apparmor_restrict_unprivileged_userns=1 will block rootlesskit (Ubuntu 23.10+ / 24.04 default)" \
+            "quick fix: echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rootless-docker.conf && sudo sysctl --system  (or install a per-binary AppArmor profile; see https://rootlesscontaine.rs/getting-started/common/#apparmor)"
+        return
+    fi
+    log_ok "apparmor_restrict_unprivileged_userns not blocking rootlesskit"
+}
+
 check_linger() {
     # Without linger, the rootless daemon dies on logout. Mandatory for
     # any long-running deployment.
@@ -262,6 +280,7 @@ main() {
     check_kernel
     check_packages
     check_subid_ranges
+    check_apparmor_userns
     check_linger
     check_docker_daemon
 

@@ -152,8 +152,8 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 # Preflight must cover each of the v2 preconditions.
 for probe in 'check_not_root' 'check_platform' 'check_kernel' \
-             'check_packages' 'check_subid_ranges' 'check_linger' \
-             'check_docker_daemon'; do
+             'check_packages' 'check_subid_ranges' 'check_apparmor_userns' \
+             'check_linger' 'check_docker_daemon'; do
     if grep -qE "^${probe}\(\)" "$PREFLIGHT_SH"; then
         continue
     fi

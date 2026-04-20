@@ -474,7 +474,42 @@ export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
 export PATH=$HOME/bin:$PATH
 ```
 
-Re-run the preflight to confirm:
+### Ubuntu 23.10+ / 24.04 — AppArmor restricts unprivileged user namespaces
+
+Ubuntu 23.10 introduced `kernel.apparmor_restrict_unprivileged_userns=1` as the default, which blocks `rootlesskit` from `fork/exec`-ing `/proc/self/exe`. The symptom is a clear error at daemon start:
+
+```
+[rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: permission denied
+```
+
+Two fixes:
+
+1. **Quick sysctl disable** (trusted hosts — opens a kernel feature you may have wanted off):
+
+   ```bash
+   echo 'kernel.apparmor_restrict_unprivileged_userns=0' \
+     | sudo tee /etc/sysctl.d/60-rootless-docker.conf
+   sudo sysctl --system
+   ```
+
+2. **Per-binary AppArmor profile** (correct long-term fix):
+
+   ```bash
+   sudo tee /etc/apparmor.d/home.${USER}.bin.rootlesskit > /dev/null <<EOT
+   abi <abi/4.0>,
+   include <tunables/global>
+
+   $HOME/bin/rootlesskit flags=(unconfined) {
+     userns,
+     include if exists <local/home.${USER}.bin.rootlesskit>
+   }
+   EOT
+   sudo systemctl restart apparmor.service
+   ```
+
+`scripts/preflight-rootless.sh` flags this automatically (`check_apparmor_userns`). See the upstream notes at <https://rootlesscontaine.rs/getting-started/common/#apparmor>.
+
+### Confirm the preflight is green
 
 ```bash
 bash scripts/preflight-rootless.sh

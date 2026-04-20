@@ -238,6 +238,7 @@ v2 runs exclusively on a **rootless Docker daemon**. Every compose service measu
 - **MUST** set `security_opt: [no-new-privileges:true]` on every compose service (rule #4).
 - **MUST** start from `cap_drop: [ALL]` on every service; `cap_add` only the minimum the image empirically needs (rule #3). The e2e test inspects every container's `HostConfig.CapDrop` and fails if `ALL` is missing.
 - **MUST** run with `read_only: true` plus explicit `tmpfs` overlays for paths the image writes (rule #8). Volumes for genuine persistence (`pgdata`, `caddy-data`, `caddy-config`) are allowed.
+- **MUST NOT** ship tooling the runtime doesn't need. The eMCP image entrypoint is `node dist/...`; `npm`, `npx`, and `corepack` are stripped in the `runtime` stage of the Dockerfile (rule #8 + rule #13 — the bundled npm pulls in transitive deps that show up in CVE scans, e.g. CVE-2026-33671 in npm's `picomatch`). Any change that reintroduces `npm` or `npx` at runtime requires an explicit security review.
 - **MUST** set `mem_limit`, `pids_limit`, `cpus`, and `ulimits.nofile` on every service (rule #7). Values live in compose.yaml and are tunable via `.env`.
 - **MUST NOT** use `security_opt: seccomp=unconfined`, `apparmor=unconfined`, or `privileged: true` anywhere. `scripts/install.test.sh` enforces.
 - **MUST** pin every base image by sha256 digest. Dependabot (`.github/dependabot.yml` `package-ecosystem: docker`) keeps the pin fresh.
