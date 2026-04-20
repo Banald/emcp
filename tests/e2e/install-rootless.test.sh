@@ -188,15 +188,21 @@ done
 # --- Step 9: /mcp rejects bogus key ---------------------------------------
 say_step "Verify auth middleware rejects bogus bearer"
 
+# Curl with an Origin header matching EMCP_ALLOWED_ORIGINS — keys
+# default to requireOrigin=true, and the installer seeds the allowlist
+# with both http://localhost:8080 and https://localhost:8443 above.
+MCP_ORIGIN='https://localhost:8443'
+
 resp_code="$(curl -sk -o /dev/null -w '%{http_code}' \
     -X POST "https://localhost:8443/mcp" \
     -H 'Authorization: Bearer bogus-key-for-e2e' \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
+    -H "Origin: $MCP_ORIGIN" \
     --max-time 10 \
     --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}' \
     || true)"
-[ "$resp_code" = "401" ] || fail "/mcp returned $resp_code, expected 401"
+[ "$resp_code" = "401" ] || fail "/mcp returned $resp_code, expected 401 for a bogus bearer"
 say_ok "/mcp returned 401 for bogus key"
 
 # --- Step 10: issue a key and use it --------------------------------------
@@ -215,6 +221,7 @@ resp_code="$(curl -sk -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer $raw_key" \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
+    -H "Origin: $MCP_ORIGIN" \
     --max-time 10 \
     --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}' \
     || true)"

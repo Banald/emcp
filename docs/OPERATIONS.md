@@ -375,11 +375,11 @@ The installer's `phase_proxy_wizard` is the happy path:
 
 ```bash
 # Interactive: the wizard asks whether to enable, collects URLs, validates each.
-sudo bash install.sh                         # fresh install
+bash install.sh                              # fresh install (no sudo)
 emcp config                                  # existing install
 
 # Non-interactive: CSV + rotation + SearXNG proxies all supplied.
-sudo bash install.sh --non-interactive \
+bash install.sh --non-interactive \
   --public-host emcp.example.com --public-scheme https \
   --allowed-origins https://emcp.example.com \
   --proxy-urls "http://user:pass@p1.example.com:8080,http://user:pass@p2.example.com:8080" \
