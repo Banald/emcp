@@ -320,6 +320,52 @@ if [ "$resource_fail" -eq 0 ]; then
     say_pass "every compose service sets mem_limit/pids_limit/cpus/ulimits (OWASP #7)"
 fi
 
+# ---- 4h. split networks: data plane vs app plane (v2) --------------------
+# OWASP #5 — emcp_data is `internal: true` so postgres + redis have no
+# route off the host. App services dual-home to reach them.
+if grep -qE '^networks:' "$COMPOSE_YAML" \
+   && grep -qE '^  emcp_data:' "$COMPOSE_YAML" \
+   && grep -qE '^  emcp_internal:' "$COMPOSE_YAML"; then
+    say_pass "compose.yaml declares emcp_internal + emcp_data networks"
+else
+    say_fail "compose.yaml missing named networks (emcp_internal + emcp_data)"
+fi
+if awk '/^  emcp_data:/ {inside=1; next} inside && /^  [a-z]/ {inside=0} inside' "$COMPOSE_YAML" \
+   | grep -qE '^ *internal: *true'; then
+    say_pass "emcp_data is declared with internal: true (no egress from data plane)"
+else
+    say_fail "emcp_data is NOT internal: true (postgres/redis could egress)"
+fi
+declare -A EXPECTED_NETWORKS=(
+    [postgres]="emcp_data"
+    [redis]="emcp_data"
+    [searxng]="emcp_internal"
+    [migrate]="emcp_data"
+    [mcp-server]="emcp_internal,emcp_data"
+    [mcp-worker]="emcp_internal,emcp_data"
+    [caddy]="emcp_internal"
+)
+net_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    expected="${EXPECTED_NETWORKS[$svc]}"
+    IFS=',' read -r -a want <<<"$expected"
+    for n in "${want[@]}"; do
+        if ! printf '%s\n' "$block" | awk '/^ *networks:/ {inside=1; next} inside && /^ *[a-z]/ {inside=0} inside' \
+             | grep -qE "^ *- *${n}\$"; then
+            say_fail "$svc is not attached to $n"
+            net_fail=1
+        fi
+    done
+done
+if [ "$net_fail" -eq 0 ]; then
+    say_pass "every service attaches to the expected network plane(s) (OWASP #5)"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
