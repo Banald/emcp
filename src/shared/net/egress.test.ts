@@ -387,7 +387,10 @@ describe('fetchExternal', () => {
         assert.ok(err instanceof TransientError);
         assert.doesNotMatch((err as Error).message, /abc123/);
         assert.doesNotMatch((err as Error).message, /secret\/path/);
-        assert.match((err as Error).message, /api\.example\.com/);
+        assert.ok(
+          (err as Error).message.includes('api.example.com'),
+          'expected error message to name the host',
+        );
       }
     });
   });
