@@ -195,6 +195,64 @@ else
     say_fail "copy_source_tree does not propagate preflight-rootless.sh"
 fi
 
+# ---- 4e. compose hardening: no-new-privileges + cap_drop ALL (v2) --------
+# Every service must refuse new privileges (OWASP #4) and start from
+# cap_drop: ALL (OWASP #3). cap_add is per-service and enforced
+# downstream via the e2e test's docker-inspect assertions — here we
+# only guarantee the scaffolding is in place so nobody ships a service
+# that silently inherits the daemon's default capability set.
+COMPOSE_SERVICES=("postgres" "redis" "searxng" "migrate" "mcp-server" "mcp-worker" "caddy")
+hardening_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    if [ -z "$block" ]; then
+        say_fail "compose.yaml service block for $svc not found"
+        hardening_fail=1
+        continue
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *- "no-new-privileges:true"'; then
+        say_fail "$svc is missing security_opt: no-new-privileges:true"
+        hardening_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *cap_drop: *\[ *"?ALL"? *\]'; then
+        say_fail "$svc is missing cap_drop: [ALL]"
+        hardening_fail=1
+    fi
+done
+if [ "$hardening_fail" -eq 0 ]; then
+    say_pass "every compose service sets no-new-privileges:true (OWASP #4)"
+    say_pass "every compose service sets cap_drop: [ALL] (OWASP #3)"
+fi
+# Caddy alone must add back NET_BIND_SERVICE so it can bind internal
+# :80/:443 after dropping everything else.
+caddy_block="$(awk '
+    /^  caddy:/           { inside = 1; next }
+    inside && /^  [a-z]/  { inside = 0 }
+    inside                { print }
+' "$COMPOSE_YAML")"
+if printf '%s\n' "$caddy_block" | grep -qE 'cap_add:.*NET_BIND_SERVICE'; then
+    say_pass "caddy keeps NET_BIND_SERVICE (required to bind internal :80/:443)"
+else
+    say_fail "caddy did not cap_add: NET_BIND_SERVICE after cap_drop: ALL"
+fi
+# Anti-regression: nothing ever sets privileged: true, seccomp=unconfined,
+# or apparmor=unconfined.
+if grep -qE 'privileged: *true|seccomp=unconfined|apparmor=unconfined' "$COMPOSE_YAML"; then
+    say_fail "compose.yaml contains a privileged/unconfined hazard"
+else
+    say_pass "no privileged/unconfined security_opt in compose.yaml (OWASP #6)"
+fi
+# Anti-regression: no docker socket is ever bind-mounted.
+if grep -qE '/var/run/docker\.sock|docker\.sock' "$COMPOSE_YAML"; then
+    say_fail "compose.yaml references /var/run/docker.sock (OWASP #1 violation)"
+else
+    say_pass "no docker.sock reference in compose.yaml (OWASP #1)"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"

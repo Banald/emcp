@@ -5,6 +5,14 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Hardening (OWASP Docker Cheat Sheet #3, #4). cap_add is the minimum
+    # the postgres image needs at startup: CHOWN + FOWNER for pgdata
+    # permissions, SETUID/SETGID for `gosu postgres`, DAC_READ_SEARCH so
+    # initdb can probe locale files under a restrictive umask.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER", "SETUID", "SETGID", "DAC_READ_SEARCH"]
     environment:
       POSTGRES_USER: ${EMCP_POSTGRES_USER:-mcp}
       POSTGRES_DB: ${EMCP_POSTGRES_DB:-mcp}
@@ -23,6 +31,12 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Hardening (OWASP #3, #4). redis drops to the `redis` user in the
+    # entrypoint; CHOWN/SETUID/SETGID are the only caps it needs.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
     # Rate-limit cache is intentionally ephemeral (docs/ARCHITECTURE.md): no
     # RDB snapshotting, no AOF. Losing it has no durability consequence.
     # `requirepass` is sourced from a Docker secret (AUDIT M-4) so the
@@ -47,6 +61,12 @@ services:
     # Bump this deliberately; do not revert to `:latest`.
     image: searxng/searxng:2026.4.17-8579974f5
     restart: unless-stopped
+    # Hardening (OWASP #3, #4). SearXNG's entrypoint chowns
+    # /etc/searxng and switches to the `searxng` user via uwsgi.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID"]
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"
       # The image's own entrypoint substitutes the `ultrasecretkey` placeholder
@@ -80,6 +100,11 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: "no"
+    # Hardening (OWASP #3, #4). Runs as USER emcp (uid 10001) per the
+    # Dockerfile. Needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
     command: ["node", "dist/db/migrate.js", "up"]
     environment:
       NODE_ENV: production
@@ -110,6 +135,11 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # Hardening (OWASP #3, #4). Listens on :3000 (unprivileged); runs as
+    # USER emcp (uid 10001). Needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
     command: ["node", "dist/index.js"]
     environment:
       NODE_ENV: production
@@ -180,6 +210,11 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # Hardening (OWASP #3, #4). No network listener; runs as USER emcp
+    # (uid 10001); needs no capabilities.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
     command: ["node", "dist/workers/index.js"]
     environment:
       NODE_ENV: production
@@ -228,11 +263,20 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Hardening (OWASP #3, #4). Caddy's image runs as root inside the
+    # container; under rootless userns that maps to a subuid on the
+    # host. NET_BIND_SERVICE is required so Caddy can bind :80/:443
+    # internally even after cap_drop: ALL. CHOWN/SETUID/SETGID are used
+    # when initializing /data and /config volumes.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]
     # v2 defaults: unprivileged host ports. Rootless Docker cannot bind
     # <1024 on the host without a one-time `sudo setcap` on rootlesskit;
     # the installer offers that setup explicitly. Container-internal :80
-    # and :443 are still bound (Caddy retains CAP_NET_BIND_SERVICE inside
-    # its userns).
+    # and :443 are still bound (NET_BIND_SERVICE above + CAP_NET_BIND
+    # inside the userns).
     ports:
       - "${EMCP_HTTP_PORT:-8080}:80"
       - "${EMCP_HTTPS_PORT:-8443}:443"
