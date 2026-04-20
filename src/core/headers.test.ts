@@ -34,6 +34,38 @@ describe('validateHeaders', () => {
       const result = validateHeaders({ host: ['mcp.example.com', 'mcp.example.com'] }, defaults);
       assert.deepEqual(result, { ok: true, origin: null });
     });
+
+    // v2: rootless defaults publish Caddy on host ports 8080/8443, so
+    // browsers send `Host: mcp.example.com:8443`. The validator must
+    // accept that while still exact-matching the hostname part
+    // (DNS-rebinding defense is on the hostname, not the port).
+    it('accepts a matching Host header with an explicit port', () => {
+      const result = validateHeaders({ host: 'mcp.example.com:8443' }, defaults);
+      assert.deepEqual(result, { ok: true, origin: null });
+    });
+
+    it('accepts any port on the matching hostname', () => {
+      const result = validateHeaders({ host: 'mcp.example.com:12345' }, defaults);
+      assert.deepEqual(result, { ok: true, origin: null });
+    });
+
+    it('rejects a mismatched hostname even with a port suffix', () => {
+      const result = validateHeaders({ host: 'evil.example.com:8443' }, defaults);
+      assert.deepEqual(result, { ok: false, reason: 'host-mismatch' });
+    });
+
+    it('accepts an IPv6-literal Host with a port', () => {
+      const result = validateHeaders(
+        { host: '[::1]:8443' },
+        { ...defaults, expectedHost: '[::1]' },
+      );
+      assert.deepEqual(result, { ok: true, origin: null });
+    });
+
+    it('rejects a raw IPv6 literal without brackets (RFC 3986 violation)', () => {
+      const result = validateHeaders({ host: '::1:8443' }, { ...defaults, expectedHost: '::1' });
+      assert.deepEqual(result, { ok: false, reason: 'host-mismatch' });
+    });
   });
 
   describe('Origin header', () => {
