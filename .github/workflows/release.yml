@@ -214,12 +214,16 @@ jobs:
         env:
           IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
           COSIGN_EXPERIMENTAL: "1"
         run: |
           # Sign each tag that was pushed, all pointing at the same
           # digest. `--yes` skips the Fulcio confirmation prompt; the
           # signature is recorded in Rekor's public transparency log.
-          for tag in ${{ steps.meta.outputs.tags }}; do
+          # `metadata-action` emits tags newline-separated; pass via env
+          # so bash word-splitting (on whitespace incl. newlines) iterates
+          # correctly — direct ${{ }} interpolation broke the `for` line.
+          for tag in $TAGS; do
             cosign sign --yes "${tag}@${DIGEST}"
           done
       - name: Attest build provenance
