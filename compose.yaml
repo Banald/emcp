@@ -13,6 +13,15 @@ services:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "FOWNER", "SETUID", "SETGID", "DAC_READ_SEARCH"]
+    # OWASP #8 — read-only rootfs with targeted tmpfs overlays. The
+    # pgdata volume below is the only persistent surface; sockets (/run
+    # and /var/run/postgresql) and locks (/tmp) stay in-memory.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/postgresql
+      - /var/run/postgresql
     environment:
       POSTGRES_USER: ${EMCP_POSTGRES_USER:-mcp}
       POSTGRES_DB: ${EMCP_POSTGRES_DB:-mcp}
@@ -37,6 +46,13 @@ services:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — redis WORKDIR is /data and the image always touches it
+    # at startup even with persistence disabled. tmpfs it so the rootfs
+    # can still be read-only while the cache stays ephemeral.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
     # Rate-limit cache is intentionally ephemeral (docs/ARCHITECTURE.md): no
     # RDB snapshotting, no AOF. Losing it has no durability consequence.
     # `requirepass` is sourced from a Docker secret (AUDIT M-4) so the
@@ -67,6 +83,15 @@ services:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — read-only rootfs. The wrapper entrypoint renders
+    # settings.yml into /etc/searxng (tmpfs); upstream uwsgi needs /tmp
+    # and /var/cache/searxng for its own bookkeeping.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /etc/searxng
+      - /var/cache/searxng
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"
       # The image's own entrypoint substitutes the `ultrasecretkey` placeholder
@@ -77,7 +102,11 @@ services:
       # egress" and infra/searxng/entrypoint.sh for the rendering logic.
       EMCP_SEARXNG_OUTGOING_PROXIES: ${EMCP_SEARXNG_OUTGOING_PROXIES:-}
     volumes:
-      - ./infra/searxng/settings.template.yml:/etc/searxng/settings.template.yml:ro
+      # Template lives under /usr/local/share/emcp-searxng so the
+      # compose-level tmpfs on /etc/searxng (OWASP #8) doesn't shadow
+      # it. The wrapper entrypoint renders from this path into
+      # /etc/searxng/settings.yml (tmpfs-backed) at container start.
+      - ./infra/searxng/settings.template.yml:/usr/local/share/emcp-searxng/settings.template.yml:ro
       - ./infra/searxng/entrypoint.sh:/usr/local/bin/emcp-searxng-entrypoint.sh:ro
     # Chain through our wrapper entrypoint before the image's own. It
     # renders the template (EMCP_SEARXNG_OUTGOING_PROXIES → outgoing.proxies
@@ -105,6 +134,11 @@ services:
     security_opt:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
+    # OWASP #8 — node-pg-migrate never writes to disk; only /tmp for
+    # V8's optional code-cache, hence the single tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/db/migrate.js", "up"]
     environment:
       NODE_ENV: production
@@ -140,6 +174,10 @@ services:
     security_opt:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
+    # OWASP #8 — Node + pino + undici don't write outside /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/index.js"]
     environment:
       NODE_ENV: production
@@ -215,6 +253,10 @@ services:
     security_opt:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
+    # OWASP #8 — croner + pg + pino all stay within /tmp for scratch.
+    read_only: true
+    tmpfs:
+      - /tmp
     command: ["node", "dist/workers/index.js"]
     environment:
       NODE_ENV: production
@@ -272,6 +314,11 @@ services:
       - "no-new-privileges:true"
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]
+    # OWASP #8 — ACME state + config live on named volumes
+    # (caddy-data, caddy-config); everything else stays in-memory.
+    read_only: true
+    tmpfs:
+      - /tmp
     # v2 defaults: unprivileged host ports. Rootless Docker cannot bind
     # <1024 on the host without a one-time `sudo setcap` on rootlesskit;
     # the installer offers that setup explicitly. Container-internal :80

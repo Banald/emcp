@@ -14,7 +14,11 @@
 # ---------------------------------------------------------------------------
 set -eu
 
-TEMPLATE="/etc/searxng/settings.template.yml"
+# The template is bind-mounted under /usr/local/share/emcp-searxng so
+# compose can make /etc/searxng a tmpfs (OWASP #8 — read-only rootfs)
+# without shadowing the mount. The rendered file is written to the
+# tmpfs-backed /etc/searxng/settings.yml that the upstream image reads.
+TEMPLATE="/usr/local/share/emcp-searxng/settings.template.yml"
 TARGET="/etc/searxng/settings.yml"
 MARKER='# EMCP_SEARXNG_OUTGOING_PROXIES_MARKER'
 

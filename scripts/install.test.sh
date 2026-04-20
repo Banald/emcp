@@ -253,6 +253,47 @@ else
     say_pass "no docker.sock reference in compose.yaml (OWASP #1)"
 fi
 
+# ---- 4f. compose hardening: read_only rootfs + /tmp tmpfs (v2) -----------
+# OWASP #8 — every service runs on a read-only rootfs with explicit
+# tmpfs mounts for the paths it must write at runtime. The per-service
+# tmpfs list is validated by the e2e test (C13) via docker-inspect; here
+# we only assert that the scaffold is present on every service.
+readonly_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    if ! printf '%s\n' "$block" | grep -qE '^ *read_only: *true'; then
+        say_fail "$svc is missing read_only: true"
+        readonly_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *tmpfs:'; then
+        say_fail "$svc is missing a tmpfs: overlay (needs at least /tmp)"
+        readonly_fail=1
+    fi
+    if ! printf '%s\n' "$block" | grep -qE '^ *- /tmp'; then
+        say_fail "$svc is missing tmpfs /tmp"
+        readonly_fail=1
+    fi
+done
+if [ "$readonly_fail" -eq 0 ]; then
+    say_pass "every compose service sets read_only: true + tmpfs /tmp (OWASP #8)"
+fi
+# SearXNG's template bind-mount must not land under /etc/searxng —
+# that path is tmpfs so a mount there would be shadowed.
+if grep -qE '/etc/searxng/settings\.template\.yml' "$COMPOSE_YAML"; then
+    say_fail "searxng template bind-mount still targets /etc/searxng (shadowed by tmpfs)"
+else
+    say_pass "searxng template bind-mount moved outside the /etc/searxng tmpfs"
+fi
+if grep -qE '/usr/local/share/emcp-searxng/settings\.template\.yml' "$COMPOSE_YAML"; then
+    say_pass "searxng template lives at /usr/local/share/emcp-searxng/ (not tmpfs-shadowed)"
+else
+    say_fail "searxng template path is missing or relocated again"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
