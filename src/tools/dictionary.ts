@@ -187,21 +187,45 @@ function normalizeLanguages(data: RawResponse, languageCode: string | undefined)
 
 function clean(html: string): string {
   if (!html) return '';
-  return decodeHtmlEntities(html.replace(/<[^>]*>/g, ''))
-    .replace(/\s+/g, ' ')
-    .trim();
+  return decodeHtmlEntities(stripTags(html)).replace(/\s+/g, ' ').trim();
 }
 
+// Iterate to a fixed point so crafted input like `<scr<script>ipt>` cannot
+// leave a tag behind after a single pass.
+function stripTags(s: string): string {
+  let prev: string;
+  do {
+    prev = s;
+    s = s.replace(/<[^>]*>/g, '');
+  } while (s !== prev);
+  return s;
+}
+
+// Single-pass decode: chained sequential `.replace()` calls can double-decode
+// (e.g. `&amp;lt;` → `&lt;` → `<`), so match every recognised entity in one
+// regex and resolve each match independently.
 function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)));
+  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|nbsp|amp|lt|gt|quot);/g, (_, e: string) => {
+    if (e.charCodeAt(0) === 35 /* '#' */) {
+      return e.charCodeAt(1) === 120 /* 'x' */
+        ? String.fromCodePoint(Number.parseInt(e.slice(2), 16))
+        : String.fromCodePoint(Number(e.slice(1)));
+    }
+    switch (e) {
+      case 'nbsp':
+        return ' ';
+      case 'amp':
+        return '&';
+      case 'lt':
+        return '<';
+      case 'gt':
+        return '>';
+      case 'quot':
+        return '"';
+      default:
+        return `&${e};`;
+    }
+  });
 }
 
 function formatText(term: string, languages: readonly LanguageEntry[]): string {

@@ -225,21 +225,13 @@ describe('collectArticles', () => {
       ),
       'https://example.com/ex/e1': htmlResponse(articleHtml('E1', 'Body.')),
     });
-    const ssrf = async (hostname: string): Promise<void> => {
-      if (hostname.includes('example.com') && hostname === new URL(abTest.rssUrl).hostname) {
-        // intentionally allow others but we want a per-source reject
-      }
-      if (hostname === new URL(abTest.rssUrl).hostname) throw new Error('non-public');
-    };
-    // Note: abTest.rssUrl and exTest.rssUrl share the same hostname in test data.
-    // Use a hostname-level match that only blocks Aftonbladet's full RSS URL would require
-    // distinct hostnames — adjust sources to make this unambiguous:
+    // Distinct hostnames so a per-source SSRF rejection is unambiguous.
     const abDistinct: NewsSource = {
       key: 'aftonbladet',
       name: 'Aftonbladet',
       rssUrl: 'https://private.test/aftonbladet.rss',
     };
-    const ssrf2 = async (hostname: string): Promise<void> => {
+    const ssrf = async (hostname: string): Promise<void> => {
       if (hostname === 'private.test') throw new Error('non-public');
     };
 
@@ -249,11 +241,8 @@ describe('collectArticles', () => {
       signal: new AbortController().signal,
       logger: silentLogger,
       fetcher,
-      assertPublicHost: ssrf2,
+      assertPublicHost: ssrf,
     });
-
-    // Keeping the first ssrf var referenced so no-unused-locals stays happy.
-    void ssrf;
 
     assert.equal(articles.length, 1);
     assert.equal(articles[0]?.source, 'expressen');

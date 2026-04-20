@@ -93,7 +93,7 @@ describe('web-search tool', () => {
       const text = (result.content[0] as { type: 'text'; text: string }).text;
       assert.match(text, /Web search results for "test search"/);
       assert.match(text, /Result One/);
-      assert.match(text, /https:\/\/example\.com\/1/);
+      assert.ok(text.includes('https://example.com/1'), 'expected first result URL');
       assert.match(text, /Result Two/);
       assert.match(text, /Result Three/);
       assert.match(text, /Source: google/);
