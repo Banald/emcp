@@ -1127,36 +1127,15 @@ phase_ghcr_login() {
         return 0
     fi
 
-    # Try the gh CLI. The installer runs as root (sudo), so `$HOME=/root`
-    # and root's PATH typically doesn't include `gh` from the invoking
-    # user's profile. Even when it does, `gh auth status` reads
-    # /root/.config/gh/hosts.yml which isn't where the token lives. Detect
-    # both shapes: running-as-current-user and invoked-via-sudo.
-    local gh_cmd=()
+    # Try the gh CLI. v2 runs as the operator's own user, so if `gh auth
+    # status` works here, we can mint a read:packages token directly —
+    # no sudo dance needed.
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        gh_cmd=(gh)
-    elif [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] \
-         && command -v sudo >/dev/null 2>&1; then
-        # Invoked via sudo: re-run gh as the real user. Try caller's PATH
-        # first; fall back to a login environment if gh isn't reachable
-        # without one (e.g. installed under ~/.local/bin).
-        if sudo -u "$SUDO_USER" -- gh auth status >/dev/null 2>&1; then
-            gh_cmd=(sudo -u "$SUDO_USER" -- gh)
-        elif sudo -iu "$SUDO_USER" -- gh auth status >/dev/null 2>&1; then
-            gh_cmd=(sudo -iu "$SUDO_USER" -- gh)
-        fi
-    fi
-
-    if [ "${#gh_cmd[@]}" -gt 0 ]; then
-        if [ "${gh_cmd[0]}" = "sudo" ]; then
-            log_info "using gh CLI via sudo -u $SUDO_USER to mint a read:packages token"
-        else
-            log_info "using gh CLI to mint a read:packages token"
-        fi
-        "${gh_cmd[@]}" auth refresh -s read:packages >/dev/null 2>&1 || true
+        log_info "using gh CLI to mint a read:packages token"
+        gh auth refresh -s read:packages >/dev/null 2>&1 || true
         local gh_user gh_token
-        gh_user="$("${gh_cmd[@]}" api user -q .login 2>/dev/null || true)"
-        gh_token="$("${gh_cmd[@]}" auth token 2>/dev/null || true)"
+        gh_user="$(gh api user -q .login 2>/dev/null || true)"
+        gh_token="$(gh auth token 2>/dev/null || true)"
         if [ -n "$gh_token" ] && [ -n "$gh_user" ]; then
             docker_login_with_token "$gh_token" "$gh_user"
             return 0
@@ -1172,11 +1151,6 @@ phase_ghcr_login() {
     fi
 
     log_info "no reachable gh CLI — falling back to manual PAT entry"
-    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-        log_info "hint: if your non-root user has gh set up,"
-        log_info "  gh auth token | sudo bash install.sh --ghcr-token-file /dev/stdin --from-local \"\$(pwd)\""
-        log_info "works in one shot. Otherwise:"
-    fi
     log_info "create a token with 'read:packages' scope at:"
     log_info "  https://github.com/settings/tokens/new?scopes=read:packages"
     local pat

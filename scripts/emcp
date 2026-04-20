@@ -141,18 +141,14 @@ cmd_config() {
     require_home
     local installer="$EMCP_HOME/bin/install.sh"
     [ -x "$installer" ] || die "installer not found at $installer — run install.sh manually"
-    if [ "$(id -u)" -ne 0 ]; then
-        exec sudo -E "$installer" --reconfigure --install-dir "$EMCP_HOME"
-    fi
+    # v2 runs as the unprivileged user; all paths + the rootless daemon
+    # are user-owned. No sudo elevation.
     exec "$installer" --reconfigure --install-dir "$EMCP_HOME"
 }
 
 cmd_uninstall() {
     local installer="$EMCP_HOME/bin/install.sh"
     [ -x "$installer" ] || die "installer not found at $installer — run install.sh --uninstall manually"
-    if [ "$(id -u)" -ne 0 ]; then
-        exec sudo -E "$installer" --uninstall --install-dir "$EMCP_HOME" "$@"
-    fi
     exec "$installer" --uninstall --install-dir "$EMCP_HOME" "$@"
 }
 

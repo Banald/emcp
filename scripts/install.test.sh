@@ -232,13 +232,28 @@ else
 fi
 rm -f "$t_pkg"
 
-# ---- 9. gh CLI detection works under sudo --------------------------------
+# ---- 9. v2 has no sudo fallbacks ----------------------------------------
+# The installer + emcp wrapper run as the operator's unprivileged user,
+# targeting a rootless Docker daemon. Any `exec sudo` / `sudo -u` path
+# would mean we slipped back toward the v1 posture.
 
-if grep -qE 'SUDO_USER.*gh auth status' "$INSTALL_SH" \
-   && grep -qE 'sudo -u "\$SUDO_USER" -- gh' "$INSTALL_SH"; then
-    say_pass "phase_ghcr_login falls back to SUDO_USER when root lacks gh"
+# Catch real invocations (`exec sudo`, `sudo -flag`, `| sudo …`) without
+# tripping on prose inside heredocs ("No sudo is ever required at
+# runtime.").
+if grep -qE '(\bexec[[:space:]]+sudo\b|\bsudo[[:space:]]+-|[|&;][[:space:]]*sudo[[:space:]])' "$EMCP_BIN"; then
+    say_fail "emcp still invokes sudo (v2 regression)"
 else
-    say_fail "phase_ghcr_login does not re-run gh as SUDO_USER under sudo"
+    say_pass "emcp has zero sudo invocations (v2)"
+fi
+if grep -qE 'exec sudo' "$INSTALL_SH"; then
+    say_fail "install.sh still execs sudo (v2 regression)"
+else
+    say_pass "install.sh has no 'exec sudo' paths (v2)"
+fi
+if grep -qE 'sudo -u "\$SUDO_USER"' "$INSTALL_SH"; then
+    say_fail "install.sh still re-runs gh via sudo -u SUDO_USER (v2 regression)"
+else
+    say_pass "phase_ghcr_login no longer needs SUDO_USER fallback (v2)"
 fi
 
 # ---- 9. summary snippet + EXIT trap (L4, N2) ------------------------------
