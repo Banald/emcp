@@ -294,6 +294,32 @@ else
     say_fail "searxng template path is missing or relocated again"
 fi
 
+# ---- 4g. compose hardening: resource limits (v2) -------------------------
+# OWASP #7 — every service must declare mem_limit, pids_limit, cpus, and
+# an ulimits nofile block. Per-service sizing lives in .env via the
+# EMCP_<SVC>_* tunables, so we just verify the scaffolding is present.
+resource_fail=0
+for svc in "${COMPOSE_SERVICES[@]}"; do
+    block="$(awk -v s="$svc" '
+        $0 ~ "^  " s ":"        { inside = 1; next }
+        inside && /^  [a-z]/    { inside = 0 }
+        inside                  { print }
+    ' "$COMPOSE_YAML")"
+    for key in 'mem_limit' 'pids_limit' 'cpus' 'ulimits'; do
+        if ! printf '%s\n' "$block" | grep -qE "^ *${key}:"; then
+            say_fail "$svc is missing ${key}"
+            resource_fail=1
+        fi
+    done
+    if ! printf '%s\n' "$block" | grep -qE '^ *nofile:'; then
+        say_fail "$svc is missing ulimits.nofile"
+        resource_fail=1
+    fi
+done
+if [ "$resource_fail" -eq 0 ]; then
+    say_pass "every compose service sets mem_limit/pids_limit/cpus/ulimits (OWASP #7)"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"

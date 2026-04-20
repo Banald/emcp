@@ -5,6 +5,16 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # OWASP #7 — resource caps sized 3–5x expected steady state. Tunable
+    # per-service via .env; the default is lenient enough for a typical
+    # small deployment but still prevents a DoS from eating the host.
+    mem_limit: ${EMCP_POSTGRES_MEM_LIMIT:-512m}
+    pids_limit: ${EMCP_POSTGRES_PIDS_LIMIT:-200}
+    cpus: ${EMCP_POSTGRES_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP Docker Cheat Sheet #3, #4). cap_add is the minimum
     # the postgres image needs at startup: CHOWN + FOWNER for pgdata
     # permissions, SETUID/SETGID for `gosu postgres`, DAC_READ_SEARCH so
@@ -40,6 +50,16 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # OWASP #7 — resource caps. Redis is the rate-limit cache; memory
+    # stays small on purpose (`maxmemory` is not set because the cache
+    # is ephemeral; the container limit is the ceiling).
+    mem_limit: ${EMCP_REDIS_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_REDIS_PIDS_LIMIT:-100}
+    cpus: ${EMCP_REDIS_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). redis drops to the `redis` user in the
     # entrypoint; CHOWN/SETUID/SETGID are the only caps it needs.
     security_opt:
@@ -77,6 +97,15 @@ services:
     # Bump this deliberately; do not revert to `:latest`.
     image: searxng/searxng:2026.4.17-8579974f5
     restart: unless-stopped
+    # OWASP #7 — resource caps. SearXNG scrapes upstream engines in
+    # parallel; bump cpus if the deployment runs a heavy web-search load.
+    mem_limit: ${EMCP_SEARXNG_MEM_LIMIT:-512m}
+    pids_limit: ${EMCP_SEARXNG_PIDS_LIMIT:-200}
+    cpus: ${EMCP_SEARXNG_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). SearXNG's entrypoint chowns
     # /etc/searxng and switches to the `searxng` user via uwsgi.
     security_opt:
@@ -129,6 +158,14 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: "no"
+    # OWASP #7 — migrate is a one-shot; limits are small on purpose.
+    mem_limit: ${EMCP_MIGRATE_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_MIGRATE_PIDS_LIMIT:-50}
+    cpus: ${EMCP_MIGRATE_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). Runs as USER emcp (uid 10001) per the
     # Dockerfile. Needs no capabilities.
     security_opt:
@@ -169,6 +206,16 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # OWASP #7 — the hot path. 1 GiB mem + 500 PIDs gives headroom for
+    # concurrent MCP sessions without being a DoS target. Bump via .env
+    # if your deployment needs more.
+    mem_limit: ${EMCP_SERVER_MEM_LIMIT:-1g}
+    pids_limit: ${EMCP_SERVER_PIDS_LIMIT:-500}
+    cpus: ${EMCP_SERVER_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). Listens on :3000 (unprivileged); runs as
     # USER emcp (uid 10001). Needs no capabilities.
     security_opt:
@@ -248,6 +295,15 @@ services:
       context: .
     pull_policy: ${EMCP_PULL_POLICY:-missing}
     restart: unless-stopped
+    # OWASP #7 — workers hold parallel HTTP fetchers and Postgres
+    # connections; size to match mcp-server.
+    mem_limit: ${EMCP_WORKER_MEM_LIMIT:-1g}
+    pids_limit: ${EMCP_WORKER_PIDS_LIMIT:-500}
+    cpus: ${EMCP_WORKER_CPUS:-2.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). No network listener; runs as USER emcp
     # (uid 10001); needs no capabilities.
     security_opt:
@@ -305,6 +361,14 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # OWASP #7 — reverse proxy with small footprint.
+    mem_limit: ${EMCP_CADDY_MEM_LIMIT:-256m}
+    pids_limit: ${EMCP_CADDY_PIDS_LIMIT:-100}
+    cpus: ${EMCP_CADDY_CPUS:-1.0}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
     # Hardening (OWASP #3, #4). Caddy's image runs as root inside the
     # container; under rootless userns that maps to a subuid on the
     # host. NET_BIND_SERVICE is required so Caddy can bind :80/:443
