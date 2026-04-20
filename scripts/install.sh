@@ -629,6 +629,7 @@ phase_fetch_source() {
 copy_source_tree() {
     local src="$1" dst="$2"
     mkdir -p "$dst"
+    # Operational files — always copied.
     local paths=(compose.yaml Dockerfile .dockerignore .env.example)
     for p in "${paths[@]}"; do
         [ -e "$src/$p" ] && cp -f "$src/$p" "$dst/$p"
@@ -639,6 +640,21 @@ copy_source_tree() {
             cp -r "$src/$d" "$dst/$d"
         fi
     done
+    # Build context — copied only when the operator has the source tree
+    # (every --from-local run, the tarball download, and anything else
+    # that routes through copy_source_tree). This lets
+    # EMCP_PULL_POLICY=build work without a separate checkout: compose's
+    # `build.context: .` resolves to $EMCP_HOME and needs these files.
+    # The extra ~2 MiB is worth the "it just works" UX. When pull_policy
+    # is the default `always`/`missing`, they sit unused.
+    local build_paths=(package.json package-lock.json tsconfig.json .nvmrc)
+    for p in "${build_paths[@]}"; do
+        [ -e "$src/$p" ] && cp -f "$src/$p" "$dst/$p"
+    done
+    if [ -d "$src/src" ]; then
+        rm -rf "${dst:?}/src"
+        cp -r "$src/src" "$dst/src"
+    fi
     # Install helper scripts under $EMCP_HOME/bin so `emcp config` can
     # re-run the rootless preflight without needing the source tree.
     mkdir -p "$dst/bin"
@@ -795,6 +811,13 @@ load_existing_env_defaults() {
                     EMCP_SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
                     EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
                 fi ;;
+            # phase_ghcr_login short-circuits when EMCP_PULL_POLICY is
+            # build/never; export the existing .env value so re-runs
+            # (emcp config) don't fall back to `always` and prompt for
+            # a PAT the operator doesn't need.
+            EMCP_PULL_POLICY)
+                : "${EMCP_PULL_POLICY:=$(dequote "$v")}"
+                export EMCP_PULL_POLICY ;;
         esac
     done < <(grep -E '^[A-Z_]+=' "$f" || true)
 }
