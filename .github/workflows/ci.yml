@@ -174,6 +174,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             uidmap slirp4netns dbus-user-session fuse-overlayfs
+          # Ubuntu 24.04 defaults kernel.apparmor_restrict_unprivileged_userns=1,
+          # which blocks rootlesskit's fork/exec of /proc/self/exe. The
+          # Ubuntu-recommended fix is a per-binary AppArmor profile; on
+          # an ephemeral CI runner the sysctl disable is simpler and
+          # scoped to this job's VM (see upstream rootlesskit docs).
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Stop the runner's rootful daemon
         run: |
           # GHA's rootful docker.service holds /var/run/docker.sock; we
