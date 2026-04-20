@@ -366,6 +366,21 @@ if [ "$net_fail" -eq 0 ]; then
     say_pass "every service attaches to the expected network plane(s) (OWASP #5)"
 fi
 
+# ---- 4i. supply chain: base image pinned by digest (OWASP #13) -----------
+DOCKERFILE="$SCRIPT_DIR/../Dockerfile"
+if grep -cE '^FROM node:24-bookworm-slim@sha256:[a-f0-9]{64}' "$DOCKERFILE" | grep -qE '^[1-9]'; then
+    say_pass "Dockerfile pins the base image by @sha256 digest (OWASP #13)"
+else
+    say_fail "Dockerfile FROM line is not digest-pinned (OWASP #13 regression)"
+fi
+# Dependabot must include the docker ecosystem so the digest doesn't rot.
+DEPENDABOT="$SCRIPT_DIR/../.github/dependabot.yml"
+if grep -qE '^ *- *package-ecosystem:[[:space:]]*docker' "$DEPENDABOT"; then
+    say_pass "dependabot.yml watches Dockerfile base-image pins"
+else
+    say_fail "dependabot.yml missing package-ecosystem: docker"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"

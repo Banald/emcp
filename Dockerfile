@@ -2,16 +2,21 @@
 # Multi-stage build for the eMCP server.
 # The same image runs either process — `mcp-server` or `mcp-worker` — chosen
 # by the CMD override in compose.yaml.
+#
+# Base image is pinned by digest (OWASP Docker Cheat Sheet #13 — supply
+# chain). Bump the digest by finding the current one:
+#   docker buildx imagetools inspect node:24-bookworm-slim | grep Digest
+# or let .github/dependabot.yml auto-PR a new digest weekly.
 
 # --- deps: production node_modules only -----------------------------------
-FROM node:24-bookworm-slim AS deps
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --no-audit --no-fund
 
 # --- build: compile TypeScript to dist/ -----------------------------------
-FROM node:24-bookworm-slim AS build
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -21,7 +26,7 @@ COPY src ./src
 RUN npx tsc
 
 # --- runtime: the final image --------------------------------------------
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS runtime
 
 ENV NODE_ENV=production \
     EMCP_BIND_HOST=0.0.0.0 \
