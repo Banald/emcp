@@ -26,13 +26,14 @@ If you operated a v1 install, see [`docs/MIGRATION_V1_TO_V2.md`](docs/MIGRATION_
 
 ### Added
 
-- `scripts/preflight-rootless.sh` — read-only preflight that checks kernel ≥ 5.13, uidmap / slirp4netns / dbus-user-session packages, `/etc/subuid`+`/etc/subgid` range ≥ 65536 for the operator, systemd linger, and that `docker info` reports the `rootless` SecurityOption. Prints exact remediation commands for each failed check.
+- `scripts/preflight-rootless.sh` — read-only preflight that checks kernel ≥ 5.13, uidmap / slirp4netns / dbus-user-session packages, `/etc/subuid`+`/etc/subgid` range ≥ 65536 for the operator, systemd linger, `kernel.apparmor_restrict_unprivileged_userns` (the Ubuntu 23.10+/24.04 default that blocks rootlesskit), and that `docker info` reports the `rootless` SecurityOption. Prints per-distro remediation commands for each failed check.
 - `compose.yaml` service-level hardening:
   - `security_opt: [no-new-privileges:true]` on every service (OWASP #4).
   - `cap_drop: [ALL]` on every service + minimal per-service `cap_add` (OWASP #3).
   - `read_only: true` + targeted `tmpfs` overlays (OWASP #8).
   - Per-service `mem_limit`, `pids_limit`, `cpus`, `ulimits.nofile` (OWASP #7).
   - Two named networks — `emcp_internal` (app plane, egress allowed) and `emcp_data` (`internal: true`, no egress). Postgres + Redis attach to `emcp_data` only; app services dual-home (OWASP #5).
+- `Dockerfile` runtime stage strips the bundled `npm`, `npx`, and `corepack` — the entrypoint is `node dist/...` and never invokes them. Removes OWASP #8 attack surface and the transitive CVEs that came with npm's own dependency tree (e.g. CVE-2026-33671 in npm's `picomatch`).
 - `Dockerfile` base image pinned by sha256 digest in every stage (OWASP #13). `.github/dependabot.yml` grows a `package-ecosystem: docker` entry to track the digest.
 - `.github/workflows/ci.yml`:
   - New `image-scan` job — Trivy scans the built runtime image and fails on CRITICAL / HIGH CVEs (OWASP #9). `.trivyignore` is checked in empty.
@@ -68,7 +69,7 @@ If you operated a v1 install, see [`docs/MIGRATION_V1_TO_V2.md`](docs/MIGRATION_
 | #5a Port mapping + firewalls | rootless uses slirp4netns; no iptables bypass |
 | #6 LSMs | Docker's default seccomp + host AppArmor; `install.test.sh` forbids `unconfined` |
 | #7 Limit resources | mem_limit, pids_limit, cpus, ulimits.nofile on every service |
-| #8 Read-only FS + tmpfs | `read_only: true` on every service; per-service tmpfs list |
+| #8 Read-only FS + tmpfs | `read_only: true` on every service; per-service tmpfs list; `npm`/`npx`/`corepack` stripped from the runtime image |
 | #9 Scan images in CI | Trivy gate in ci.yml + release.yml |
 | #10 Daemon log level = info | operator-owned; no code change |
 | #11 Run Docker rootless | enforced — preflight refuses to proceed against rootful |
