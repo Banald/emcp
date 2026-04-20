@@ -420,6 +420,46 @@ validate_loglevel() {
     esac
 }
 
+# --- Rootless preflight ---------------------------------------------------
+
+# Sources scripts/preflight-rootless.sh from the same directory this
+# installer lives in, OR (when piped via curl | bash) fetches the tagged
+# copy from GitHub. The preflight script is read-only and prints any
+# remediation commands itself — we just honor its exit code.
+phase_rootless_preflight() {
+    log_step "Rootless Docker preflight"
+
+    local preflight=""
+    if [ -n "$FROM_LOCAL" ] && [ -f "$FROM_LOCAL/scripts/preflight-rootless.sh" ]; then
+        preflight="$FROM_LOCAL/scripts/preflight-rootless.sh"
+    elif [ -f "$(dirname "$0")/preflight-rootless.sh" ]; then
+        preflight="$(dirname "$0")/preflight-rootless.sh"
+    fi
+
+    if [ -z "$preflight" ]; then
+        # curl | bash path: $0 is "bash", the script is gone. Fetch the
+        # tagged copy. Keep this best-effort; the installer still runs
+        # phase_preflight afterwards and will catch docker-not-installed
+        # etc. via the existing checks.
+        local url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${TAG}/scripts/preflight-rootless.sh"
+        preflight="$(mktemp)"
+        INSTALLER_TMP_ROOTS+=("$preflight")
+        if ! curl -fsSL "$url" -o "$preflight" 2>/dev/null; then
+            log_warn "could not fetch rootless preflight from $url — skipping"
+            return 0
+        fi
+    fi
+
+    if bash "$preflight"; then
+        log_ok "rootless preflight passed"
+        return 0
+    fi
+    # Preflight prints its own remediation block to stderr. We just
+    # refuse to proceed — installing against a rootful daemon or a
+    # half-configured rootless host silently corrupts state.
+    die "rootless preflight failed. Fix the items above, then re-run the installer. To bypass (not recommended) set EMCP_SKIP_ROOTLESS_CHECK=1."
+}
+
 # --- Preflight -------------------------------------------------------------
 
 phase_preflight() {
@@ -599,6 +639,12 @@ copy_source_tree() {
             cp -r "$src/$d" "$dst/$d"
         fi
     done
+    # Install helper scripts under $EMCP_HOME/bin so `emcp config` can
+    # re-run the rootless preflight without needing the source tree.
+    mkdir -p "$dst/bin"
+    if [ -f "$src/scripts/preflight-rootless.sh" ]; then
+        install -m 0755 "$src/scripts/preflight-rootless.sh" "$dst/bin/preflight-rootless.sh"
+    fi
     mkdir -p "$dst/secrets"
     [ -f "$src/secrets/README.md" ] && cp -f "$src/secrets/README.md" "$dst/secrets/README.md"
 }
@@ -1831,11 +1877,13 @@ main() {
     fi
 
     if [ "$RECONFIGURE" -eq 1 ]; then
+        phase_rootless_preflight
         phase_preflight
         phase_reconfigure
         return 0
     fi
 
+    phase_rootless_preflight
     phase_preflight
     phase_fetch_source
     phase_generate_secrets

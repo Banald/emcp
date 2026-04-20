@@ -131,6 +131,70 @@ else
     say_fail "install.sh env wizard still defaults HTTPS port to 443 (rootless regression)"
 fi
 
+# ---- 4d. rootless preflight (v2) -----------------------------------------
+PREFLIGHT_SH="$SCRIPT_DIR/preflight-rootless.sh"
+if [ -x "$PREFLIGHT_SH" ]; then
+    say_pass "scripts/preflight-rootless.sh exists and is executable"
+else
+    say_fail "scripts/preflight-rootless.sh missing or not executable (v2)"
+fi
+if [ -f "$PREFLIGHT_SH" ] && bash -n "$PREFLIGHT_SH"; then
+    say_pass "bash -n preflight-rootless.sh"
+else
+    say_fail "bash -n preflight-rootless.sh failed"
+fi
+if command -v shellcheck >/dev/null 2>&1; then
+    if shellcheck -S warning "$PREFLIGHT_SH"; then
+        say_pass "shellcheck preflight-rootless.sh"
+    else
+        say_fail "shellcheck preflight-rootless.sh"
+    fi
+fi
+# Preflight must cover each of the v2 preconditions.
+for probe in 'check_not_root' 'check_platform' 'check_kernel' \
+             'check_packages' 'check_subid_ranges' 'check_linger' \
+             'check_docker_daemon'; do
+    if grep -qE "^${probe}\(\)" "$PREFLIGHT_SH"; then
+        continue
+    fi
+    say_fail "preflight-rootless.sh missing function: $probe"
+    preflight_funcs_fail=1
+done
+if [ -z "${preflight_funcs_fail:-}" ]; then
+    say_pass "preflight-rootless.sh defines every v2 precondition check"
+fi
+# install.sh must define phase_rootless_preflight and call it before
+# phase_preflight inside main(). awk scans the main() function body
+# only; every "phase_preflight" call line must be preceded by a
+# "phase_rootless_preflight" call line in the same branch. Emits
+# "miss" on any violation, nothing on success.
+pre_check="$(awk '
+    /^main\(\)/ { inmain = 1 }
+    inmain && /phase_rootless_preflight$/ { pre = 1 }
+    inmain && /phase_preflight$/          { if (!pre) { print "miss"; exit }; pre = 0 }
+    inmain && /^}/                         { exit }
+' "$INSTALL_SH")"
+if grep -qE '^phase_rootless_preflight\(\)' "$INSTALL_SH" && [ -z "$pre_check" ]; then
+    say_pass "main() runs phase_rootless_preflight before phase_preflight"
+else
+    say_fail "main() does not gate on phase_rootless_preflight"
+fi
+# The preflight must honor EMCP_SKIP_ROOTLESS_CHECK so edge-case hosts
+# can opt out.
+if grep -qE 'EMCP_SKIP_ROOTLESS_CHECK' "$PREFLIGHT_SH" \
+   && grep -qE 'EMCP_SKIP_ROOTLESS_CHECK' "$INSTALL_SH"; then
+    say_pass "preflight-rootless.sh + install.sh honor EMCP_SKIP_ROOTLESS_CHECK"
+else
+    say_fail "EMCP_SKIP_ROOTLESS_CHECK bypass hook missing"
+fi
+# copy_source_tree carries the preflight helper into $EMCP_HOME/bin so
+# `emcp config` can re-run it.
+if grep -qE 'preflight-rootless\.sh' "$INSTALL_SH"; then
+    say_pass "copy_source_tree installs preflight-rootless.sh into \$EMCP_HOME/bin"
+else
+    say_fail "copy_source_tree does not propagate preflight-rootless.sh"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"
