@@ -386,6 +386,52 @@ else
     say_fail "compose_all_healthy missing jq/sed split (L1)"
 fi
 
+# ---- 9b. empty-health tab-collapse regression in compose_all_healthy_jq ---
+# IFS=$'\t' is IFS-whitespace, so bash `read` collapses consecutive tabs into
+# a single delimiter. Emitting .Health as "" from jq produced two adjacent
+# tabs in the TSV row, slid ExitCode into $health, and falsely flagged
+# services without a healthcheck (caddy, mcp-worker) as unhealthy — hanging
+# the installer for 180s before dying.
+
+if grep -qE 'then "none" else \.Health end' "$INSTALL_SH"; then
+    say_pass "compose_all_healthy_jq uses non-empty .Health sentinel"
+else
+    say_fail "compose_all_healthy_jq emits .Health as \"\" — IFS=\$'\\t' read will collapse empty field and misclassify services without a healthcheck"
+fi
+
+if command -v jq >/dev/null 2>&1; then
+    # Load compose_all_healthy_jq out of install.sh without triggering main()
+    # and exercise it against a synthetic `docker compose ps --format json`
+    # payload that mixes healthcheck, no-healthcheck, and exited services.
+    func_src="$(sed -n '/^compose_all_healthy_jq()/,/^}/p' "$INSTALL_SH")"
+    eval "$func_src"
+    fake_json='{"Service":"postgres","State":"running","Health":"healthy","ExitCode":0}
+{"Service":"caddy","State":"running","Health":"","ExitCode":0}
+{"Service":"mcp-worker","State":"running","Health":"","ExitCode":0}
+{"Service":"migrate","State":"exited","Health":"","ExitCode":0}'
+    if compose_all_healthy_jq "$fake_json"; then
+        say_pass "compose_all_healthy_jq returns healthy for services without a healthcheck"
+    else
+        say_fail "compose_all_healthy_jq falsely flags healthy services without a healthcheck"
+    fi
+    # Negative case: a genuinely unhealthy container must still fail the check.
+    bad_json='{"Service":"postgres","State":"running","Health":"unhealthy","ExitCode":0}'
+    if ! compose_all_healthy_jq "$bad_json"; then
+        say_pass "compose_all_healthy_jq detects an unhealthy service"
+    else
+        say_fail "compose_all_healthy_jq missed an unhealthy service"
+    fi
+    # Negative case: a failed one-off (exit != 0) must fail the check.
+    bad_exit='{"Service":"migrate","State":"exited","Health":"","ExitCode":1}'
+    if ! compose_all_healthy_jq "$bad_exit"; then
+        say_pass "compose_all_healthy_jq detects a non-zero exit"
+    else
+        say_fail "compose_all_healthy_jq missed a non-zero exit"
+    fi
+else
+    echo "  [skip]  jq not installed — skipping compose_all_healthy_jq behavioral tests"
+fi
+
 # ---- 9. preflight gates: compose version + arch (H1, H2) ------------------
 
 if grep -qE 'docker compose version --short' "$INSTALL_SH" \

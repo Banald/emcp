@@ -1248,8 +1248,15 @@ compose_all_healthy_jq() {
     local json="$1"
     # Emit one line per service: "service<TAB>state<TAB>health<TAB>exit".
     # The `.[]` walks whichever shape jq parses into (array or NDJSON via -s).
+    # Emit "none" (not "") when .Health is absent — tab is IFS-whitespace, so
+    # `IFS=$'\t' read` collapses the two tabs around an empty field into one
+    # delimiter, sliding ExitCode into $health and leaving $exit_code empty.
+    # That bug falsely flagged healthcheck-less services (caddy, mcp-worker)
+    # as unhealthy until the 180s timeout expired. `//` alone only catches
+    # null, but compose emits "" for a missing healthcheck, so an explicit
+    # if-guard covers both shapes.
     local rows
-    rows="$(printf '%s' "$json" | jq -rs '.[] | [.Service, .State, (.Health // ""), (.ExitCode // 0)] | @tsv' 2>/dev/null || true)"
+    rows="$(printf '%s' "$json" | jq -rs '.[] | [.Service, .State, (if (.Health // "") == "" then "none" else .Health end), (.ExitCode // 0)] | @tsv' 2>/dev/null || true)"
     [ -n "$rows" ] || return 1
     local svc state health exit_code
     while IFS=$'\t' read -r svc state health exit_code; do
@@ -1259,7 +1266,7 @@ compose_all_healthy_jq() {
             continue
         fi
         [ "$state" = "running" ] || return 1
-        if [ -n "$health" ] && [ "$health" != "healthy" ]; then
+        if [ "$health" != "none" ] && [ "$health" != "healthy" ]; then
             return 1
         fi
     done <<< "$rows"
