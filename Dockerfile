@@ -9,14 +9,14 @@
 # or let .github/dependabot.yml auto-PR a new digest weekly.
 
 # --- deps: production node_modules only -----------------------------------
-FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS deps
+FROM node:25-bookworm-slim@sha256:435f3537a088a01fd208bb629a4b69c28d85deb9a60af8a710cafc3befd6e3be AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --no-audit --no-fund
 
 # --- build: compile TypeScript to dist/ -----------------------------------
-FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS build
+FROM node:25-bookworm-slim@sha256:435f3537a088a01fd208bb629a4b69c28d85deb9a60af8a710cafc3befd6e3be AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -26,7 +26,7 @@ COPY src ./src
 RUN npx tsc
 
 # --- runtime: the final image --------------------------------------------
-FROM node:24-bookworm-slim@sha256:879b21aec4a1ad820c27ccd565e7c7ed955f24b92e6694556154f251e4bdb240 AS runtime
+FROM node:25-bookworm-slim@sha256:435f3537a088a01fd208bb629a4b69c28d85deb9a60af8a710cafc3befd6e3be AS runtime
 
 ENV NODE_ENV=production \
     EMCP_BIND_HOST=0.0.0.0 \
