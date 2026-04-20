@@ -381,6 +381,48 @@ else
     say_fail "dependabot.yml missing package-ecosystem: docker"
 fi
 
+# ---- 4j. rootless e2e test + ci-rootless workflow job (v2) ---------------
+E2E_SH="$SCRIPT_DIR/../tests/e2e/install-rootless.test.sh"
+if [ -x "$E2E_SH" ] && bash -n "$E2E_SH"; then
+    say_pass "tests/e2e/install-rootless.test.sh exists, executable, parses"
+else
+    say_fail "tests/e2e/install-rootless.test.sh missing/broken"
+fi
+# The e2e script must actually check every rule it claims to.
+for needle in 'no-new-privileges' 'CapDrop' 'ReadonlyRootfs' 'HostConfig.Memory' 'sudo shim'; do
+    if grep -qF "$needle" "$E2E_SH"; then
+        continue
+    fi
+    say_fail "e2e script missing check for: $needle"
+    e2e_assert_fail=1
+done
+if [ -z "${e2e_assert_fail:-}" ]; then
+    say_pass "e2e script asserts OWASP #3/#4/#7/#8 + sudo-free posture"
+fi
+# The CI workflow must gate on a ci-rootless job that runs the e2e.
+CI_YAML="$SCRIPT_DIR/../.github/workflows/ci.yml"
+if grep -qE '^  ci-rootless:' "$CI_YAML" \
+   && grep -qE 'tests/e2e/install-rootless\.test\.sh' "$CI_YAML"; then
+    say_pass "ci.yml defines a ci-rootless job that runs the e2e"
+else
+    say_fail "ci.yml does not define a ci-rootless job for the e2e test"
+fi
+# image-scan (Trivy) must also be wired up.
+if grep -qE '^  image-scan:' "$CI_YAML" \
+   && grep -qE 'aquasecurity/trivy-action' "$CI_YAML"; then
+    say_pass "ci.yml defines an image-scan job that runs Trivy"
+else
+    say_fail "ci.yml missing Trivy image-scan job (OWASP #9)"
+fi
+# release.yml must sign with cosign.
+RELEASE_YAML="$SCRIPT_DIR/../.github/workflows/release.yml"
+if grep -qE 'cosign sign' "$RELEASE_YAML" \
+   && grep -qE 'sigstore/cosign-installer' "$RELEASE_YAML"; then
+    say_pass "release.yml signs images with cosign (OWASP #13)"
+else
+    say_fail "release.yml does not sign images with cosign"
+fi
+
 # ---- 5. help / usage doesn't explode -------------------------------------
 
 help_out="$("$INSTALL_SH" --help 2>&1)"

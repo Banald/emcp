@@ -146,6 +146,59 @@ jobs:
           EMCP_DATABASE_URL: postgres://placeholder/placeholder
           EMCP_REDIS_URL: redis://placeholder
 
+  ci-rootless:
+    # OWASP Docker Cheat Sheet #11 — end-to-end validation that the v2
+    # installer + compose stack work against a rootless daemon with zero
+    # `sudo` invocations. Rootless Docker is not the runner's default
+    # daemon, so we bring up a user-owned one before running the e2e.
+    #
+    # Flakiness note: this job depends on `dockerd-rootless-setuptool.sh`
+    # behaving on the GHA runner kernel. If it becomes unreliable, the
+    # fallback is a rootless-DinD sidecar — see the branch preserved in
+    # docs/ARCHITECTURE.md.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: ci
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install rootless-Docker prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            uidmap slirp4netns dbus-user-session fuse-overlayfs
+      - name: Stop the runner's rootful daemon
+        run: |
+          sudo systemctl disable --now docker.service docker.socket || true
+          sudo rm -f /var/run/docker.sock
+      - name: Set up rootless Docker as the runner user
+        run: |
+          dockerd-rootless-setuptool.sh install --skip-iptables
+          # Linger so the user-level systemd unit survives the shell exit.
+          sudo loginctl enable-linger "$(id -un)"
+          systemctl --user enable --now docker
+          echo "DOCKER_HOST=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock" >> "$GITHUB_ENV"
+          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
+      - name: Confirm rootless daemon is active
+        run: |
+          docker info --format '{{.SecurityOptions}}' | grep -q rootless \
+            || { echo "daemon is not rootless"; exit 1; }
+          docker info --format 'Rootless: ok ({{.ServerVersion}} at {{.Name}})'
+      - name: Run e2e rootless install test
+        run: bash tests/e2e/install-rootless.test.sh
+      - name: Capture install log on failure
+        if: failure()
+        run: |
+          find "$HOME/.local/share/emcp/bin" -name 'install-*.log' -exec cat {} + 2>/dev/null || true
+          find "$HOME" -name 'install-*.log' -exec cat {} + 2>/dev/null || true
+
   image-scan:
     # OWASP Docker Cheat Sheet #9 — scan the built runtime image for
     # CVEs before the PR lands. Fails the build on CRITICAL or HIGH

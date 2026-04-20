@@ -965,7 +965,7 @@ EMCP_HTTPS_PORT=${EMCP_HTTPS_PORT}
 # --- Image pinning ---
 EMCP_GHCR_OWNER=banald
 EMCP_IMAGE_TAG=${IMAGE_TAG}
-EMCP_PULL_POLICY=always
+EMCP_PULL_POLICY=${EMCP_PULL_POLICY:-always}
 
 # --- Limits (compose defaults are fine; override here if you need to) ---
 EMCP_DATABASE_POOL_MAX=10
@@ -1167,6 +1167,15 @@ resolve_port_conflict() {
 
 phase_ghcr_login() {
     log_step "Authenticate to ghcr.io"
+
+    # Build-from-source and never-pull policies don't need registry auth.
+    # Honoring the env var here keeps CI (and any fork that builds
+    # locally) from hitting the PAT prompt.
+    local pull_policy="${EMCP_PULL_POLICY:-always}"
+    if [ "$pull_policy" = "build" ] || [ "$pull_policy" = "never" ]; then
+        log_info "EMCP_PULL_POLICY=${pull_policy} — skipping ghcr.io authentication"
+        return 0
+    fi
 
     local image="${IMAGE_REPO}:${IMAGE_TAG}"
 
