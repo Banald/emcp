@@ -209,7 +209,7 @@ jobs:
         # OWASP #13 — keyless image signing via the workflow's OIDC
         # identity. Installs only the cosign binary; no long-lived keys
         # ever live in the repo or as a secret.
-        uses: sigstore/cosign-installer@d7d6e113b16d7d6f3bbe7e3b5c3e03dcd06be7f8 # v3.7.0
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
       - name: Sign the image with cosign
         env:
           IMAGE: ${{ steps.image.outputs.name }}
