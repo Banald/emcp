@@ -2,6 +2,12 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.2.0]
+
+### Added
+
+- `get-current-context` tool — returns the server's current UTC datetime, a training-cutoff hint, and a short list of reminders to nudge the model away from reasoning on stale training data. Zero-arg; intended to be called at the start of a session before anything time-sensitive.
+
 ## [2.1.0]
 
 ### Changed
