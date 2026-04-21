@@ -31,7 +31,12 @@ const makeSearxngResponse = (
 
 const sampleResults = [
   { title: 'Result One', url: 'https://example.com/1', content: 'First snippet', engine: 'google' },
-  { title: 'Result Two', url: 'https://example.com/2', content: 'Second snippet', engine: 'startpage' },
+  {
+    title: 'Result Two',
+    url: 'https://example.com/2',
+    content: 'Second snippet',
+    engine: 'startpage',
+  },
   { title: 'Result Three', url: 'https://example.com/3', content: 'Third snippet', engine: 'bing' },
 ];
 
@@ -93,7 +98,7 @@ describe('web-search tool', () => {
       const text = (result.content[0] as { type: 'text'; text: string }).text;
       assert.match(text, /Web search results for "test search"/);
       assert.match(text, /Result One/);
-      assert.ok(text.includes('https://example.com/1'), 'expected first result URL');
+      assert.match(text, /https:\/\/example\.com\/1(?:\s|$)/, 'expected first result URL');
       assert.match(text, /Result Two/);
       assert.match(text, /Result Three/);
       assert.match(text, /Source: google/);
