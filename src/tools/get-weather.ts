@@ -24,6 +24,18 @@ const NORDIC_BALTIC_COUNTRY_CODES: ReadonlySet<string> = new Set([
   'LT',
 ]);
 
+const CONDITIONS = [
+  'sunny',
+  'cloudy',
+  'foggy',
+  'raining',
+  'snowing',
+  'sleet',
+  'thunderstorm',
+  'unknown',
+] as const;
+type Condition = (typeof CONDITIONS)[number];
+
 const inputSchema = {
   location: z
     .string()
@@ -32,35 +44,7 @@ const inputSchema = {
     .describe(
       'City, address, or place name to fetch weather for. Examples: "Stockholm", "Tromsø", "Kungsgatan 12, Göteborg". Resolved to coordinates via Open-Meteo geocoding. SMHI only covers the Nordic/Baltic region (SE/NO/FI/DK/IS/EE/LV/LT), so places outside that area return isError.',
     ),
-  steps: z
-    .number()
-    .int()
-    .min(1)
-    .max(96)
-    .default(24)
-    .describe(
-      'How many forecast steps to return from the series (default 24). The first ~24 steps are 1-hour, later steps are 3/6/12-hour.',
-    ),
 };
-
-const stepSchema = z.object({
-  time: z.string(),
-  air_temperature: z.number().nullable(),
-  wind_speed: z.number().nullable(),
-  wind_from_direction: z.number().nullable(),
-  wind_speed_of_gust: z.number().nullable(),
-  relative_humidity: z.number().nullable(),
-  air_pressure_at_mean_sea_level: z.number().nullable(),
-  visibility_in_air: z.number().nullable(),
-  cloud_area_fraction: z.number().nullable(),
-  precipitation_amount_mean: z.number().nullable(),
-  precipitation_amount_min: z.number().nullable(),
-  precipitation_amount_max: z.number().nullable(),
-  predominant_precipitation_type_at_surface: z.number().nullable(),
-  thunderstorm_probability: z.number().nullable(),
-  symbol_code: z.number().nullable(),
-  symbol_label: z.string().nullable(),
-});
 
 const resolvedLocationSchema = z.object({
   name: z.string().describe('Place name as returned by the geocoder.'),
@@ -78,15 +62,20 @@ const outputSchema = {
   resolved_location: resolvedLocationSchema.describe(
     'What Open-Meteo geocoding resolved the query to. Echo the name/country back to the user so they can correct ambiguous place names.',
   ),
-  approved_time: z.string().describe('ISO 8601 timestamp when the forecast was approved.'),
-  reference_time: z.string().describe('ISO 8601 timestamp of the forecast reference.'),
-  latitude: z.number().describe('Latitude used for the SMHI lookup (rounded).'),
-  longitude: z.number().describe('Longitude used for the SMHI lookup (rounded).'),
-  geometry_coordinates: z
-    .array(z.number())
-    .describe('The [longitude, latitude] reported by SMHI (may snap to the ~2.5 km grid).'),
-  now: stepSchema.describe('Condensed snapshot built from timeSeries[0].'),
-  series: z.array(stepSchema).describe('The first N forecast steps (N = steps).'),
+  time: z.string().describe('ISO 8601 timestamp of the forecast step this snapshot is for.'),
+  temperature_celsius: z
+    .number()
+    .nullable()
+    .describe('Current air temperature in degrees Celsius, or null if unavailable.'),
+  wind_speed_ms: z
+    .number()
+    .nullable()
+    .describe('Current wind speed in metres per second, or null if unavailable.'),
+  condition: z
+    .enum(CONDITIONS)
+    .describe(
+      'Simple current weather condition bucketed from SMHI symbol codes: sunny, cloudy, foggy, raining, snowing, sleet, thunderstorm, or unknown.',
+    ),
 };
 
 interface RawTimeStep {
@@ -95,9 +84,6 @@ interface RawTimeStep {
 }
 
 interface RawForecast {
-  readonly approvedTime?: string;
-  readonly referenceTime?: string;
-  readonly geometry?: { readonly type?: string; readonly coordinates?: readonly number[] };
   readonly timeSeries?: readonly RawTimeStep[];
 }
 
@@ -129,12 +115,12 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   name: 'get-weather',
   title: 'Get Weather',
   description:
-    'Fetch a point forecast for a city, address, or place name. The tool geocodes the location via Open-Meteo (CC BY 4.0) and then queries SMHI (the Swedish Meteorological and Hydrological Institute) using the SNOW1gv1 product. Coverage is the Nordic/Baltic region (Sweden, Norway, Finland, Denmark, Iceland, Estonia, Latvia, Lithuania); places outside this area return isError. The response includes the resolved place name, approved/reference times, a "now" snapshot (temperature, wind, humidity, precipitation, cloud cover, WMO-style weather symbol label) and a configurable number of forecast steps. Data is licensed CC BY 4.0 — attribute SMHI and Open-Meteo when displaying.',
+    'Fetch the current weather for a city, address, or place name. The tool geocodes the location via Open-Meteo (CC BY 4.0) and then queries SMHI (the Swedish Meteorological and Hydrological Institute) using the SNOW1gv1 product. Coverage is the Nordic/Baltic region (Sweden, Norway, Finland, Denmark, Iceland, Estonia, Latvia, Lithuania); places outside this area return isError. The response is a compact snapshot: resolved place name, the forecast timestamp, current temperature (°C), wind speed (m/s), and a simple condition bucket (sunny, cloudy, foggy, raining, snowing, sleet, thunderstorm, unknown). Data is licensed CC BY 4.0 — attribute SMHI and Open-Meteo when displaying.',
   inputSchema,
   outputSchema,
   rateLimit: { perMinute: 30 },
 
-  handler: async ({ location, steps }, ctx: ToolContext): Promise<CallToolResult> => {
+  handler: async ({ location }, ctx: ToolContext): Promise<CallToolResult> => {
     const query = location.trim();
     if (query.length === 0) {
       return {
@@ -208,10 +194,8 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
     }
 
     const raw = (await response.json()) as RawForecast;
-
-    const allSteps = (raw.timeSeries ?? []).map(normalizeStep);
-    const nowStep = allSteps[0];
-    if (nowStep === undefined) {
+    const firstStep = raw.timeSeries?.[0];
+    if (firstStep === undefined) {
       return {
         content: [
           {
@@ -223,8 +207,7 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
       };
     }
 
-    const series = allSteps.slice(0, steps);
-
+    const data = firstStep.data ?? {};
     const snapshot = {
       query,
       resolved_location: {
@@ -234,21 +217,14 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
         latitude: place.latitude,
         longitude: place.longitude,
       },
-      approved_time: raw.approvedTime ?? '',
-      reference_time: raw.referenceTime ?? '',
-      latitude: lat,
-      longitude: lon,
-      geometry_coordinates: Array.isArray(raw.geometry?.coordinates)
-        ? [...raw.geometry.coordinates]
-        : [lon, lat],
-      now: nowStep,
-      series,
+      time: firstStep.time ?? '',
+      temperature_celsius: pickNumber(data, 'air_temperature'),
+      wind_speed_ms: pickNumber(data, 'wind_speed'),
+      condition: conditionFromSymbol(pickNumber(data, 'symbol_code')),
     };
 
-    const text = formatText(snapshot);
-
     return {
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text: formatText(snapshot) }],
       structuredContent: snapshot,
     };
   },
@@ -310,89 +286,52 @@ function round6(n: number): number {
   return Math.round(n * 1_000_000) / 1_000_000;
 }
 
-interface ForecastStep {
-  readonly time: string;
-  readonly air_temperature: number | null;
-  readonly wind_speed: number | null;
-  readonly wind_from_direction: number | null;
-  readonly wind_speed_of_gust: number | null;
-  readonly relative_humidity: number | null;
-  readonly air_pressure_at_mean_sea_level: number | null;
-  readonly visibility_in_air: number | null;
-  readonly cloud_area_fraction: number | null;
-  readonly precipitation_amount_mean: number | null;
-  readonly precipitation_amount_min: number | null;
-  readonly precipitation_amount_max: number | null;
-  readonly predominant_precipitation_type_at_surface: number | null;
-  readonly thunderstorm_probability: number | null;
-  readonly symbol_code: number | null;
-  readonly symbol_label: string | null;
-}
-
-export function normalizeStep(step: RawTimeStep): ForecastStep {
-  const data = step.data ?? {};
-  const symbol = pickNumber(data, 'symbol_code');
-  return {
-    time: step.time ?? '',
-    air_temperature: pickNumber(data, 'air_temperature'),
-    wind_speed: pickNumber(data, 'wind_speed'),
-    wind_from_direction: pickNumber(data, 'wind_from_direction'),
-    wind_speed_of_gust: pickNumber(data, 'wind_speed_of_gust'),
-    relative_humidity: pickNumber(data, 'relative_humidity'),
-    air_pressure_at_mean_sea_level: pickNumber(data, 'air_pressure_at_mean_sea_level'),
-    visibility_in_air: pickNumber(data, 'visibility_in_air'),
-    cloud_area_fraction: pickNumber(data, 'cloud_area_fraction'),
-    precipitation_amount_mean: pickNumber(data, 'precipitation_amount_mean'),
-    precipitation_amount_min: pickNumber(data, 'precipitation_amount_min'),
-    precipitation_amount_max: pickNumber(data, 'precipitation_amount_max'),
-    predominant_precipitation_type_at_surface: pickNumber(
-      data,
-      'predominant_precipitation_type_at_surface',
-    ),
-    thunderstorm_probability: pickNumber(data, 'thunderstorm_probability'),
-    symbol_code: symbol,
-    symbol_label: symbol === null ? null : labelForSymbol(symbol),
-  };
-}
-
 export function pickNumber(data: Record<string, number>, key: string): number | null {
   const v = data[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-export function labelForSymbol(code: number): string {
-  return SYMBOL_LABELS[code] ?? `unknown (${code})`;
+export function conditionFromSymbol(code: number | null): Condition {
+  if (code === null) return 'unknown';
+  switch (code) {
+    case 1:
+    case 2:
+      return 'sunny';
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+      return 'cloudy';
+    case 7:
+      return 'foggy';
+    case 8:
+    case 9:
+    case 10:
+    case 18:
+    case 19:
+    case 20:
+      return 'raining';
+    case 11:
+    case 21:
+      return 'thunderstorm';
+    case 12:
+    case 13:
+    case 14:
+    case 22:
+    case 23:
+    case 24:
+      return 'sleet';
+    case 15:
+    case 16:
+    case 17:
+    case 25:
+    case 26:
+    case 27:
+      return 'snowing';
+    default:
+      return 'unknown';
+  }
 }
-
-const SYMBOL_LABELS: Record<number, string> = {
-  1: 'Clear sky',
-  2: 'Nearly clear',
-  3: 'Variable cloudiness',
-  4: 'Half clear',
-  5: 'Cloudy',
-  6: 'Overcast',
-  7: 'Fog',
-  8: 'Light rain showers',
-  9: 'Moderate rain showers',
-  10: 'Heavy rain showers',
-  11: 'Thunderstorm',
-  12: 'Light sleet showers',
-  13: 'Moderate sleet showers',
-  14: 'Heavy sleet showers',
-  15: 'Light snow showers',
-  16: 'Moderate snow showers',
-  17: 'Heavy snow showers',
-  18: 'Light rain',
-  19: 'Moderate rain',
-  20: 'Heavy rain',
-  21: 'Thunder',
-  22: 'Light sleet',
-  23: 'Moderate sleet',
-  24: 'Heavy sleet',
-  25: 'Light snowfall',
-  26: 'Moderate snowfall',
-  27: 'Heavy snowfall',
-};
 
 interface Snapshot {
   readonly query: string;
@@ -403,46 +342,16 @@ interface Snapshot {
     readonly latitude: number;
     readonly longitude: number;
   };
-  readonly approved_time: string;
-  readonly reference_time: string;
-  readonly latitude: number;
-  readonly longitude: number;
-  readonly now: ForecastStep;
-  readonly series: readonly ForecastStep[];
+  readonly time: string;
+  readonly temperature_celsius: number | null;
+  readonly wind_speed_ms: number | null;
+  readonly condition: Condition;
 }
 
 function formatText(s: Snapshot): string {
-  const n = s.now;
   const place = s.resolved_location;
   const countryLabel = place.country ?? place.country_code ?? 'unknown country';
-  const lines: string[] = [];
-  lines.push(
-    `SMHI forecast for "${s.query}" → ${place.name}, ${countryLabel} (${s.latitude}, ${s.longitude})`,
-  );
-  lines.push(`Approved: ${s.approved_time}    Reference: ${s.reference_time}`);
-  lines.push('');
-  lines.push(`Now — ${n.time}`);
-  lines.push(`  Weather:       ${n.symbol_label ?? 'n/a'} (code ${n.symbol_code ?? 'n/a'})`);
-  lines.push(
-    `  Temperature:   ${fmtNum(n.air_temperature)} °C    Humidity: ${fmtNum(n.relative_humidity)} %`,
-  );
-  lines.push(
-    `  Wind:          ${fmtNum(n.wind_speed)} m/s from ${fmtNum(n.wind_from_direction)}° (gusts ${fmtNum(n.wind_speed_of_gust)} m/s)`,
-  );
-  lines.push(
-    `  Precipitation: ${fmtNum(n.precipitation_amount_mean)} mm    Cloud cover: ${fmtNum(n.cloud_area_fraction)}`,
-  );
-  lines.push(`  Pressure:      ${fmtNum(n.air_pressure_at_mean_sea_level)} hPa`);
-  lines.push('');
-  lines.push(`Forecast — next ${s.series.length} steps:`);
-  for (const step of s.series) {
-    lines.push(
-      `  ${step.time}  ${fmtNum(step.air_temperature)}°C  wind ${fmtNum(step.wind_speed)} m/s  ${step.symbol_label ?? 'n/a'}`,
-    );
-  }
-  return lines.join('\n');
-}
-
-export function fmtNum(value: number | null): string {
-  return value === null ? 'n/a' : String(value);
+  const temp = s.temperature_celsius === null ? 'n/a' : `${s.temperature_celsius} °C`;
+  const wind = s.wind_speed_ms === null ? 'n/a' : `${s.wind_speed_ms} m/s`;
+  return `Weather for "${s.query}" → ${place.name}, ${countryLabel} at ${s.time}: ${temp}, wind ${wind}, ${s.condition}.`;
 }
