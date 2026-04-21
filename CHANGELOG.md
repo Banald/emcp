@@ -17,8 +17,6 @@ All notable changes to eMCP land here. Format follows [Keep a Changelog](https:/
 
 v2 ships eMCP as a rootless-first deployment. The installer and every `emcp …` subcommand run as an unprivileged user; the entire stack lives under the operator's own rootless Docker daemon. Every service in `compose.yaml` now measurably meets the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html) rules #1, #3, #4, #5, #7, #8, #9, #11, and #13.
 
-If you operated a v1 install, see [`docs/MIGRATION_V1_TO_V2.md`](docs/MIGRATION_V1_TO_V2.md) — v2 is a clean break.
-
 ### Breaking changes
 
 - **No sudo anywhere at runtime.** The installer refuses to run as root; `emcp config` and `emcp uninstall` dropped their `exec sudo` branches; `phase_ghcr_login` dropped its `SUDO_USER` fallback.
@@ -51,7 +49,7 @@ If you operated a v1 install, see [`docs/MIGRATION_V1_TO_V2.md`](docs/MIGRATION_
   - SBOM + SLSA provenance attestations already on the Buildx step.
   - **Keyless cosign signing** via the workflow's OIDC identity. Release notes include a ready-to-run `cosign verify` invocation.
 - `tests/e2e/install-rootless.test.sh` — end-to-end check that the installer runs with zero sudo invocations against a real rootless daemon, and that every running container matches the declared OWASP posture.
-- `docs/MIGRATION_V1_TO_V2.md`, updated `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/OPERATIONS.md`, `README.md` for the rootless + OWASP story.
+- Updated `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/OPERATIONS.md`, `README.md` for the rootless + OWASP story.
 
 ### Changed
 

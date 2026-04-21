@@ -351,18 +351,18 @@ Supervised by Docker Compose in the production deployment (`compose.yaml` at the
 
 **Worker scaling (known limitation)**: `mcp-worker` runs as a single instance because croner schedules are in-memory. Running multiple instances would fire every cron tick per instance. Horizontal scaling requires a Redis advisory lock around every fire — out of scope for the initial migration, documented as a follow-up in `docs/WORKER_AUTHORING.md`.
 
-### Rootless runtime (v2)
+### Rootless runtime
 
 The entire stack runs against the operator's **rootless Docker daemon**. No compose service ever sees `/var/run/docker.sock`; no container runs as host-root. Two consequences shape the architecture:
 
 - **UID namespaces.** When a container declares `USER emcp` (uid 10001 in our Dockerfile), the uid inside the container maps to a subuid on the host — typically `${subuid_start} + 10001`, where `subuid_start` comes from `/etc/subuid`. Bind-mounted files need the "other" permission bit set because the subuid is neither the file's owner (uid 0 inside the container, which is the operator on the host) nor group. All secrets live at mode `0644` for that reason; the entry in `secrets/README.md` records the rationale.
-- **Privileged host ports.** Rootless cannot publish `<1024` on the host. Caddy still binds **internal** `:80`/`:443` (CAP_NET_BIND_SERVICE retained inside the userns), but the published ports default to `8080` / `8443`. See `README.md` "Public port binding in rootless mode" for the three ways to serve public 80/443.
+- **Privileged host ports.** Rootless cannot publish `<1024` on the host. Caddy still binds **internal** `:80`/`:443` (CAP_NET_BIND_SERVICE retained inside the userns), but the published ports default to `8080` / `8443`. See [`INSTALL.md` — "Public port binding in rootless mode"](INSTALL.md#public-port-binding-in-rootless-mode) for the three ways to serve public 80/443.
 
 No iptables bypass: rootless uses `slirp4netns` for host ↔ container networking, routing host-side publish traffic through user-space instead of forging iptables rules. This removes the entire class of "docker published port is exempt from UFW" surprises that afflicts rootful deployments (OWASP Docker Cheat Sheet rule #5a).
 
 ### Defense in depth (OWASP Docker Cheat Sheet)
 
-Every compose service in v2 enforces:
+Every compose service enforces:
 
 | Control | Mechanism | Where |
 |---|---|---|

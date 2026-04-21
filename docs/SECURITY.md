@@ -225,13 +225,13 @@ When `EMCP_PROXY_URLS` is set, every external HTTP fetch from the server and wor
 - The `web-search` tool intentionally keeps a raw `fetch()` call with an inline comment explaining the carve-out; if a future "consistency fix" moves it onto `fetchExternal`, the compose stack breaks and SearXNG becomes unreachable. Reviewers MUST catch this.
 - SearXNG's own outbound (engine scrapers) has a separate env var (`EMCP_SEARXNG_OUTGOING_PROXIES`) rendered into `settings.yml` by `infra/searxng/entrypoint.sh`. That path is deliberately independent of the Node-side pool.
 
-**Forbidden URL schemes.** `EMCP_PROXY_URLS` accepts only `http://` and `https://` schemes. SOCKS5 is intentionally unsupported in v1 — adding it requires additional validation (SOCKS5 authentication modes have their own pitfalls) and an explicit threat-model review. The Zod validator rejects any other scheme at startup.
+**Forbidden URL schemes.** `EMCP_PROXY_URLS` accepts only `http://` and `https://` schemes. SOCKS5 is intentionally unsupported — adding it requires additional validation (SOCKS5 authentication modes have their own pitfalls) and an explicit threat-model review. The Zod validator rejects any other scheme at startup.
 
 **Shutdown guarantee.** Every `ProxyAgent` is registered for close via `registerShutdown('proxy-pool', ...)` in `src/shared/net/proxy/registry.ts`. In-flight CONNECT tunnels drain during the normal shutdown sequence; orphaned sockets cannot persist past the grace window.
 
 ## Rule 14: Container runtime posture (OWASP Docker Cheat Sheet)
 
-v2 runs exclusively on a **rootless Docker daemon**. Every compose service measurably satisfies the relevant rules of the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html). These are enforced — not aspirational:
+eMCP runs exclusively on a **rootless Docker daemon**. Every compose service measurably satisfies the relevant rules of the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html). These are enforced — not aspirational:
 
 - **MUST NOT** bind-mount `/var/run/docker.sock` or any docker socket into any container (rule #1). `scripts/install.test.sh` asserts this.
 - **MUST** run the host Docker daemon in rootless mode. `scripts/preflight-rootless.sh` refuses to continue if `docker info` doesn't report the `rootless` SecurityOption (rule #11). The installer itself refuses to run as root.

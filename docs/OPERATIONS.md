@@ -286,7 +286,7 @@ registerShutdown(async () => {
 
 ## Containerized deployment operations
 
-When eMCP runs under Docker Compose (see `README.md`), every CLI command
+When eMCP runs under Docker Compose (see [`INSTALL.md`](INSTALL.md)), every CLI command
 runs via `docker compose run --rm <service>`. The image is the same one
 that powers `mcp-server` and `mcp-worker` — it ships `dist/db/migrate.js`,
 `dist/cli/keys.js`, and the full runtime.
@@ -445,94 +445,10 @@ Toggle SearXNG back to direct by setting `EMCP_SEARXNG_OUTGOING_PROXIES=` and `e
 
 ### Known limitations
 
-- **HTTP + HTTPS proxies only.** SOCKS5 is not supported in v1 (see `docs/SECURITY.md` Rule 13 for rationale).
+- **HTTP + HTTPS proxies only.** SOCKS5 is not supported (see `docs/SECURITY.md` Rule 13 for rationale).
 - **No per-tool proxy routing.** The pool is global; every tool and the fetch-news worker share the same rotation. If a specific tool should egress differently, that's a code change (introducing a secondary pool) and is out of scope for the current design.
 - **No health probing.** The pool learns about proxy failures lazily — from real requests. A freshly-down proxy won't be detected until the next request lands on it, at which point the cooldown path fires. If this turns into a problem in practice, a probing worker is a natural follow-up.
 - **Single-process rotation state.** Server and worker each own a pool instance. That's fine because their request streams are independent; the scale-out constraint is the same as the rest of the worker process (`instances: 1`).
-
-## Bootstrapping rootless Docker (v2 prerequisite)
-
-v2 refuses to install against a rootful daemon. `scripts/preflight-rootless.sh` prints the exact remediation for any missing precondition; the full happy-path bootstrap on a fresh Ubuntu / Debian host is:
-
-```bash
-# One-time package install (needs sudo — the last time you'll use it).
-sudo apt install -y uidmap slirp4netns dbus-user-session fuse-overlayfs
-
-# Subordinate UID/GID range (skip if `grep "^$USER:" /etc/subuid` already shows
-# a range >= 65536 — Ubuntu seeds one automatically for useradd).
-sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"
-
-# Rootless daemon survives logout.
-sudo loginctl enable-linger "$USER"
-
-# Install + start the rootless daemon as the current user.
-curl -fsSL https://get.docker.com/rootless | sh
-systemctl --user enable --now docker
-
-# Point docker CLI at the user daemon for subsequent shells (add to .bashrc).
-export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
-export PATH=$HOME/bin:$PATH
-```
-
-### Ubuntu 23.10+ / 24.04 — AppArmor restricts unprivileged user namespaces
-
-Ubuntu 23.10 introduced `kernel.apparmor_restrict_unprivileged_userns=1` as the default, which blocks `rootlesskit` from `fork/exec`-ing `/proc/self/exe`. The symptom is a clear error at daemon start:
-
-```
-[rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: permission denied
-```
-
-Two fixes:
-
-1. **Quick sysctl disable** (trusted hosts — opens a kernel feature you may have wanted off):
-
-   ```bash
-   echo 'kernel.apparmor_restrict_unprivileged_userns=0' \
-     | sudo tee /etc/sysctl.d/60-rootless-docker.conf
-   sudo sysctl --system
-   ```
-
-2. **Per-binary AppArmor profile** (correct long-term fix):
-
-   ```bash
-   sudo tee /etc/apparmor.d/home.${USER}.bin.rootlesskit > /dev/null <<EOT
-   abi <abi/4.0>,
-   include <tunables/global>
-
-   $HOME/bin/rootlesskit flags=(unconfined) {
-     userns,
-     include if exists <local/home.${USER}.bin.rootlesskit>
-   }
-   EOT
-   sudo systemctl restart apparmor.service
-   ```
-
-`scripts/preflight-rootless.sh` flags this automatically (`check_apparmor_userns`). See the upstream notes at <https://rootlesscontaine.rs/getting-started/common/#apparmor>.
-
-### Confirm the preflight is green
-
-```bash
-bash scripts/preflight-rootless.sh
-```
-
-Expect every line to be `[ok]`. Then run the installer — no sudo from here on.
-
-### Verifying the image signature (cosign keyless)
-
-Every release image is signed with the release workflow's OIDC identity (OWASP Docker Cheat Sheet rule #13). Consumers verify:
-
-```bash
-cosign verify ghcr.io/banald/emcp:v2.0.0 \
-  --certificate-identity-regexp '^https://github.com/Banald/emcp/\.github/workflows/release\.yml@' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
-
-SBOM and SLSA provenance attestations are attached to the image manifest:
-
-```bash
-docker buildx imagetools inspect ghcr.io/banald/emcp:v2.0.0 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/banald/emcp:v2.0.0 --format '{{ json .Provenance }}'
-```
 
 ## Backup considerations (deferred)
 

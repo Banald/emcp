@@ -1,54 +1,33 @@
 # eMCP
 
-Production-grade MCP server in TypeScript. Streamable HTTP transport, API key authentication with usage metrics, drop-in scheduled background workers, drop-in tool authoring.
+[![CI](https://github.com/Banald/emcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Banald/emcp/actions/workflows/ci.yml)
+[![Release](https://github.com/Banald/emcp/actions/workflows/release.yml/badge.svg)](https://github.com/Banald/emcp/actions/workflows/release.yml)
+[![Node.js](https://img.shields.io/badge/node-24%20LTS-5FA04E)](https://nodejs.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20Rootless%20Docker-0db7ed)](docs/INSTALL.md)
 
-**v2 is rootless-first.** The installer and every `emcp …` command run as your unprivileged user against your own rootless Docker daemon. The compose stack enforces every relevant rule of the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html) (see [CHANGELOG.md](CHANGELOG.md#owasp-compliance-matrix) for the full accounting).
+Production-grade Model Context Protocol server in TypeScript. Streamable HTTP transport, API-key authentication with per-key usage metrics, drop-in scheduled workers, and a rootless-first Docker Compose stack hardened against the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html).
 
-## Stack
+eMCP runs end-to-end as an unprivileged user against your own rootless Docker daemon — no host root, no exposure of `/var/run/docker.sock`. Authentication, rate limiting, Prometheus metrics, a migration runner, and a cron scheduler ship in the box.
 
-Node.js 24 LTS · TypeScript · PostgreSQL · Redis · croner · Pino · Prometheus
+## Features
 
-## Quickstart (local dev)
+- **Streamable HTTP transport** at `/mcp` with stateful sessions and server-initiated notifications.
+- **API-key authentication** — HMAC-SHA256 hashing with a server-side pepper, per-key rate limits, per-key usage metrics, soft-delete and blacklist lifecycle.
+- **Drop-in tool authoring** — one `.ts` file per tool in `src/tools/`, discovered at startup. No manifest, no registry.
+- **Drop-in scheduled workers** — croner-backed cron in a separate process, one `.ts` file per worker.
+- **Optional outbound proxy rotation** with transparent failover for SearXNG engines and upstream APIs.
+- **Prometheus `/metrics`** and loopback-only `/health`.
+- **OWASP-aligned compose stack** — non-root containers, `cap_drop: [ALL]`, read-only root filesystems, image signing (cosign keyless), SBOM + SLSA provenance.
 
-```bash
-nvm use
-npm ci
-cp .env.example .env  # then edit secrets — see comments in the file
+## Install
 
-# First-time DB setup
-node --env-file=.env src/db/migrate.ts up
-
-# Create your first key
-node --env-file=.env src/cli/keys.ts create --name "local-dev"
-# Save the printed key — it will not be shown again.
-
-# Start SearXNG (required for the web-search tool)
-docker compose up -d searxng
-
-# Run server + worker (two terminals)
-npm run dev
-npm run dev:worker
-```
-
-## Project layout
-
-See [`AGENTS.md`](./AGENTS.md) for the full project context. Quick map:
-
-- `src/tools/` — drop a `.ts` file per tool. See [`docs/TOOL_AUTHORING.md`](./docs/TOOL_AUTHORING.md).
-- `src/workers/` — drop a `.ts` file per scheduled cron worker. See [`docs/WORKER_AUTHORING.md`](./docs/WORKER_AUTHORING.md).
-- `src/shared/` — the contracts (`tools/types.ts`, `tools/loader.ts`, `workers/types.ts`, `workers/loader.ts`, `workers/scheduler.ts`) and cross-cutting helpers (`net/ssrf.ts`) consumed by both. Not meant to be modified by tool or worker authors.
-- `src/cli/keys.ts` — API key management. See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
-- `migrations/` — SQL migrations.
-
-## Quick install (no sudo)
-
-The fastest way to run eMCP on a Linux host with **rootless Docker** already set up:
+On a Linux host with rootless Docker already set up:
 
 ```bash
 curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh | bash
 ```
 
-Or, to inspect before running (recommended):
+Prefer to inspect first:
 
 ```bash
 curl -fsSL https://github.com/Banald/emcp/releases/latest/download/install.sh -o install.sh
@@ -56,297 +35,41 @@ less install.sh
 bash install.sh
 ```
 
-### First-time rootless setup (one-time sudo)
+The installer runs entirely as your unprivileged user. It validates every rootless precondition, generates the three Docker secrets, walks you through `.env`, brings the stack up, and installs the `emcp` CLI at `$HOME/.local/bin/emcp` for day-2 operations.
 
-If rootless Docker isn't set up on the host yet, the installer's preflight prints the exact commands. The full bootstrap is:
+### Requirements
 
-```bash
-sudo apt install -y uidmap slirp4netns dbus-user-session         # OWASP #11 deps
-sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER
-sudo loginctl enable-linger $USER                                  # daemon survives logout
-curl -fsSL https://get.docker.com/rootless | sh                    # rootless daemon
-systemctl --user enable --now docker
-export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
-```
+- Linux with a rootless Docker daemon (kernel ≥ 5.13, `uidmap`, `slirp4netns`, `dbus-user-session`).
+- Docker 24+, Compose v2.
+- Subuid / subgid range ≥ 65536 for your user; `loginctl enable-linger`.
 
-After that, `bash install.sh` runs sudo-free from start to finish.
+If rootless Docker isn't set up yet, the installer's preflight prints the exact bootstrap commands. Full bootstrap, alternative install paths (manual Docker Compose, bare-metal), TLS modes, and public-port options are in [`docs/INSTALL.md`](docs/INSTALL.md).
 
-The installer:
-
-- runs `scripts/preflight-rootless.sh` — verifies kernel ≥ 5.13,
-  uidmap / slirp4netns / dbus-user-session packages, `/etc/subuid`
-  + `/etc/subgid` range ≥ 65536 for `$USER`, `loginctl enable-linger`,
-  and that `docker info` reports the `rootless` SecurityOption. Prints
-  the exact remediation command for every failing check
-- checks prerequisites (Docker 24+, Compose v2, free disk)
-- downloads the matched-release source tarball into
-  `${XDG_DATA_HOME:-$HOME/.local/share}/emcp`
-- generates the three Docker secrets (`postgres_password.txt`,
-  `redis_password.txt`, `api_key_hmac_secret.txt`)
-- walks you through `.env` with plain-English prompts
-- **optionally enables outbound proxy rotation** — if SearXNG's engines
-  or upstream APIs rate-limit you by IP, say yes to the proxy wizard
-  and paste a comma-separated list of `http://user:pass@host:port`
-  URLs. Server + worker + SearXNG all rotate across the list with
-  transparent failover. Full details in
-  [`docs/OPERATIONS.md`](./docs/OPERATIONS.md#outbound-proxy-rotation).
-- logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT) —
-  skipped entirely when `EMCP_PULL_POLICY=build`
-- brings the stack up and waits for health
-- detects common failures (port already in use, stale `pgdata` volume
-  with mismatched password) and offers a remediation
-- installs the `emcp` command at `${XDG_BIN_HOME:-$HOME/.local/bin}/emcp`
-  for day-2 ops (warns if that dir isn't on your `$PATH`)
-- creates your first API key (optional, interactive)
-
-Non-interactive install (for CI / automation):
+## Day-2 operations
 
 ```bash
-GHCR_TOKEN="$PAT" bash install.sh \
-  --non-interactive \
-  --public-host emcp.example.com --public-scheme https \
-  --allowed-origins https://emcp.example.com \
-  --skip-first-key
+emcp up                           # start the stack
+emcp status                       # container status
+emcp logs                         # tail all services
+emcp key create --name "client"   # issue an API key (shown once — save it)
+emcp migrate                      # apply pending migrations
+emcp update                       # pull current tag, recreate
+emcp help                         # full command list
 ```
 
-See `scripts/install.sh --help` for all flags.
-
-### Day-2 commands: `emcp`
-
-Once installed, drive the stack with `emcp` from anywhere — no `cd` into
-the compose directory, no long `docker compose run …` recitations:
-
-```bash
-# Lifecycle
-emcp up                                   # start the stack (docker compose up -d)
-emcp down                                 # stop (preserves data)
-emcp down -v                              # stop + wipe volumes (destroys data)
-emcp restart                              # restart all services
-emcp restart mcp-server                   # restart a single service
-emcp status                               # show container status  (alias: emcp ps)
-emcp version                              # installer + image tag currently running
-
-# Observability
-emcp logs                                 # tail all services, follow, last 100 lines
-emcp logs mcp-server                      # tail one                (alias: emcp log)
-emcp health                               # one-shot /health probe via the server container
-
-# Data
-emcp migrate                              # apply pending migrations
-emcp migrate status                       # show migration status
-emcp migrate down 1                       # roll back the most recent migration
-
-# API keys — passthrough to the bundled keys.ts CLI
-emcp key create --name "my-client"        # issue an API key (shown once — save it)
-emcp key list                             # list all keys (prefixes only)
-emcp key list --status active             # filter: active | blacklisted | deleted | all
-emcp key show <id-or-prefix>              # details and metrics for one key
-emcp key blacklist <id-or-prefix>         # reject future requests, preserve history
-emcp key unblacklist <id-or-prefix>
-emcp key delete <id-or-prefix>            # soft-delete (never recoverable as active)
-emcp key set-rate-limit <id-or-prefix> 120
-
-# Maintenance
-emcp update                               # pull the current image tag, recreate
-emcp update v0.13.2                       # pin a specific tag in .env, then pull
-emcp config                               # re-run the env wizard (inc. proxy prompts)
-emcp uninstall                            # stop + remove everything (destroys data)
-emcp help                                 # full command list with aliases
-```
-
-`emcp key …` is a transparent passthrough to the bundled
-[`keys.ts` CLI](./docs/OPERATIONS.md#api-key-management-cli) — every
-subcommand and flag documented there works here too.
-
-### Public port binding in rootless mode
-
-Rootless Docker cannot publish host ports `<1024` by default. v2 therefore defaults to `EMCP_HTTP_PORT=8080` and `EMCP_HTTPS_PORT=8443`. Caddy still binds `:80` and `:443` **inside** the container, so only the host-side publish port is affected. Three ways to serve public `:80` / `:443` anyway:
-
-1. **Front-proxy (default, recommended).** Keep 8080/8443 and run nginx / HAProxy / your existing ingress on 80/443, forwarding to those ports. Zero rootless friction.
-2. **One-time setcap.** Run `sudo setcap cap_net_bind_service=+ep $(readlink -f $(which rootlesskit))`. Afterwards rootless can publish privileged ports; set `EMCP_HTTP_PORT=80` and `EMCP_HTTPS_PORT=443` in `.env` and `emcp restart`.
-3. **DNS-01 ACME.** Switch Caddy to DNS-based TLS validation using a DNS provider token. Port 80 is no longer needed on the internet; public clients reach you over 443 exclusively, which you publish via option 1 or 2.
-
-### TLS
-
-Controlled by `EMCP_PUBLIC_SCHEME` in `.env` (default `https`). The
-installer sets this for you; you can change it later with `emcp config`
-or by editing `$EMCP_HOME/.env` directly (default
-`${XDG_DATA_HOME:-$HOME/.local/share}/emcp/.env`) and running `emcp restart`.
-
-**HTTPS mode (`EMCP_PUBLIC_SCHEME=https`, default).** Caddy picks a
-strategy based on `EMCP_PUBLIC_HOST`:
-
-- `localhost`, `127.0.0.1`, or an IP literal → internal CA (self-signed).
-  Trust once with `caddy trust` if you want browsers to stop warning.
-- A real public hostname → Let's Encrypt. Requires DNS A/AAAA pointing at
-  the host and ports 80/443 reachable from the internet.
-- An internal-only hostname (e.g. `host.corp.local`) needs `tls internal`
-  in `infra/caddy/Caddyfile.https` — Let's Encrypt can't validate it.
-
-**HTTP mode (`EMCP_PUBLIC_SCHEME=http`).** Caddy serves plaintext on
-port 80 with TLS fully disabled. Intended for deployments on trusted
-internal networks. Caveats:
-
-- Bearer tokens on `/mcp` travel in the clear — anyone on-path can read
-  them. Do not use across untrusted networks.
-- Update `EMCP_ALLOWED_ORIGINS` to include the `http://` origin clients
-  will send.
-
-Switching modes is a restart, not a rebuild: `emcp config` → pick the new
-scheme, or edit `$EMCP_HOME/.env` and `emcp restart`.
-
-## Advanced / manual deploy
-
-The installer above is a thin wrapper around `docker compose`. If you
-prefer to drive compose yourself — forking, iterating on the image
-locally, or placing the install in a non-standard path — here's the
-manual recipe:
-
-```bash
-git clone https://github.com/Banald/emcp.git
-cd emcp
-
-# 1. Configure
-cp .env.example .env
-# Edit .env — at minimum set EMCP_PUBLIC_HOST and EMCP_ALLOWED_ORIGINS.
-# Change EMCP_SEARXNG_SECRET to a fresh value.
-
-# 2. Create Docker secrets
-mkdir -p secrets
-openssl rand -base64 24 > secrets/postgres_password.txt
-openssl rand -base64 24 > secrets/redis_password.txt
-openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
-# 0644 (not 0600): Compose `secrets:` bind-mounts these files into the
-# container with host permissions preserved, and the non-root container
-# user (UID 10001) must be able to read them. See secrets/README.md.
-chmod 0644 secrets/*.txt
-
-# 3. Authenticate to ghcr.io
-# Banald/emcp is private, so pulling the image requires auth. If gh CLI
-# is already signed in, extend your token with `read:packages` once and
-# pipe it straight into docker login:
-gh auth refresh -s read:packages   # one-time per machine
-gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
-# No gh CLI? Create a classic PAT with `read:packages` at
-# https://github.com/settings/tokens/new?scopes=read:packages and:
-#   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
-
-# 4. Bring up the stack (pulls the prebuilt image; builds from source if
-#    EMCP_PULL_POLICY=build is set in .env)
-docker compose up -d
-
-# 5. Create your first API key
-docker compose run --rm mcp-server node dist/cli/keys.js create --name "production"
-# Save the printed key — it will not be shown again.
-
-# 6. Tail logs
-docker compose logs -f mcp-server mcp-worker
-```
-
-Migrations run automatically via a one-shot `migrate` service on every
-`docker compose up`. To apply pending migrations without touching the
-rest:
-
-```bash
-docker compose run --rm migrate
-```
-
-### Pinning a specific version
-
-By default compose pulls `ghcr.io/banald/emcp:latest`. To pin a release
-tag (recommended for production), set in `.env`:
-
-```
-EMCP_IMAGE_TAG=v0.5.1
-EMCP_PULL_POLICY=always
-```
-
-Then `docker compose pull && docker compose up -d` to refresh. If the
-`emcp` CLI is installed, `emcp update v0.5.1` does the same.
-
-### Building from source instead of pulling
-
-If you've forked the repo, or you're iterating on the image locally, skip
-the ghcr.io login and build from source instead:
-
-```
-EMCP_PULL_POLICY=build
-```
-
-in `.env`. First `up -d` will build the image from the working tree.
-
-### Required infrastructure
-
-All provisioned by the compose stack — no external dependencies. If you
-need your own DB or Redis, switch to the bare-metal path below.
-
-### Network
-
-The server binds `0.0.0.0:3000` inside its container but is only
-reachable through Caddy (no other service publishes ports). `/health`
-and `/metrics` remain loopback-only at the app layer, so Caddy forwards
-them nowhere.
-
-## Deploy from source (bare-metal, no Docker)
-
-If you can't run Docker in the target environment, eMCP still ships as a
-straight Node.js app. You'll need to provision PostgreSQL, Redis, and
-SearXNG yourself.
-
-```bash
-git clone https://github.com/Banald/emcp.git
-cd emcp
-nvm use                # picks up Node 24 from .nvmrc
-npm ci --omit=dev
-npm run build          # tsc → dist/
-
-cp .env.example .env
-# Uncomment the "Bare-metal only" block and fill in EMCP_DATABASE_URL,
-# EMCP_REDIS_URL, EMCP_SEARXNG_URL, EMCP_API_KEY_HMAC_SECRET. Set
-# NODE_ENV=production, EMCP_PORT, EMCP_BIND_HOST, EMCP_PUBLIC_HOST,
-# EMCP_ALLOWED_ORIGINS.
-
-# Migrations + first key
-node --env-file=.env dist/db/migrate.js up
-node --env-file=.env dist/cli/keys.js create --name "production"
-
-# SearXNG still runs in Docker — it's the simplest way to ship it
-docker compose up -d searxng
-
-# PM2 supervises both node processes
-pm2 start ecosystem.config.cjs
-pm2 save
-```
-
-Required infrastructure for bare-metal:
-
-- PostgreSQL 14+
-- Redis 7+ (rate limiting and cache; no special eviction policy required)
-- SearXNG via `docker compose up -d searxng` (config lives in `infra/searxng/`)
-- A reverse proxy you provision yourself (nginx, Caddy, HAProxy, …) that
-  terminates TLS, sets `X-Forwarded-*` headers, and forwards only `/mcp`
-  externally. `/health` and `/metrics` are loopback-only by design.
-
-The server binds `127.0.0.1` by default in this mode — keep it that way and
-rely on the reverse proxy as the ingress boundary.
-
-## Testing
-
-```bash
-npm test                    # fast unit tests
-npm run test:coverage       # with coverage gate (95/95/90)
-npm run test:integration    # full integration tests with Testcontainers
-npm run test:all            # everything
-```
-
-CI runs all three on every push. See [`docs/TESTING.md`](./docs/TESTING.md).
+Full command reference in [`docs/INSTALL.md`](docs/INSTALL.md#day-2-commands-emcp). API key CLI details in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#api-key-management-cli).
 
 ## Documentation
 
-- [`AGENTS.md`](./AGENTS.md) — start here, read every session
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — tech choices, schema, env, errors
-- [`docs/SECURITY.md`](./docs/SECURITY.md) — security rules and audit checklist
-- [`docs/TOOL_AUTHORING.md`](./docs/TOOL_AUTHORING.md) — adding tools
-- [`docs/WORKER_AUTHORING.md`](./docs/WORKER_AUTHORING.md) — adding workers
-- [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) — CLI, migrations, shutdown, health, metrics
-- [`docs/TESTING.md`](./docs/TESTING.md) — test patterns, CI
+| Topic | Document |
+|---|---|
+| Install, deploy, day-2 CLI | [`docs/INSTALL.md`](docs/INSTALL.md) |
+| Architecture, schema, env vars, dependencies | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Security rules and audit checklist | [`docs/SECURITY.md`](docs/SECURITY.md) |
+| API keys, migrations, shutdown, metrics, proxy runbook | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) |
+| Adding an MCP tool | [`docs/TOOL_AUTHORING.md`](docs/TOOL_AUTHORING.md) |
+| Adding a scheduled worker | [`docs/WORKER_AUTHORING.md`](docs/WORKER_AUTHORING.md) |
+| Testing patterns and the coverage gate | [`docs/TESTING.md`](docs/TESTING.md) |
+| Changelog | [`CHANGELOG.md`](CHANGELOG.md) |
+
+Contributing, or an AI agent catching up on the project? Start with [`AGENTS.md`](AGENTS.md) — it is the source of truth for how to work in this repository. An orientation map of `docs/` lives at [`docs/README.md`](docs/README.md).
