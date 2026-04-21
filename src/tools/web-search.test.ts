@@ -31,7 +31,7 @@ const makeSearxngResponse = (
 
 const sampleResults = [
   { title: 'Result One', url: 'https://example.com/1', content: 'First snippet', engine: 'google' },
-  { title: 'Result Two', url: 'https://example.com/2', content: 'Second snippet', engine: 'brave' },
+  { title: 'Result Two', url: 'https://example.com/2', content: 'Second snippet', engine: 'startpage' },
   { title: 'Result Three', url: 'https://example.com/3', content: 'Third snippet', engine: 'bing' },
 ];
 
@@ -171,7 +171,7 @@ describe('web-search tool', () => {
       assert.equal(calledUrl.searchParams.get('q'), 'stockholm weather');
       assert.equal(calledUrl.searchParams.get('format'), 'json');
       assert.equal(calledUrl.searchParams.get('language'), 'sv');
-      assert.equal(calledUrl.searchParams.get('engines'), 'google,brave,bing,qwant,startpage');
+      assert.equal(calledUrl.searchParams.get('engines'), 'google,bing,qwant,startpage');
       assert.equal(calledUrl.searchParams.get('categories'), 'general');
     });
 

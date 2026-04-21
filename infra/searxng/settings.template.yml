@@ -2,7 +2,6 @@ use_default_settings:
   engines:
     keep_only:
       - google
-      - brave
       - bing
       - qwant
       - startpage
@@ -44,12 +43,6 @@ engines:
     shortcut: g
     disabled: false
     language: sv
-
-  - name: brave
-    engine: brave
-    shortcut: br
-    disabled: false
-    region: sv-SE
 
   - name: bing
     engine: bing
