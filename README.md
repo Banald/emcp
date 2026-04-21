@@ -7,17 +7,17 @@
 
 Production-grade Model Context Protocol server in TypeScript. Streamable HTTP transport, API-key authentication with per-key usage metrics, drop-in scheduled workers, and a rootless-first Docker Compose stack hardened against the [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html).
 
-eMCP runs end-to-end as an unprivileged user against your own rootless Docker daemon — no host root, no exposure of `/var/run/docker.sock`. Authentication, rate limiting, Prometheus metrics, a migration runner, and a cron scheduler ship in the box.
+eMCP runs end-to-end as an unprivileged user against your own rootless Docker daemon. No host root, no exposure of `/var/run/docker.sock`. Authentication, rate limiting, Prometheus metrics, a migration runner, and a cron scheduler ship in the box.
 
 ## Features
 
 - **Streamable HTTP transport** at `/mcp` with stateful sessions and server-initiated notifications.
-- **API-key authentication** — HMAC-SHA256 hashing with a server-side pepper, per-key rate limits, per-key usage metrics, soft-delete and blacklist lifecycle.
-- **Drop-in tool authoring** — one `.ts` file per tool in `src/tools/`, discovered at startup. No manifest, no registry.
-- **Drop-in scheduled workers** — croner-backed cron in a separate process, one `.ts` file per worker.
+- **API-key authentication.** HMAC-SHA256 hashing with a server-side pepper, per-key rate limits, per-key usage metrics, soft-delete and blacklist lifecycle.
+- **Drop-in tool authoring.** One `.ts` file per tool in `src/tools/`, discovered at startup. No manifest, no registry.
+- **Drop-in scheduled workers.** croner-backed cron in a separate process, one `.ts` file per worker.
 - **Optional outbound proxy rotation** with transparent failover for SearXNG engines and upstream APIs.
 - **Prometheus `/metrics`** and loopback-only `/health`.
-- **OWASP-aligned compose stack** — non-root containers, `cap_drop: [ALL]`, read-only root filesystems, image signing (cosign keyless), SBOM + SLSA provenance.
+- **OWASP-aligned compose stack.** Non-root containers, `cap_drop: [ALL]`, read-only root filesystems, image signing (cosign keyless), SBOM + SLSA provenance.
 
 ## Install
 
@@ -35,7 +35,7 @@ less install.sh
 bash install.sh
 ```
 
-The installer runs entirely as your unprivileged user. It validates every rootless precondition, generates the three Docker secrets, walks you through `.env`, brings the stack up, and installs the `emcp` CLI at `$HOME/.local/bin/emcp` for day-2 operations.
+The installer runs entirely as your unprivileged user. It validates every rootless precondition, generates the three Docker secrets, walks you through `.env`, brings the stack up, and installs the `emcp` CLI at `$HOME/.local/bin/emcp`.
 
 ### Requirements
 
@@ -45,13 +45,13 @@ The installer runs entirely as your unprivileged user. It validates every rootle
 
 If rootless Docker isn't set up yet, the installer's preflight prints the exact bootstrap commands. Full bootstrap, alternative install paths (manual Docker Compose, bare-metal), TLS modes, and public-port options are in [`docs/INSTALL.md`](docs/INSTALL.md).
 
-## Day-2 operations
+## Usage
 
 ```bash
 emcp up                           # start the stack
 emcp status                       # container status
 emcp logs                         # tail all services
-emcp key create --name "client"   # issue an API key (shown once — save it)
+emcp key create --name "client"   # issue an API key (shown once, save it)
 emcp migrate                      # apply pending migrations
 emcp update                       # pull current tag, recreate
 emcp help                         # full command list
@@ -63,7 +63,7 @@ Full command reference in [`docs/INSTALL.md`](docs/INSTALL.md#day-2-commands-emc
 
 | Topic | Document |
 |---|---|
-| Install, deploy, day-2 CLI | [`docs/INSTALL.md`](docs/INSTALL.md) |
+| Install, deploy, CLI reference | [`docs/INSTALL.md`](docs/INSTALL.md) |
 | Architecture, schema, env vars, dependencies | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Security rules and audit checklist | [`docs/SECURITY.md`](docs/SECURITY.md) |
 | API keys, migrations, shutdown, metrics, proxy runbook | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) |
@@ -72,4 +72,4 @@ Full command reference in [`docs/INSTALL.md`](docs/INSTALL.md#day-2-commands-emc
 | Testing patterns and the coverage gate | [`docs/TESTING.md`](docs/TESTING.md) |
 | Changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
-Contributing, or an AI agent catching up on the project? Start with [`AGENTS.md`](AGENTS.md) — it is the source of truth for how to work in this repository. An orientation map of `docs/` lives at [`docs/README.md`](docs/README.md).
+Contributing, or an AI agent catching up on the project? Start with [`AGENTS.md`](AGENTS.md). It is the source of truth for how to work in this repository. An orientation map of `docs/` lives at [`docs/README.md`](docs/README.md).
