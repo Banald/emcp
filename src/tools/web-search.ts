@@ -74,7 +74,7 @@ const tool: ToolDefinition<typeof inputSchema, typeof outputSchema> = {
   name: 'web-search',
   title: 'Web Search',
   description:
-    'Search the web using multiple search engines (Google, Brave, Bing, Qwant, Startpage). Returns titles, URLs, and snippets for each result. Default language is Swedish (sv). Use for finding current information, articles, documentation, or any web content.',
+    'Search the web using multiple search engines (Google, Brave, Bing, Qwant, Startpage) and return a list of results (title, URL, snippet) for a query. This is usually the FIRST tool to reach for whenever you need information from the web but do not already have a specific URL — it discovers the relevant pages so you can then pass a chosen result URL to `fetch-url` to read the full content. Prefer this over guessing URLs from memory: training-data URLs are frequently wrong, renamed, or outdated. Also prefer this when the user asks an open-ended question ("what is...", "latest news on...", "who is..."), when you need current or recent information, or when you need to compare multiple sources. The snippets alone are often enough to answer; drill into specific results with `fetch-url` only when more detail is required. Default language is Swedish (sv).',
   inputSchema,
   outputSchema,
   rateLimit: { perMinute: 30 },
