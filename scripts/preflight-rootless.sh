@@ -510,7 +510,7 @@ remediation_docker_info_failed() {
 # point DOCKER_HOST at the user socket.
 remediation_not_rootless() {
     local sock="$1"
-    local default_sock="/run/user/$(id -u)/docker.sock"
+    local default_sock; default_sock="/run/user/$(id -u)/docker.sock"
     local target_sock="$default_sock"
     [ -n "$sock" ] && [ "$sock" != "/var/run/docker.sock" ] && target_sock="$sock"
     case "$(_get_os_family)" in
