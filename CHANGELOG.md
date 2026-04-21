@@ -2,6 +2,17 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.1.0]
+
+### Changed
+
+- `get-weather` accepts a place name instead of raw coordinates and returns a compact snapshot rather than the full MET Norway forecast series. Tool descriptions for `fetch-url` and `web-search` tightened to read better for LLM callers.
+- `README.md` refactored as the human entry point; deeper operational content moved into `docs/`.
+
+### Removed
+
+- Tools `wikipedia-get`, `wikipedia-search`, `riksdag-search`, `scb-query`, `dictionary`, and `arxiv-search` — low-signal or niche surface trimmed from the default toolset.
+
 ## [2.0.1]
 
 ### Fixed
