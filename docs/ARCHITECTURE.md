@@ -262,12 +262,12 @@ Maintain `.env.example` in the repo with all variables, placeholder values, and 
 
 ## Proxy egress
 
-Outbound HTTP from the MCP server and worker can optionally rotate across a configurable pool of HTTP(S) proxies. Motivation: SearXNG's engine scrapers and several public APIs (arXiv, Wikipedia, SCB, SMHI, Riksdagen) rate-limit or blacklist by source IP, so a single-IP deployment is a scaling liability. The proxy pool turns a blacklist event into a per-proxy recoverable condition rather than a per-deploy outage.
+Outbound HTTP from the MCP server and worker can optionally rotate across a configurable pool of HTTP(S) proxies. Motivation: SearXNG's engine scrapers and several public APIs (SMHI, geocoding, news feeds) rate-limit or blacklist by source IP, so a single-IP deployment is a scaling liability. The proxy pool turns a blacklist event into a per-proxy recoverable condition rather than a per-deploy outage.
 
 ```
      ┌─────────────────┐                ┌──────────────────┐
      │  tool / worker  │                │    mcp-server    │
-     │ arxiv-search,   │ fetchExternal()│  (or mcp-worker) │
+     │ get-weather,    │ fetchExternal()│  (or mcp-worker) │
      │ fetch-url, …    ├──────┐         │  process         │
      └─────────────────┘      │         └──────────────────┘
                               ▼
@@ -292,7 +292,7 @@ Outbound HTTP from the MCP server and worker can optionally rotate across a conf
                                               ▼
                                      ┌──────────────────┐
                                      │    upstream      │
-                                     │ (arxiv, wiki, …) │
+                                     │ (smhi, news, …)  │
                                      └──────────────────┘
 ```
 
