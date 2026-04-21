@@ -2,6 +2,15 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.0.1]
+
+### Fixed
+
+- `scripts/preflight-rootless.sh`: every failed check now prints a distro-aware, multi-step bootstrap (deps → install rootless Docker → enable user-mode daemon → export `DOCKER_HOST`) instead of single-line hints that assumed rootless Docker was already installed. Per-distro coverage for Debian / Ubuntu / Mint / Pop!_OS, Fedora / RHEL / Rocky / Alma, Arch / Manjaro, and Alpine; generic fallback for everything else.
+- `check_docker_daemon` now distinguishes "no daemon at all", "installed but not started" (detected via `~/.config/systemd/user/docker.service`), "daemon unreachable", and "rootful daemon" — each gets a tailored remediation.
+- `check_subid_ranges` now offers both modern (`usermod --add-subuids`) and legacy (`tee -a /etc/subuid`) paths so older shadow-utils hosts get a working command.
+- `check_apparmor_userns` reformatted as an explicit quick-vs-correct two-option block.
+
 ## [2.0.0] — Rootless by default, OWASP-aligned
 
 ### Summary
