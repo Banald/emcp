@@ -284,7 +284,7 @@ export function solveBisection(
   let lo = Math.min(a, b);
   let hi = Math.max(a, b);
   let fLo = f(lo);
-  let fHi = f(hi);
+  const fHi = f(hi);
   if (!Number.isFinite(fLo) || !Number.isFinite(fHi)) {
     throw new SolverError(`f is non-finite at one of the brackets (${lo}, ${hi}).`);
   }
@@ -305,9 +305,10 @@ export function solveBisection(
     if (Math.abs(fMid) < tol || (hi - lo) / 2 < tol) {
       return done(mid, i, Math.abs(fMid));
     }
+    // Only `fLo` is read on the next iteration's sign test, so we don't track
+    // `fHi` here — the f(hi) value would be dead after assignment.
     if (fLo * fMid < 0) {
       hi = mid;
-      fHi = fMid;
     } else {
       lo = mid;
       fLo = fMid;

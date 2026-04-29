@@ -166,7 +166,8 @@ export function irr(
     );
   }
 
-  // Bisect to a tight bracket.
+  // Bisect to a tight bracket. Only `fLo` is consulted on subsequent iterations
+  // (the sign test is `fLo * fMid`), so we don't update `fHi` inside this loop.
   for (let i = 0; i < 80; i += 1) {
     const mid = (lo + hi) / 2;
     const fMid = npv(mid, cashFlows);
@@ -175,7 +176,6 @@ export function irr(
     }
     if (fLo * fMid < 0) {
       hi = mid;
-      fHi = fMid;
     } else {
       lo = mid;
       fLo = fMid;
