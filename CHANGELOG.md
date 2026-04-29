@@ -2,6 +2,12 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.3.0]
+
+### Added
+
+- `calculator` tool — a single MCP tool covering arithmetic, lightweight algebra, numerical calculus, linear algebra, statistics & probability (descriptive + Pearson + OLS + normal/binomial/poisson/uniform PDF/CDF/Inv), trigonometry, unit conversion (13 categories, NIST/BIPM/IAU/CODATA-anchored), financial math (interest, NPV, IRR, PMT, amortization), and complex numbers. Driven by a hand-rolled bounded expression parser (no `eval`); flat input schema with a `mode` discriminator and per-mode optional fields. Zero new dependencies.
+
 ## [2.2.0]
 
 ### Added
