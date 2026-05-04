@@ -15,9 +15,6 @@ EMCP_INSTALLER_VERSION="v0.0.0-dev"
 
 REPO_OWNER="Banald"
 REPO_NAME="emcp"
-# ghcr.io path is always lowercase (see release.yml "Compute lowercased
-# image name" step).
-IMAGE_REPO="ghcr.io/banald/emcp"
 
 # XDG-aware defaults. All three dirs are per-user; none live in /opt,
 # /etc, or /usr/local anymore. $HOME-relative fallbacks match the XDG
