@@ -439,7 +439,7 @@ if grep -qE 'sed -n .3,[0-9]+p. "\$0"' "$INSTALL_SH"; then
 else
     say_pass "usage() does not scrape \$0 via sed (M3)"
 fi
-for flag in --install-dir --public-host --tag --ghcr-token-file --reconfigure; do
+for flag in --install-dir --public-host --tag --reconfigure; do
     if printf '%s\n' "$help_out" | grep -qE -- "$flag"; then
         continue
     fi
@@ -447,7 +447,7 @@ for flag in --install-dir --public-host --tag --ghcr-token-file --reconfigure; d
     help_flags_fail=1
 done
 if [ -z "${help_flags_fail:-}" ]; then
-    say_pass "install.sh --help documents install-dir/public-host/tag/ghcr-token-file/reconfigure (M3)"
+    say_pass "install.sh --help documents install-dir/public-host/tag/reconfigure (M3)"
 fi
 
 # emcp help without a compose install still runs (usage is help-text only).
@@ -569,9 +569,28 @@ else
     say_pass "install.sh has no 'exec sudo' paths (v2)"
 fi
 if grep -qE 'sudo -u "\$SUDO_USER"' "$INSTALL_SH"; then
-    say_fail "install.sh still re-runs gh via sudo -u SUDO_USER (v2 regression)"
+    say_fail "install.sh still re-runs commands via sudo -u SUDO_USER (v2 regression)"
 else
-    say_pass "phase_ghcr_login no longer needs SUDO_USER fallback (v2)"
+    say_pass "install.sh has no SUDO_USER fallback (v2)"
+fi
+
+# ---- 9b. ghcr.io login removed (public repo, no auth required) ------------
+# The image is published from a public repo, so the installer no longer
+# attempts a docker login or asks for a PAT. Catch any reintroduction.
+if grep -qE '^phase_ghcr_login\(\)' "$INSTALL_SH"; then
+    say_fail "install.sh still defines phase_ghcr_login (repo is public; no auth needed)"
+else
+    say_pass "install.sh has no phase_ghcr_login (public repo)"
+fi
+if grep -qE 'docker login ghcr\.io' "$INSTALL_SH"; then
+    say_fail "install.sh still calls 'docker login ghcr.io' (public repo)"
+else
+    say_pass "install.sh does not call 'docker login ghcr.io' (public repo)"
+fi
+if grep -qE -- '--ghcr-token-file' "$INSTALL_SH"; then
+    say_fail "install.sh still references --ghcr-token-file (public repo)"
+else
+    say_pass "install.sh has no --ghcr-token-file flag (public repo)"
 fi
 
 # ---- 9. summary snippet + EXIT trap (L4, N2) ------------------------------

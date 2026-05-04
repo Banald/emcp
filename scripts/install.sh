@@ -45,7 +45,6 @@ EMCP_LOG_LEVEL=""
 EMCP_POSTGRES_USER=""
 EMCP_POSTGRES_DB=""
 IMAGE_TAG=""
-GHCR_TOKEN_FILE=""
 SKIP_FIRST_KEY=0
 NON_INTERACTIVE=0
 AUTO_NON_INTERACTIVE=0  # 1 when NON_INTERACTIVE was auto-set due to no TTY
@@ -153,9 +152,9 @@ usage() {
 eMCP one-shot installer (v2 — rootless, no sudo).
 
 Downloads the matched-tag source tarball, generates Docker secrets, walks
-you through .env interactively, logs in to ghcr.io, brings the compose
-stack up against your rootless Docker daemon, and installs the permanent
-\`emcp\` CLI at \$XDG_BIN_HOME/emcp (default $EMCP_BIN_PATH).
+you through .env interactively, brings the compose stack up against your
+rootless Docker daemon, and installs the permanent \`emcp\` CLI at
+\$XDG_BIN_HOME/emcp (default $EMCP_BIN_PATH).
 
 Runs as an unprivileged user. A one-time \`sudo\` may be required to
 bootstrap rootless Docker itself (package installs, subuid ranges,
@@ -181,7 +180,6 @@ FLAGS (all optional — the interactive wizard fills the gaps):
   --postgres-user <name>   database user (default: mcp)
   --postgres-db <name>     database name (default: mcp)
   --image-tag <tag>        pin a specific ghcr.io image tag
-  --ghcr-token-file <path> PAT with read:packages (env: GHCR_TOKEN)
   --skip-first-key         don't prompt to create the first API key
   --non-interactive        fail fast instead of prompting
   --reconfigure            re-run the wizard against an existing install
@@ -213,7 +211,6 @@ parse_args() {
             --postgres-user)    EMCP_POSTGRES_USER="$2"; shift 2 ;;
             --postgres-db)      EMCP_POSTGRES_DB="$2"; shift 2 ;;
             --image-tag)        IMAGE_TAG="$2"; shift 2 ;;
-            --ghcr-token-file)  GHCR_TOKEN_FILE="$2"; shift 2 ;;
             --skip-first-key)   SKIP_FIRST_KEY=1; shift ;;
             --non-interactive)  NON_INTERACTIVE=1; shift ;;
             --reconfigure)      RECONFIGURE=1; shift ;;
@@ -372,9 +369,9 @@ prompt_secret() {
     local __out_var="$1" __question="$2" __answer
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
         if [ "$AUTO_NON_INTERACTIVE" -eq 1 ]; then
-            die "no TTY — $__out_var is a secret. Re-run in a real terminal, or supply --ghcr-token-file / GHCR_TOKEN."
+            die "no TTY — $__out_var is a secret and cannot be read non-interactively. Re-run in a real terminal."
         fi
-        die "--non-interactive: $__out_var is a secret and must be supplied via --ghcr-token-file or GHCR_TOKEN."
+        die "--non-interactive: $__out_var is a secret and cannot be prompted. Re-run interactively or supply the value out-of-band."
     fi
     # `read -s` requires a terminal; tty_read routes through /dev/tty when
     # stdin is piped, so -s still works. If neither stdin nor /dev/tty is
@@ -811,10 +808,9 @@ load_existing_env_defaults() {
                     EMCP_SEARXNG_OUTGOING_PROXIES="$(dequote "$v")"
                     EMCP_SEARXNG_OUTGOING_PROXIES_SET=1
                 fi ;;
-            # phase_ghcr_login short-circuits when EMCP_PULL_POLICY is
-            # build/never; export the existing .env value so re-runs
-            # (emcp config) don't fall back to `always` and prompt for
-            # a PAT the operator doesn't need.
+            # Preserve the operator's pull policy across re-runs so
+            # `emcp config` doesn't silently flip a `build` or `never`
+            # install back to the default `always`.
             EMCP_PULL_POLICY)
                 : "${EMCP_PULL_POLICY:=$(dequote "$v")}"
                 export EMCP_PULL_POLICY ;;
@@ -1184,80 +1180,6 @@ resolve_port_conflict() {
         return 0
     fi
     return 1
-}
-
-# --- ghcr.io login ---------------------------------------------------------
-
-phase_ghcr_login() {
-    log_step "Authenticate to ghcr.io"
-
-    # Build-from-source and never-pull policies don't need registry auth.
-    # Honoring the env var here keeps CI (and any fork that builds
-    # locally) from hitting the PAT prompt.
-    local pull_policy="${EMCP_PULL_POLICY:-always}"
-    if [ "$pull_policy" = "build" ] || [ "$pull_policy" = "never" ]; then
-        log_info "EMCP_PULL_POLICY=${pull_policy} — skipping ghcr.io authentication"
-        return 0
-    fi
-
-    local image="${IMAGE_REPO}:${IMAGE_TAG}"
-
-    # Cheap probe: can we already pull it? (Public image, or docker login already cached.)
-    if docker manifest inspect "$image" >/dev/null 2>&1; then
-        log_ok "already authenticated (or image is public); skipping login"
-        return 0
-    fi
-
-    # Supplied token file / env var has priority.
-    if [ -n "$GHCR_TOKEN_FILE" ]; then
-        [ -r "$GHCR_TOKEN_FILE" ] || die "--ghcr-token-file: $GHCR_TOKEN_FILE is not readable"
-        docker_login_with_token "$(cat "$GHCR_TOKEN_FILE")" "${REPO_OWNER,,}"
-        return 0
-    fi
-    if [ -n "${GHCR_TOKEN:-}" ]; then
-        docker_login_with_token "$GHCR_TOKEN" "${REPO_OWNER,,}"
-        return 0
-    fi
-
-    # Try the gh CLI. v2 runs as the operator's own user, so if `gh auth
-    # status` works here, we can mint a read:packages token directly —
-    # no sudo dance needed.
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        log_info "using gh CLI to mint a read:packages token"
-        gh auth refresh -s read:packages >/dev/null 2>&1 || true
-        local gh_user gh_token
-        gh_user="$(gh api user -q .login 2>/dev/null || true)"
-        gh_token="$(gh auth token 2>/dev/null || true)"
-        if [ -n "$gh_token" ] && [ -n "$gh_user" ]; then
-            docker_login_with_token "$gh_token" "$gh_user"
-            return 0
-        fi
-        log_warn "gh CLI present but token fetch failed; falling back to manual PAT"
-    fi
-
-    if [ "$NON_INTERACTIVE" -eq 1 ]; then
-        if [ "$AUTO_NON_INTERACTIVE" -eq 1 ]; then
-            die "no TTY — supply GHCR_TOKEN, --ghcr-token-file, or sign in with 'gh auth login' before piping from curl"
-        fi
-        die "--non-interactive requires GHCR_TOKEN, --ghcr-token-file, or a signed-in gh CLI"
-    fi
-
-    log_info "no reachable gh CLI — falling back to manual PAT entry"
-    log_info "create a token with 'read:packages' scope at:"
-    log_info "  https://github.com/settings/tokens/new?scopes=read:packages"
-    local pat
-    prompt_secret pat "paste the token"
-    [ -n "$pat" ] || die "empty token; aborting"
-    docker_login_with_token "$pat" "${REPO_OWNER,,}"
-}
-
-docker_login_with_token() {
-    local token="$1" user="$2"
-    if printf '%s\n' "$token" | docker login ghcr.io -u "$user" --password-stdin >/dev/null; then
-        log_ok "logged in to ghcr.io as $user"
-    else
-        die "docker login ghcr.io failed"
-    fi
 }
 
 # --- Compose up ------------------------------------------------------------
@@ -1900,7 +1822,7 @@ main() {
        && ! (exec 0</dev/tty) 2>/dev/null; then
         NON_INTERACTIVE=1
         AUTO_NON_INTERACTIVE=1
-        log_warn "no TTY detected; running non-interactively. Pass flags or supply GHCR_TOKEN=<pat>."
+        log_warn "no TTY detected; running non-interactively. Pass flags for any value that would otherwise be prompted."
     fi
 
     if [ "$UNINSTALL" -eq 1 ]; then
@@ -1921,7 +1843,6 @@ main() {
     phase_generate_secrets
     phase_env_wizard
     phase_proxy_wizard
-    phase_ghcr_login
     phase_compose_up
     phase_postflight_detection
     phase_smoke_test

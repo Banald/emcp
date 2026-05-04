@@ -121,7 +121,6 @@ Expect every line to be `[ok]`. Then run the installer — no sudo from here on.
 - generates the three Docker secrets (`postgres_password.txt`, `redis_password.txt`, `api_key_hmac_secret.txt`).
 - walks you through `.env` with plain-English prompts.
 - **optionally enables outbound proxy rotation** — if SearXNG's engines or upstream APIs rate-limit you by IP, accept the proxy wizard and paste a comma-separated list of `http://user:pass@host:port` URLs. Server + worker + SearXNG all rotate across the list with transparent failover. Full details in [`OPERATIONS.md`](OPERATIONS.md#outbound-proxy-rotation).
-- logs in to `ghcr.io` (via `gh` CLI if available, or a pasted PAT) — skipped entirely when `EMCP_PULL_POLICY=build`.
 - brings the stack up and waits for health.
 - detects common failures (port already in use, stale `pgdata` volume with mismatched password) and offers a remediation.
 - installs the `emcp` command at `${XDG_BIN_HOME:-$HOME/.local/bin}/emcp` for day-2 ops (warns if that directory isn't on your `$PATH`).
@@ -132,7 +131,7 @@ Expect every line to be `[ok]`. Then run the installer — no sudo from here on.
 For CI / automation:
 
 ```bash
-GHCR_TOKEN="$PAT" bash install.sh \
+bash install.sh \
   --non-interactive \
   --public-host emcp.example.com --public-scheme https \
   --allowed-origins https://emcp.example.com \
@@ -235,25 +234,16 @@ openssl rand -base64 32 > secrets/api_key_hmac_secret.txt
 # user (UID 10001) must be able to read them. See secrets/README.md.
 chmod 0644 secrets/*.txt
 
-# 3. Authenticate to ghcr.io
-# Banald/emcp is private, so pulling the image requires auth. If gh CLI
-# is already signed in, extend your token with `read:packages` once and
-# pipe it straight into docker login:
-gh auth refresh -s read:packages   # one-time per machine
-gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
-# No gh CLI? Create a classic PAT with `read:packages` at
-# https://github.com/settings/tokens/new?scopes=read:packages and:
-#   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
-
-# 4. Bring up the stack (pulls the prebuilt image; builds from source if
+# 3. Bring up the stack (pulls the prebuilt image from ghcr.io — the repo
+#    is public, no docker login required; builds from source if
 #    EMCP_PULL_POLICY=build is set in .env)
 docker compose up -d
 
-# 5. Create your first API key
+# 4. Create your first API key
 docker compose run --rm mcp-server node dist/cli/keys.js create --name "production"
 # Save the printed key — it will not be shown again.
 
-# 6. Tail logs
+# 5. Tail logs
 docker compose logs -f mcp-server mcp-worker
 ```
 
@@ -284,7 +274,7 @@ Then `docker compose pull && docker compose up -d` to refresh. If the `emcp` CLI
 
 ## Building from source instead of pulling
 
-If you've forked the repo, or you're iterating on the image locally, skip the ghcr.io login and build from source instead:
+If you've forked the repo, or you're iterating on the image locally, build from source instead of pulling the published image:
 
 ```
 EMCP_PULL_POLICY=build
