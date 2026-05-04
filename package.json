@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.12",
+    "@biomejs/biome": "^2.4.14",
     "@testcontainers/postgresql": "^11.14.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.20.0",
