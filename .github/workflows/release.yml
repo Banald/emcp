@@ -87,6 +87,16 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Install podman (python-execute sandbox runtime)
+        # See docs/SECURITY.md Rule 15. The unit gate exercises real
+        # podman + the built sandbox image so network/fs isolation is
+        # validated end-to-end, not just argv shape.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+          podman --version
+      - name: Build python-sandbox image
+        run: bash scripts/build-python-sandbox.sh
       - name: Test with coverage
         run: npm run test:coverage
       - name: Build
@@ -241,11 +251,101 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+  python-sandbox:
+    # Build, push, and sign the python-sandbox image consumed by the
+    # `python-execute` MCP tool at runtime. Independent of the eMCP image
+    # (different Dockerfile, different lifecycle), so this job runs in
+    # parallel with `docker`. The `release` job below pins both digests in
+    # the GitHub Release notes.
+    #
+    # Why we publish this image rather than building it on every host:
+    # operators get a deterministic, signed artifact (the cosign verify
+    # incantation matches the eMCP image), and a fresh `install.sh` run can
+    # `podman pull` it instead of waiting ~2 minutes for pip to resolve the
+    # scientific stack on every install. Air-gapped hosts can still build
+    # locally via `bash scripts/build-python-sandbox.sh`.
+    needs: [ci, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Compute lowercased image name
+        id: image
+        run: |
+          owner=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${owner}/python-sandbox" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Log in to ghcr.io
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+            type=sha,prefix=sha-
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ./infra/python-sandbox
+          file: ./infra/python-sandbox/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=python-sandbox
+          cache-to: type=gha,mode=max,scope=python-sandbox
+          provenance: mode=max
+          sbom: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+      - name: Sign the image with cosign
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          for tag in $TAGS; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+      - name: Attest build provenance
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
   release:
     # Creates a GitHub Release page with auto-generated notes. The release
-    # artifact is the container image pushed by the `docker` job above —
-    # there is no tarball and no downloadable binary.
-    needs: [docker]
+    # artifacts are the two container images pushed by `docker` and
+    # `python-sandbox` above — there is no tarball and no downloadable
+    # binary, but the install.sh script attached below pulls both at run.
+    needs: [docker, python-sandbox]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -273,6 +373,8 @@ jobs:
           TAG: ${{ github.ref_name }}
           IMAGE: ${{ needs.docker.outputs.image }}
           DIGEST: ${{ needs.docker.outputs.digest }}
+          SANDBOX_IMAGE: ${{ needs.python-sandbox.outputs.image }}
+          SANDBOX_DIGEST: ${{ needs.python-sandbox.outputs.digest }}
         run: |
           VERSION="${TAG#v}"
           PRERELEASE_FLAG=""
@@ -290,13 +392,14 @@ jobs:
           Runs as your unprivileged user against a rootless Docker
           daemon. The installer validates every rootless precondition
           (subuid range, linger, kernel), walks you through \`.env\`,
-          and installs the \`emcp\` CLI at
+          pulls both released images (eMCP server and python-execute
+          sandbox), and installs the \`emcp\` CLI at
           \`\$XDG_BIN_HOME/emcp\` (default \`\$HOME/.local/bin/emcp\`) for
           day-2 ops (\`emcp up\`, \`emcp logs\`, \`emcp key create …\`).
 
           See [README.md](https://github.com/${{ github.repository }}/blob/${TAG}/README.md) for details.
 
-          ## Container image
+          ## Container image (eMCP server / worker)
 
           \`\`\`
           docker pull ${IMAGE}:${VERSION}
@@ -316,14 +419,40 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
           \`\`\`
 
+          ## Container image (\`python-execute\` sandbox)
+
+          The \`python-execute\` MCP tool drives this image directly via
+          podman (never via compose, never sharing the eMCP daemon). See
+          \`docs/SECURITY.md\` Rule 15.
+
+          \`\`\`
+          podman pull ${SANDBOX_IMAGE}:${VERSION}
+          \`\`\`
+
+          Pinned by digest:
+
+          \`\`\`
+          ${SANDBOX_IMAGE}@${SANDBOX_DIGEST}
+          \`\`\`
+
+          ### Verify the signature (cosign keyless)
+
+          \`\`\`
+          cosign verify ${SANDBOX_IMAGE}@${SANDBOX_DIGEST} \\
+            --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@' \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+          \`\`\`
+
           ### SBOM + provenance
 
-          SBOM and SLSA provenance attestations are attached to the
-          image manifest. Inspect with:
+          SBOM and SLSA provenance attestations are attached to both
+          image manifests. Inspect with:
 
           \`\`\`
           docker buildx imagetools inspect ${IMAGE}@${DIGEST} --format '{{ json .SBOM }}'
           docker buildx imagetools inspect ${IMAGE}@${DIGEST} --format '{{ json .Provenance }}'
+          docker buildx imagetools inspect ${SANDBOX_IMAGE}@${SANDBOX_DIGEST} --format '{{ json .SBOM }}'
+          docker buildx imagetools inspect ${SANDBOX_IMAGE}@${SANDBOX_DIGEST} --format '{{ json .Provenance }}'
           \`\`\`
           EOF
           gh release create "$TAG" \

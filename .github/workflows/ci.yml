@@ -89,6 +89,20 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Install podman (python-execute sandbox runtime)
+        # The python-execute test gate requires a working podman + the
+        # python-sandbox:latest image. Both are runtime concerns, not test
+        # framework concerns — see docs/SECURITY.md Rule 15. Install + build
+        # before `npm run test:coverage` so the unit gate can exercise real
+        # network/fs isolation rather than mocked argv shape only.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+          podman --version
+      - name: Build python-sandbox image
+        # Builds python-sandbox:latest from infra/python-sandbox/. ~2 min
+        # (pip resolves numpy/pandas/scipy/sympy/matplotlib/scikit-learn).
+        run: bash scripts/build-python-sandbox.sh
       - name: Test with coverage
         run: npm run test:coverage
       - name: Build
@@ -180,6 +194,17 @@ jobs:
           # an ephemeral CI runner the sysctl disable is simpler and
           # scoped to this job's VM (see upstream rootlesskit docs).
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install podman (python-execute sandbox runtime)
+        # install.sh hard-fails if podman is missing (docs/SECURITY.md
+        # Rule 15). The phase_pull_python_sandbox step in this e2e will
+        # try to `podman pull ghcr.io/banald/python-sandbox:vX.Y.Z`; on
+        # bootstrap (image not yet pushed) it falls back to a local build
+        # via scripts/build-python-sandbox.sh, which adds ~2 min to this
+        # job but exercises the fallback path the same way an air-gapped
+        # operator would experience it.
+        run: |
+          sudo apt-get install -y --no-install-recommends podman
+          podman --version
       - name: Stop the runner's rootful daemon
         run: |
           # GHA's rootful docker.service holds /var/run/docker.sock; we
@@ -243,6 +268,40 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: emcp:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          trivyignores: .trivyignore
+
+  image-scan-sandbox:
+    # Same OWASP Docker Cheat Sheet #9 gate, applied to the
+    # python-execute sandbox image. The sandbox runs adversarially-supplied
+    # Python on every invocation — even with --network=none and a read-only
+    # rootfs, an unpatched local-privilege-escalation in the scientific
+    # stack would let arbitrary user code break out of the unprivileged
+    # nobody-uid surface. Allow-list specific CVEs in `.trivyignore`
+    # (with the same review process as the eMCP image) when a fix is
+    # genuinely unavailable upstream.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build python-sandbox image
+        run: docker build -t python-sandbox:ci ./infra/python-sandbox
+      - name: Trivy CVE scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: python-sandbox:ci
           format: table
           severity: CRITICAL,HIGH
           exit-code: '1'

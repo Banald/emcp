@@ -257,6 +257,8 @@ All configuration lives in environment variables, parsed and validated by Zod at
 | `EMCP_PROXY_MAX_RETRIES_PER_REQUEST` | no | `3` | Failover budget per request. Clamped to pool size at runtime. Range 1 – 10. |
 | `EMCP_PROXY_CONNECT_TIMEOUT_MS` | no | `10000` | CONNECT handshake timeout when tunneling to a proxy. Range 1 s – 60 s. |
 | `EMCP_SEARXNG_OUTGOING_PROXIES` | no | empty | Proxies SearXNG engines (Google, Bing, Qwant, Startpage) rotate through. Independent of `EMCP_PROXY_URLS`. Empty = direct egress. |
+| `EMCP_PYTHON_SANDBOX_RUNTIME` | no | `podman` | Container runtime the `python-execute` tool drives. `podman` (default) or `docker`. We deliberately do NOT share the eMCP stack's rootless docker daemon with the sandbox — see `docs/SECURITY.md` Rule 15. |
+| `EMCP_PYTHON_SANDBOX_IMAGE` | no | `python-sandbox:latest` | Image reference for the sandbox. Released images live at `ghcr.io/banald/python-sandbox:vX.Y.Z` and the installer pins this to the running release. Default is `python-sandbox:latest` for local-build / dev workflow (`bash scripts/build-python-sandbox.sh`). Never compose-mounted — referenced only by the `python-execute` runner. |
 
 Maintain `.env.example` in the repo with all variables, placeholder values, and inline comments. `.env` itself is git-ignored.
 

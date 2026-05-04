@@ -153,7 +153,7 @@ fi
 # Preflight must cover each of the v2 preconditions.
 for probe in 'check_not_root' 'check_platform' 'check_kernel' \
              'check_packages' 'check_subid_ranges' 'check_apparmor_userns' \
-             'check_linger' 'check_docker_daemon'; do
+             'check_linger' 'check_docker_daemon' 'check_podman'; do
     if grep -qE "^${probe}\(\)" "$PREFLIGHT_SH"; then
         continue
     fi
@@ -162,6 +162,30 @@ for probe in 'check_not_root' 'check_platform' 'check_kernel' \
 done
 if [ -z "${preflight_funcs_fail:-}" ]; then
     say_pass "preflight-rootless.sh defines every v2 precondition check"
+fi
+# main() must invoke check_podman alongside the docker checks so the
+# python-execute tool's runtime dep is enforced at preflight.
+if grep -qE '^[[:space:]]+check_podman$' "$PREFLIGHT_SH"; then
+    say_pass "preflight-rootless.sh main() calls check_podman"
+else
+    say_fail "preflight-rootless.sh main() does not call check_podman"
+fi
+# The podman remediation must cover both Debian and Fedora explicitly,
+# since those are the named-supported families.
+if grep -qE 'apt-get install -y podman' "$PREFLIGHT_SH" \
+   && grep -qE 'dnf install -y podman' "$PREFLIGHT_SH"; then
+    say_pass "preflight-rootless.sh has Debian + Fedora podman remediation"
+else
+    say_fail "preflight-rootless.sh missing Debian or Fedora podman install line"
+fi
+# install.sh must enforce podman in phase_preflight too, with the same
+# EMCP_SKIP_PODMAN_CHECK escape hatch.
+if grep -qE 'command -v podman' "$INSTALL_SH" \
+   && grep -qE 'EMCP_SKIP_PODMAN_CHECK' "$INSTALL_SH" \
+   && grep -qE 'suggest_podman_install' "$INSTALL_SH"; then
+    say_pass "install.sh enforces podman in phase_preflight (with EMCP_SKIP_PODMAN_CHECK bypass)"
+else
+    say_fail "install.sh does not enforce podman / suggest_podman_install / EMCP_SKIP_PODMAN_CHECK"
 fi
 # install.sh must define phase_rootless_preflight and call it before
 # phase_preflight inside main(). awk scans the main() function body
@@ -771,6 +795,46 @@ if grep -cE '^[[:space:]]*phase_smoke_test$' "$INSTALL_SH" | awk '{exit ($1 >= 2
     say_pass "phase_smoke_test wired into both main and reconfigure (H4)"
 else
     say_fail "phase_smoke_test only wired into one entry point (H4)"
+fi
+
+# ---- 9b. python-execute sandbox image pull -------------------------------
+# install.sh must pull the released python-sandbox image so a fresh install
+# has a usable python-execute tool out of the box. The phase has to be
+# wired into both main() and phase_reconfigure() so an `emcp config` after
+# an upgrade picks up the new tag.
+if grep -qE '^phase_pull_python_sandbox\(\)' "$INSTALL_SH"; then
+    say_pass "install.sh defines phase_pull_python_sandbox"
+else
+    say_fail "install.sh missing phase_pull_python_sandbox"
+fi
+if grep -cE '^[[:space:]]*phase_pull_python_sandbox$' "$INSTALL_SH" | awk '{exit ($1 >= 2) ? 0 : 1}'; then
+    say_pass "phase_pull_python_sandbox wired into both main and reconfigure"
+else
+    say_fail "phase_pull_python_sandbox only wired into one entry point"
+fi
+# It must podman-pull the IMAGE_TAG-pinned ghcr.io path and fall back to a
+# local build on pull failure.
+if grep -qE 'podman pull "?\$image"?|podman pull \$image' "$INSTALL_SH" \
+   && grep -qE 'ghcr\.io/banald/python-sandbox:\$\{?IMAGE_TAG\}?' "$INSTALL_SH" \
+   && grep -qE 'build-python-sandbox\.sh' "$INSTALL_SH"; then
+    say_pass "phase_pull_python_sandbox pulls the pinned tag with local-build fallback"
+else
+    say_fail "phase_pull_python_sandbox missing pull, pinned tag, or build-script fallback"
+fi
+# .env writer must persist EMCP_PYTHON_SANDBOX_RUNTIME + EMCP_PYTHON_SANDBOX_IMAGE
+if grep -qE '^EMCP_PYTHON_SANDBOX_RUNTIME=podman' "$INSTALL_SH" \
+   && grep -qE '^EMCP_PYTHON_SANDBOX_IMAGE=ghcr\.io/banald/python-sandbox:\$\{?IMAGE_TAG\}?' "$INSTALL_SH"; then
+    say_pass "install.sh writes EMCP_PYTHON_SANDBOX_RUNTIME + EMCP_PYTHON_SANDBOX_IMAGE into .env"
+else
+    say_fail "install.sh .env block missing EMCP_PYTHON_SANDBOX_RUNTIME / EMCP_PYTHON_SANDBOX_IMAGE"
+fi
+# Both keys must be in EMCP_MANAGED_ENV_KEYS so reconfigure preserves operator
+# overrides correctly (i.e. doesn't drop them or duplicate them).
+if grep -qE '^[[:space:]]*EMCP_PYTHON_SANDBOX_RUNTIME$' "$INSTALL_SH" \
+   && grep -qE '^[[:space:]]*EMCP_PYTHON_SANDBOX_IMAGE$' "$INSTALL_SH"; then
+    say_pass "EMCP_PYTHON_SANDBOX_{RUNTIME,IMAGE} listed in EMCP_MANAGED_ENV_KEYS"
+else
+    say_fail "EMCP_PYTHON_SANDBOX_{RUNTIME,IMAGE} missing from EMCP_MANAGED_ENV_KEYS"
 fi
 
 # ---- 9. health wait progress + jq fallback (H3, L1) -----------------------

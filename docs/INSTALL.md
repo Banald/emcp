@@ -48,7 +48,13 @@ On a fresh Ubuntu / Debian host:
 
 ```bash
 # One-time package install — the last time you'll use sudo at runtime.
-sudo apt install -y uidmap slirp4netns dbus-user-session fuse-overlayfs
+# `podman` is required by the python-execute MCP tool (see docs/SECURITY.md
+# Rule 15). After install.sh runs, the released python-sandbox image is
+# pulled automatically via `podman pull ghcr.io/banald/python-sandbox:vX.Y.Z`
+# (signed with the same cosign keyless identity as the eMCP image). Set
+# EMCP_SKIP_PODMAN_CHECK=1 to install without podman if you don't intend to
+# use python-execute.
+sudo apt install -y uidmap slirp4netns dbus-user-session fuse-overlayfs podman
 
 # Subordinate UID/GID range (skip if `grep "^$USER:" /etc/subuid` already shows
 # a range >= 65536 — Ubuntu seeds one automatically for useradd).

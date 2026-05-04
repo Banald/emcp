@@ -542,6 +542,65 @@ remediation_not_rootless() {
     esac
 }
 
+check_podman() {
+    # The `python-execute` MCP tool drives a fresh podman container per
+    # invocation. We deliberately don't share the rootless docker daemon
+    # with the sandbox (OWASP Docker rule #1: no socket sharing across
+    # security boundaries — see docs/SECURITY.md Rule 14 + Rule 15).
+    # Hard-fail if podman is missing; bypass with EMCP_SKIP_PODMAN_CHECK=1.
+    if [ "${EMCP_SKIP_PODMAN_CHECK:-0}" = "1" ]; then
+        log_warn "EMCP_SKIP_PODMAN_CHECK=1 — skipping podman check (python-execute will be unusable)"
+        return
+    fi
+    if ! command -v podman >/dev/null 2>&1; then
+        record_fail \
+            "podman is not installed (required by the python-execute MCP tool)" \
+            "$(remediation_install_podman)"
+        return
+    fi
+    # `podman info` exercises the rootless storage driver. A first-run
+    # failure (no /etc/containers/storage.conf, missing subuid range
+    # we already checked above) shouldn't sink the install — degrade to
+    # a warning so the rest of preflight still runs.
+    if ! podman info >/dev/null 2>&1; then
+        log_warn "podman info failed — python-execute may be unusable until you run 'podman info' interactively to surface the cause"
+        return
+    fi
+    log_ok "podman is installed and operational"
+}
+
+# Per-distro install commands for the podman package. The python-execute
+# tool depends on podman; the names below are the same ones we'd point an
+# operator at when bootstrapping a new host.
+remediation_install_podman() {
+    case "$(_get_os_family)" in
+        debian)
+            build_remediation \
+                "install on Debian / Ubuntu / Mint / Pop!_OS:" \
+                "  sudo apt-get update" \
+                "  sudo apt-get install -y podman" \
+                "(podman is a daemonless, rootless-by-default container engine. It coexists with rootless docker on the same host without conflict.)" ;;
+        fedora)
+            build_remediation \
+                "install on Fedora / RHEL / Rocky / Alma:" \
+                "  sudo dnf install -y podman" \
+                "(podman ships in the base repos on Fedora/RHEL — no extra repo needed.)" ;;
+        arch)
+            build_remediation \
+                "install on Arch / Manjaro / EndeavourOS:" \
+                "  sudo pacman -S --needed --noconfirm podman" ;;
+        alpine)
+            build_remediation \
+                "install on Alpine:" \
+                "  sudo apk add podman" ;;
+        *)
+            build_remediation \
+                "install via your package manager:" \
+                "  - 'podman' (rootless container engine — the python-execute tool drives this)" \
+                "  if your distro doesn't ship podman, see https://podman.io/docs/installation" ;;
+    esac
+}
+
 # --- Driver ---------------------------------------------------------------
 
 main() {
@@ -554,6 +613,7 @@ main() {
     check_apparmor_userns
     check_linger
     check_docker_daemon
+    check_podman
 
     if [ ${#FAIL_LINES[@]} -eq 0 ]; then
         log_step "All checks passed"
