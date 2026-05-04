@@ -30,6 +30,14 @@ The `--all` flag is mandatory: it reports 0% for files that have no tests at all
 
 Unit tests **must** be runnable without Docker, network, or any external services. Integration tests use Testcontainers (real Postgres + Redis in disposable containers).
 
+**Exception: `python-execute`.** The unit gate requires `podman` on `PATH` and the `python-sandbox:latest` image to be built. The tool's security properties — network isolation, read-only root filesystem, code-not-on-argv — only have meaning against a real container runtime, so we deliberately exercise them in the unit gate rather than only in integration. Build once with:
+
+```bash
+bash scripts/build-python-sandbox.sh    # or: npm run sandbox:build
+```
+
+If the binary or image is missing the test file's `before` hook fails loudly with the remediation command. There is no skip-and-pretend path. Rationale: see `docs/SECURITY.md` Rule 15.
+
 ## Running tests
 
 ```bash

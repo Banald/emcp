@@ -139,6 +139,13 @@ const envSchema = z.object({
   EMCP_PROXY_FAILURE_COOLDOWN_MS: integer(1_000, 3_600_000).default(60_000),
   EMCP_PROXY_MAX_RETRIES_PER_REQUEST: integer(1, 10).default(3),
   EMCP_PROXY_CONNECT_TIMEOUT_MS: integer(1_000, 60_000).default(10_000),
+  // Python-execute sandbox (docs/SECURITY.md Rule 15). The `python-execute`
+  // tool drives one of these container runtimes and runs the operator's
+  // pre-built image on every invocation. Defaults match the install path:
+  // `bash scripts/build-python-sandbox.sh` produces python-sandbox:latest
+  // via podman.
+  EMCP_PYTHON_SANDBOX_RUNTIME: z.enum(['podman', 'docker']).default('podman'),
+  EMCP_PYTHON_SANDBOX_IMAGE: z.string().min(1).default('python-sandbox:latest'),
 });
 
 export type NodeEnv = z.infer<typeof nodeEnvSchema>;
@@ -174,6 +181,8 @@ export interface Config {
   readonly proxyFailureCooldownMs: number;
   readonly proxyMaxRetriesPerRequest: number;
   readonly proxyConnectTimeoutMs: number;
+  readonly pythonSandboxRuntime: 'podman' | 'docker';
+  readonly pythonSandboxImage: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -231,6 +240,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     proxyFailureCooldownMs: raw.EMCP_PROXY_FAILURE_COOLDOWN_MS,
     proxyMaxRetriesPerRequest: raw.EMCP_PROXY_MAX_RETRIES_PER_REQUEST,
     proxyConnectTimeoutMs: raw.EMCP_PROXY_CONNECT_TIMEOUT_MS,
+    pythonSandboxRuntime: raw.EMCP_PYTHON_SANDBOX_RUNTIME,
+    pythonSandboxImage: raw.EMCP_PYTHON_SANDBOX_IMAGE,
   };
   return Object.freeze(resolved);
 }

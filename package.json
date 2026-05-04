@@ -16,6 +16,7 @@
     "test:coverage": "c8 --config .c8rc.json node --test --import ./tests/setup.ts 'src/**/*.test.ts'",
     "test:integration": "node --test --test-timeout=120000 --import ./tests/setup.ts 'tests/integration/**/*.test.ts'",
     "test:scripts": "bash scripts/install.test.sh",
+    "sandbox:build": "bash scripts/build-python-sandbox.sh",
     "test:e2e:rootless": "bash tests/e2e/install-rootless.test.sh",
     "test:all": "npm run test:coverage && npm run test:integration && npm run test:scripts",
     "lint": "biome check .",
