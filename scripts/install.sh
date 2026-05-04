@@ -540,6 +540,20 @@ phase_preflight() {
         fi
     fi
 
+    # Podman is required by the `python-execute` MCP tool. We deliberately
+    # don't share the rootless docker daemon with that tool — see
+    # docs/SECURITY.md Rule 15. Hard-fail by default; the same
+    # EMCP_SKIP_PODMAN_CHECK=1 escape hatch works as in
+    # scripts/preflight-rootless.sh.
+    if [ "${EMCP_SKIP_PODMAN_CHECK:-0}" = "1" ]; then
+        log_warn "EMCP_SKIP_PODMAN_CHECK=1 — skipping podman check (python-execute will be unusable)"
+    elif ! command -v podman >/dev/null 2>&1; then
+        log_error "podman is not installed (required by the python-execute MCP tool)."
+        suggest_podman_install
+        log_error "to bypass this check, re-run with EMCP_SKIP_PODMAN_CHECK=1"
+        exit 1
+    fi
+
     mkdir -p "$EMCP_HOME"
 
     log_ok "preflight passed"
@@ -549,6 +563,29 @@ phase_preflight() {
 # doesn't leak into the parent. M5: also matches ID_LIKE so derivatives
 # (Rocky Linux, AlmaLinux, Pop!_OS, EndeavourOS, etc.) pick the right
 # suggestion even when ID itself isn't in the list.
+suggest_podman_install() (
+    id="" id_like=""
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        id="${ID:-}"
+        id_like="${ID_LIKE:-}"
+    fi
+    haystack=" $id $id_like "
+    case "$haystack" in
+        *\ fedora\ *|*\ rhel\ *|*\ centos\ *|*\ rocky\ *|*\ almalinux\ *)
+            log_error "install with: sudo dnf install -y podman" ;;
+        *\ debian\ *|*\ ubuntu\ *|*\ linuxmint\ *|*\ pop\ *)
+            log_error "install with: sudo apt-get install -y podman" ;;
+        *\ arch\ *|*\ manjaro\ *|*\ endeavouros\ *)
+            log_error "install with: sudo pacman -S --noconfirm podman" ;;
+        *\ alpine\ *)
+            log_error "install with: sudo apk add podman" ;;
+        *)
+            log_error "install Podman per: https://podman.io/docs/installation" ;;
+    esac
+)
+
 suggest_docker_install() (
     id="" id_like=""
     if [ -r /etc/os-release ]; then
@@ -920,6 +957,8 @@ EMCP_MANAGED_ENV_KEYS=(
     EMCP_PROXY_FAILURE_COOLDOWN_MS
     EMCP_PROXY_MAX_RETRIES_PER_REQUEST
     EMCP_PROXY_CONNECT_TIMEOUT_MS
+    EMCP_PYTHON_SANDBOX_RUNTIME
+    EMCP_PYTHON_SANDBOX_IMAGE
 )
 
 # Append every KEY=VALUE line from $src whose KEY is NOT in
@@ -1001,6 +1040,15 @@ EMCP_PROXY_ROTATION=${EMCP_PROXY_ROTATION:-round-robin}
 EMCP_PROXY_FAILURE_COOLDOWN_MS=60000
 EMCP_PROXY_MAX_RETRIES_PER_REQUEST=3
 EMCP_PROXY_CONNECT_TIMEOUT_MS=10000
+
+# --- python-execute sandbox ---
+# Container runtime + image used by the python-execute MCP tool. Pinned to
+# the released sandbox image so production runs match what CI tested. See
+# docs/SECURITY.md Rule 15. If you forked the repo and ship your own image,
+# change the path here (the EMCP_GHCR_OWNER variable above only affects the
+# eMCP server image — this one is referenced directly by the runner).
+EMCP_PYTHON_SANDBOX_RUNTIME=podman
+EMCP_PYTHON_SANDBOX_IMAGE=ghcr.io/banald/python-sandbox:${IMAGE_TAG}
 EOF
 
     # Append preserved lines from the old .env, if any.
@@ -1518,6 +1566,59 @@ phase_smoke_test() {
     return 0
 }
 
+# --- Pull the python-execute sandbox image --------------------------------
+
+# Pulls ghcr.io/banald/python-sandbox:${IMAGE_TAG} (the released tag) so the
+# python-execute MCP tool is usable on first invocation. The image is signed
+# with the same cosign keyless identity as the eMCP image — see release
+# notes for the verify command. EMCP_SKIP_PODMAN_CHECK=1 skips this whole
+# phase (operator opted out of podman entirely). On any pull failure we
+# fall back to a local build via scripts/build-python-sandbox.sh, since the
+# Dockerfile + build script are already in $EMCP_HOME from phase_fetch_source.
+phase_pull_python_sandbox() {
+    log_step "Pull python-execute sandbox image"
+
+    if [ "${EMCP_SKIP_PODMAN_CHECK:-0}" = "1" ]; then
+        log_warn "EMCP_SKIP_PODMAN_CHECK=1 — skipping sandbox image pull (python-execute will be unusable)"
+        return 0
+    fi
+    if ! command -v podman >/dev/null 2>&1; then
+        # phase_preflight should have caught this; defensive guard for the
+        # reconfigure path.
+        log_warn "podman is not installed — skipping sandbox image pull"
+        return 0
+    fi
+
+    local image="ghcr.io/banald/python-sandbox:${IMAGE_TAG}"
+    log_info "pulling $image"
+    if run_and_log "podman pull $image" podman pull "$image"; then
+        log_ok "sandbox image pulled: $image"
+        return 0
+    fi
+
+    # Pull failed — most likely the host is air-gapped, the tag isn't
+    # published yet (rare; release workflow pushes before tagging install.sh),
+    # or a transient registry outage. Fall back to a local build so the tool
+    # still works after install.
+    log_warn "podman pull failed — falling back to local build"
+    local build_script="$EMCP_HOME/scripts/build-python-sandbox.sh"
+    if [ ! -x "$build_script" ]; then
+        log_error "fallback unavailable: $build_script not found or not executable"
+        log_error "run \`bash scripts/build-python-sandbox.sh\` from a fresh checkout, or"
+        log_error "   re-run this installer when network connectivity is restored."
+        return 0  # don't fail the whole install — python-execute returns isError at runtime
+    fi
+    # The build script defaults to building python-sandbox:latest; override
+    # the tag to match what the .env points at.
+    if EMCP_PYTHON_SANDBOX_IMAGE="$image" run_and_log "build $image locally" \
+            bash "$build_script"; then
+        log_ok "sandbox image built locally: $image"
+    else
+        log_warn "local build also failed — python-execute will return isError until you fix this"
+        log_warn "diagnose with: bash $build_script"
+    fi
+}
+
 # --- Install emcp CLI ------------------------------------------------------
 
 phase_install_emcp() {
@@ -1768,6 +1869,9 @@ phase_reconfigure() {
         phase_postflight_detection
     fi
     phase_smoke_test
+    # Re-pull the sandbox image too — IMAGE_TAG may have changed (e.g.
+    # `emcp config` after an upgrade).
+    phase_pull_python_sandbox
 }
 
 # --- Main ------------------------------------------------------------------
@@ -1846,6 +1950,7 @@ main() {
     phase_compose_up
     phase_postflight_detection
     phase_smoke_test
+    phase_pull_python_sandbox
     phase_install_emcp
     phase_first_key
     phase_summary
