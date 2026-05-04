@@ -2,6 +2,16 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.4.0]
+
+### Changed
+
+- The repo is now public, so `install.sh` no longer authenticates to `ghcr.io`. The `phase_ghcr_login` step (manifest probe, `gh` CLI fallback, manual PAT prompt) was removed; first-run installs and `emcp config` re-runs no longer ask for a token.
+
+### Removed
+
+- `--ghcr-token-file` flag and `GHCR_TOKEN` environment variable — both were only meaningful while the package registry required `read:packages`. CI that supplied either can drop the flag/env var; passing `--ghcr-token-file` now fails with `unknown flag`.
+
 ## [2.3.0]
 
 ### Added
