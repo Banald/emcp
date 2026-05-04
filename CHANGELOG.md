@@ -2,6 +2,23 @@
 
 All notable changes to eMCP land here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and eMCP follows [Semantic Versioning](https://semver.org/).
 
+## [2.5.0]
+
+### Added
+
+- `python-execute` MCP tool — runs caller-supplied Python in a fresh, network-isolated podman container per invocation, with bounded memory / PID / CPU caps and a per-call tmpfs at `/tmp`. Targets data wrangling, scientific computation (numpy / pandas / scipy / sympy / matplotlib / scikit-learn), and plotting — the use cases the calculator can't reach. User code is piped via stdin (never on argv); wall-clock timeout is enforced from Node and the container is killed by name on timeout. Every failure surfaces as `isError`; the tool never throws. Codified in `docs/SECURITY.md` Rule 15.
+- `ghcr.io/banald/python-sandbox` released image — the sandbox runtime, built from `infra/python-sandbox/Dockerfile` and signed with the same cosign keyless identity as the eMCP image. Pushed to GHCR with the same semver tag set on every release. `install.sh` pulls it automatically after the stack is healthy.
+- `image-scan-sandbox` CI job — applies the same Trivy gate (HIGH/CRITICAL, ignore-unfixed, shared `.trivyignore`) to the sandbox image as the existing `image-scan` does for the eMCP image.
+- `bash scripts/build-python-sandbox.sh` (also exposed as `npm run sandbox:build`) — local-build path for the sandbox image. Used by the install-time fallback when the GHCR pull fails (air-gapped hosts, registry hiccups, bootstrap before the first release).
+- `EMCP_PYTHON_SANDBOX_RUNTIME` and `EMCP_PYTHON_SANDBOX_IMAGE` env vars — operator overrides for the runtime (`podman` default; `docker` accepted) and image reference. Defaults to the released ghcr.io tag matching the installer version.
+
+### Changed
+
+- `install.sh` and `scripts/preflight-rootless.sh` now require `podman` alongside the existing rootless docker daemon. Distro-specific remediation prints for Debian / Ubuntu, Fedora / RHEL, Arch, Alpine. `EMCP_SKIP_PODMAN_CHECK=1` (symmetric to `EMCP_SKIP_ROOTLESS_CHECK`) bypasses for hosts that don't intend to use python-execute. The installer is still fully rootless and runs no `sudo` itself — every `sudo` reference is inside printed remediation strings for the operator's one-time package install.
+- `install.sh` runs a new `phase_pull_python_sandbox` after the stack is healthy. Pulls the version-pinned sandbox image from GHCR; falls back to a local build via `scripts/build-python-sandbox.sh` on failure. Wired into `phase_reconfigure` too so `emcp config` after an upgrade picks up the new tag.
+- `EMCP_PYTHON_SANDBOX_{RUNTIME,IMAGE}` are written into the managed `.env` block and listed in `EMCP_MANAGED_ENV_KEYS`, so reconfigure preserves operator overrides without dropping or duplicating them.
+- CI's `ci`, `ci-rootless`, and the matching `ci` job in `release.yml` all install podman + build the sandbox image before tests, so the python-execute test gate exercises real network/fs isolation rather than mocked argv shape.
+
 ## [2.4.0]
 
 ### Changed
